@@ -1,0 +1,7 @@
+name: ho3d_v2
+raw_dir: data/raw/ho3d_v2
+processed_dir: data/processed/ho3d_v2
+manifest_train: data/manifests/ho3d_v2_train.jsonl
+manifest_eval: data/manifests/ho3d_v2_eval.jsonl
+units: mm
+notes: Use HO3D v2 first; do not mix v3 into the first benchmark.

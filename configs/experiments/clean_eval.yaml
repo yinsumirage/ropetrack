@@ -1,0 +1,12 @@
+name: clean_eval
+datasets:
+  - freihand
+  - ho3d_v2
+backends:
+  - hamer_original
+  - wilor_original
+  - anyhand_hamer
+  - anyhand_wilor
+metrics:
+  - mpjpe_mm
+  - fingertip_error_mm

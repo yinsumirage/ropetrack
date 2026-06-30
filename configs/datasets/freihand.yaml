@@ -1,0 +1,7 @@
+name: freihand
+raw_dir: data/raw/freihand
+processed_dir: data/processed/freihand
+manifest_train: data/manifests/freihand_train.jsonl
+manifest_val: data/manifests/freihand_val.jsonl
+units: mm
+notes: Keep raw data outside git and link it into data/raw/freihand.
