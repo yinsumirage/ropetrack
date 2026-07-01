@@ -1,9 +1,12 @@
 [submodule "third_party/hamer"]
 	path = third_party/hamer
 	url = https://github.com/geopavlakos/hamer.git
+	ignore = untracked
 [submodule "third_party/wilor"]
 	path = third_party/wilor
 	url = https://github.com/rolpotamias/WiLoR.git
+	ignore = untracked
 [submodule "third_party/anyhand"]
 	path = third_party/anyhand
 	url = https://github.com/chen-si-cs/AnyHand.git
+	ignore = untracked
