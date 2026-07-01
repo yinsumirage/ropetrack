@@ -11,6 +11,7 @@ CPU jobs used:
 - `161196`: extracted nested `FreiHand.tar`.
 - `161199`: extracted nested `FreiHAND_pub_v2.zip`.
 - `161214`: downloaded full HO3D v3 LFS object to `raw/HO3D_v3.zip`.
+- `161218`: extracted full HO3D v3 zip and removed `raw/HO3D_v3.zip`.
 
 ## Shared Models
 
@@ -89,16 +90,24 @@ Observed HO3D v2 eval RGB count: `11524`.
 HO3D v3 current useful pieces:
 
 ```text
-/data/wentao/ropetrack/HO3D_v3/raw/HO3D_v3.zip
+/data/wentao/ropetrack/HO3D_v3/train.txt
+/data/wentao/ropetrack/HO3D_v3/train/<sequence>/rgb
+/data/wentao/ropetrack/HO3D_v3/train/<sequence>/depth
+/data/wentao/ropetrack/HO3D_v3/train/<sequence>/meta
+/data/wentao/ropetrack/HO3D_v3/train/<sequence>/seg
+/data/wentao/ropetrack/HO3D_v3/evaluation/<sequence>/rgb
+/data/wentao/ropetrack/HO3D_v3/evaluation/<sequence>/depth
+/data/wentao/ropetrack/HO3D_v3/evaluation/<sequence>/meta
 /data/wentao/ropetrack/HO3D_v3/sample/image
-/data/wentao/ropetrack/HO3D_v3/train/*/seg
 ```
 
-Observed counts:
+Observed lightweight counts:
 
 ```text
+train.txt lines: 83325
+train sequences: 55
+evaluation sequences: 13
 sample/image: 98
-train/*/seg files: 90469
 ```
 
 The full HO3D v3 LFS object was downloaded on CPU job `161214`:
@@ -107,15 +116,13 @@ The full HO3D v3 LFS object was downloaded on CPU job `161214`:
 raw/HO3D_v3.zip size: 34255013515
 ```
 
-It is not extracted yet. Extract it on a CPU allocation before auditing HO3D v3
-RGB/meta/keypoint layout. The segmentation archive
-`raw/HO3D_v3_segmentations_rendered.zip` was already extracted and deleted.
+It was extracted on CPU job `161218`, then removed. The segmentation archive
+`raw/HO3D_v3_segmentations_rendered.zip` was already extracted and removed.
 
-Known extraction archives were removed after successful extraction, except the
-newly downloaded full `raw/HO3D_v3.zip`, which is intentionally kept until it is
-unpacked.
+Known extraction archives were removed after successful extraction.
 
 ## Next
 
-For the first benchmark, use FreiHAND and `HO3D_v2_eval`. Treat HO3D v3 as
-later training/data material until its full RGB/annotation protocol is audited.
+For the first benchmark, use FreiHAND and `HO3D_v2_eval`. HO3D v3 is now
+available for later training/data work, but audit its meta/keypoint protocol
+before mixing it into any benchmark table.
