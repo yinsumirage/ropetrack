@@ -84,10 +84,9 @@ unclear or stale, re-read that folder before writing or running cluster scripts.
     extraction.
   - `HO3D_v2_eval`: expanded eval set with `evaluation/`,
     `evaluation_xyz.json`, and `evaluation_verts.json`.
-  - `HO3D_v3`: renamed from `HO-3D`; only the 95MB segmentation zip was
-    downloaded/extracted into `train/*/seg`. The full `raw/HO3D_v3.zip` LFS
-    object is about 34.2GB and is currently missing, so this directory is not a
-    usable keypoint/RGB training set yet.
+  - `HO3D_v3`: renamed from `HO-3D`; the full `raw/HO3D_v3.zip` LFS object
+    is downloaded but not extracted yet. The 95MB segmentation zip was extracted
+    into `train/*/seg` and then deleted.
 - HaMeR checkpoint files were moved under the shared `pretrained_models`, but
   `pretrained_models/hamer_ckpts/checkpoints/model_config.yaml` was observed as
   0 bytes on 2026-07-02. Re-check HaMeR assets before using that backend.

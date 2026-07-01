@@ -10,6 +10,7 @@ CPU jobs used:
   FreiHAND tar and HO3D_v3 segmentation zip.
 - `161196`: extracted nested `FreiHand.tar`.
 - `161199`: extracted nested `FreiHAND_pub_v2.zip`.
+- `161214`: downloaded full HO3D v3 LFS object to `raw/HO3D_v3.zip`.
 
 ## Shared Models
 
@@ -88,6 +89,7 @@ Observed HO3D v2 eval RGB count: `11524`.
 HO3D v3 current useful pieces:
 
 ```text
+/data/wentao/ropetrack/HO3D_v3/raw/HO3D_v3.zip
 /data/wentao/ropetrack/HO3D_v3/sample/image
 /data/wentao/ropetrack/HO3D_v3/train/*/seg
 ```
@@ -99,19 +101,19 @@ sample/image: 98
 train/*/seg files: 90469
 ```
 
-Caveat: this is not the full HO3D v3 training set. The ModelScope/Git LFS index
-declares:
+The full HO3D v3 LFS object was downloaded on CPU job `161214`:
 
 ```text
 raw/HO3D_v3.zip size: 34255013515
-raw/HO3D_v3_segmentations_rendered.zip size: 95766204
 ```
 
-Only the segmentation zip was present and extracted. Without the full
-`raw/HO3D_v3.zip`, there are no usable HO3D v3 RGB/meta/keypoint training files
-to build a normal benchmark/training manifest from.
+It is not extracted yet. Extract it on a CPU allocation before auditing HO3D v3
+RGB/meta/keypoint layout. The segmentation archive
+`raw/HO3D_v3_segmentations_rendered.zip` was already extracted and deleted.
 
-Known archives were removed after successful extraction.
+Known extraction archives were removed after successful extraction, except the
+newly downloaded full `raw/HO3D_v3.zip`, which is intentionally kept until it is
+unpacked.
 
 ## Next
 
