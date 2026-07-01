@@ -6,7 +6,7 @@ Date: 2026-07-01
 
 - Repo on HPC: `~/project/ropetrack`
 - Data root on HPC: `/data/wentao/ropetrack`
-- Current downloaded but unprocessed data: `freihand`, `ho3dv3`
+- Current data layout is recorded in `0002_data_layout_and_wilor_smoke.md`.
 
 Do not record transient compute node names in repo docs. Slurm node names can
 change; the stable fact is the path under the account.

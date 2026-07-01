@@ -76,8 +76,12 @@ unclear or stale, re-read that folder before writing or running cluster scripts.
 - The repo lives under `~/project/ropetrack` on the HPC account, not under
   `/data`.
 - Current data root: `/data/wentao/ropetrack`.
-- Current downloaded-but-unprocessed data under `/data/wentao/ropetrack`
-  includes `freihand` and `ho3dv3`.
+- Current data under `/data/wentao/ropetrack`:
+  - `FreiHAND`: downloaded as `raw/FreiHAND.tar.gz`; not extracted yet.
+  - `HO3D_v2_eval`: expanded eval set with `evaluation/`,
+    `evaluation_xyz.json`, and `evaluation_verts.json`.
+  - `HO3D_v3`: renamed from `HO-3D`; currently for later training/data work,
+    not the first clean benchmark.
 - The first benchmark plan still targets FreiHAND + HO3D v2. Do not silently mix
   HO3D v3 into the first clean benchmark; if only v3 is available, document that
   protocol change before running scores.
