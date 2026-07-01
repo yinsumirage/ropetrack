@@ -44,8 +44,13 @@ Re-check HaMeR assets before running HaMeR.
 FreiHAND usable root:
 
 ```text
-/data/wentao/ropetrack/FreiHAND/FreiHAND/FreiHand
+/data/wentao/ropetrack/FreiHAND
 ```
+
+The initial extraction produced nested `FreiHAND/FreiHAND/FreiHand`; the useful
+contents were moved up to `/data/wentao/ropetrack/FreiHAND`, and the download
+shell (`.git`, `raw`, `README.md`, `metafile.yaml`, `quickstart.md`,
+`.gitattributes`) was removed.
 
 Observed FreiHAND counts:
 
@@ -93,6 +98,18 @@ Observed counts:
 sample/image: 98
 train/*/seg files: 90469
 ```
+
+Caveat: this is not the full HO3D v3 training set. The ModelScope/Git LFS index
+declares:
+
+```text
+raw/HO3D_v3.zip size: 34255013515
+raw/HO3D_v3_segmentations_rendered.zip size: 95766204
+```
+
+Only the segmentation zip was present and extracted. Without the full
+`raw/HO3D_v3.zip`, there are no usable HO3D v3 RGB/meta/keypoint training files
+to build a normal benchmark/training manifest from.
 
 Known archives were removed after successful extraction.
 
