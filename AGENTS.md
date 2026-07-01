@@ -16,8 +16,12 @@ work. Treat `E:\Desktop\hand4D\now` as the external knowledge base and
   large figures.
 - Prefer stdlib and existing code. Add dependencies only when a real script needs
   them.
-- Before running an experiment, read `experience/INDEX.md`. After an experiment,
-  write a short note and add it to the index.
+- Use `docs/` for stable plans and knowledge summaries. Use `experience/` for
+  experiment logs, environment notes, failures, fixes, and "do not repeat this"
+  records.
+- Before running an experiment or retrying a failed setup, read
+  `experience/INDEX.md`. After any non-trivial experiment, environment fix, data
+  finding, or submodule/Git failure, write a short note and add it to the index.
 - Local machine is not the runtime target. Only run light checks here, such as
   small unit tests or static file checks.
 - Put any throwaway local verification scripts under `.local_checks/`; that
@@ -64,6 +68,25 @@ unclear or stale, re-read that folder before writing or running cluster scripts.
   recorded scaling/IO/memory justification.
 - If a job is stuck, using no GPU, has bad data paths, or is downloading on a GPU
   allocation, cancel it rather than letting it violate idle-use rules.
+
+## Current Remote Facts
+
+- The stable HPC repo path is `~/project/ropetrack`. Do not record transient
+  compute node names; Slurm may assign a different node.
+- The repo lives under `~/project/ropetrack` on the HPC account, not under
+  `/data`.
+- Current data root: `/data/wentao/ropetrack`.
+- Current downloaded-but-unprocessed data under `/data/wentao/ropetrack`
+  includes `freihand` and `ho3dv3`.
+- The first benchmark plan still targets FreiHAND + HO3D v2. Do not silently mix
+  HO3D v3 into the first clean benchmark; if only v3 is available, document that
+  protocol change before running scores.
+- Current working Python/PyTorch environment uses `torch==2.5.*`, so PyTorch 2.6
+  checkpoint-loading changes are not the active issue unless the environment is
+  upgraded later.
+- Prefer AnyHand/WiLoR first for smoke inference. Treat HaMeR as a separate
+  environment path because its `detectron2`, `mmcv`, `ViTPose`, and `chumpy`
+  stack is brittle.
 
 Minimal GPU job header:
 

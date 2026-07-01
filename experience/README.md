@@ -1,7 +1,11 @@
 # Experience
 
 This folder is the repo memory. Every non-trivial experiment, failure, data
-finding, or engineering decision gets one short note here.
+finding, environment fix, submodule/Git incident, or engineering decision gets
+one short note here.
+
+`docs/` is for stable knowledge and plans. `experience/` is for what actually
+happened: commands, errors, fixes, paths, scores, and next actions.
 
 Before new work:
 
@@ -12,5 +16,6 @@ Before new work:
 After new work:
 
 1. Add a dated note.
-2. Record command, data split, backend commit, result, and next action.
+2. Record command, data split, backend commit, result/error, fix, and next
+   action.
 3. Link it from `experience/INDEX.md`.
