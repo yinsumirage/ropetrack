@@ -77,11 +77,19 @@ unclear or stale, re-read that folder before writing or running cluster scripts.
   `/data`.
 - Current data root: `/data/wentao/ropetrack`.
 - Current data under `/data/wentao/ropetrack`:
-  - `FreiHAND`: downloaded as `raw/FreiHAND.tar.gz`; not extracted yet.
+  - `pretrained_models`: shared checkpoint root. `third_party/anyhand/pretrained_models`
+    on HPC is a symlink to this directory.
+  - `FreiHAND`: extracted root is
+    `/data/wentao/ropetrack/FreiHAND/FreiHAND/FreiHand`; original archives were
+    deleted after successful extraction.
   - `HO3D_v2_eval`: expanded eval set with `evaluation/`,
     `evaluation_xyz.json`, and `evaluation_verts.json`.
-  - `HO3D_v3`: renamed from `HO-3D`; currently for later training/data work,
-    not the first clean benchmark.
+  - `HO3D_v3`: renamed from `HO-3D`; segmentation zip was extracted into
+    `train/*/seg`; currently for later training/data work, not the first clean
+    benchmark.
+- HaMeR checkpoint files were moved under the shared `pretrained_models`, but
+  `pretrained_models/hamer_ckpts/checkpoints/model_config.yaml` was observed as
+  0 bytes on 2026-07-02. Re-check HaMeR assets before using that backend.
 - The first benchmark plan still targets FreiHAND + HO3D v2. Do not silently mix
   HO3D v3 into the first clean benchmark; if only v3 is available, document that
   protocol change before running scores.

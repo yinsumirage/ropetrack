@@ -7,8 +7,8 @@ Date: 2026-07-02
 Base path: `/data/wentao/ropetrack`
 
 - `FreiHAND/`
-  - `raw/FreiHAND.tar.gz` exists.
-  - Not extracted yet; do extraction on a CPU allocation, not the login node.
+  - Later extracted; see `0003_data_storage_and_extraction.md` for the current
+    layout.
 - `HO3D_v2_eval/`
   - Expanded evaluation data.
   - Images: `evaluation/<sequence>/rgb/*.png`
@@ -18,7 +18,7 @@ Base path: `/data/wentao/ropetrack`
     `MPM11`, `MPM12`, `MPM13`, `MPM14`, `SB11`, `SB13`, `SM1`
 - `HO3D_v3/`
   - Renamed from `HO-3D`.
-  - `raw/HO3D_v3_segmentations_rendered.zip` exists.
+  - Later extracted; see `0003_data_storage_and_extraction.md`.
   - Treat as later training/data work, not the first clean v2 benchmark.
 
 ## Smoke Result
