@@ -1,0 +1,25 @@
+name: clean_baseline
+stage: 1
+datasets:
+  - freihand
+  - ho3d_v2
+  - ho3d_v3
+methods:
+  - hamer
+  - hamer_anyhand
+  - wilor
+  - wilor_anyhand
+metrics:
+  freihand:
+    - pa_mpjpe_mm
+    - pa_mpvpe_mm
+    - f_al_score_5
+    - f_al_score_15
+  ho3d:
+    - auc_j
+    - pa_mpjpe_mm
+    - auc_v
+    - pa_mpvpe_mm
+    - f_al_score_5
+    - f_al_score_15
+notes: GT-bbox clean reproduction table before hard splits or rope labels.

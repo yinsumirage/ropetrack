@@ -1,7 +1,15 @@
 name: freihand
-raw_dir: data/raw/freihand
-processed_dir: data/processed/freihand
-manifest_train: data/manifests/freihand_train.jsonl
-manifest_val: data/manifests/freihand_val.jsonl
-units: mm
-notes: Keep raw data outside git and link it into data/raw/freihand.
+remote_root: /data/wentao/ropetrack/FreiHAND
+local_link: data/raw/freihand
+eval:
+  images: evaluation/rgb
+  count: 3960
+  gt:
+    - evaluation_xyz.json
+    - evaluation_verts.json
+    - evaluation_K.json
+protocol:
+  units: m
+  camera: OpenCV-style, no HO3D y/z flip
+  benchmark_mode: gt_bbox
+notes: Use aligned PA metrics for paper comparison.

@@ -1,9 +1,10 @@
-name: ho3d_v2
-remote_root: /data/wentao/ropetrack/HO3D_v2_eval
-local_link: data/raw/ho3d_v2
+name: ho3d_v3
+remote_root: /data/wentao/ropetrack/HO3D_v3
+local_link: data/raw/ho3d_v3
 eval:
+  list: evaluation.txt
   images: evaluation/*/rgb
-  count: 11524
+  count: 20137
   gt:
     - evaluation_xyz.json
     - evaluation_verts.json
@@ -11,4 +12,4 @@ protocol:
   units: m
   camera: HO3D/OpenGL-style; flip y and z from OpenCV predictions
   benchmark_mode: gt_bbox
-notes: Stage-1 anchor dataset with verified clean baseline reproduction.
+notes: Include in the clean report as HO3D v3, not as a replacement for HO3D v2.

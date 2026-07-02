@@ -36,10 +36,12 @@ work. Treat `E:\Desktop\hand4D\now` as the external knowledge base and
 
 ## Current Research Line
 
-Start with FreiHAND + HO3D v2, reproduce clean HaMeR/WiLoR/AnyHand baselines,
-then build hard mask/blur/crop/appearance splits. Only after clean and hard
-benchmarks are credible, test fingertip-to-wrist rope distance as post-opt,
-then as model input/loss.
+Stage 1 is clean baseline reproduction: FreiHAND, HO3D v2, and now HO3D v3
+clean GT-bbox baselines for HaMeR/WiLoR/AnyHand variants, followed by a stable
+report. The Stage 1 report is `docs/2026-07-03-clean-baseline-summary.md`.
+Stage 2 is hard mask/blur/crop/appearance splits. Only after clean and hard
+benchmarks are credible, test fingertip-to-wrist rope distance as post-opt, then
+as model input/loss.
 
 ## HPC Rules
 
@@ -92,9 +94,9 @@ unclear or stale, re-read that folder before writing or running cluster scripts.
 - HaMeR checkpoint files were moved under the shared `pretrained_models`, but
   `pretrained_models/hamer_ckpts/checkpoints/model_config.yaml` was observed as
   0 bytes on 2026-07-02. Re-check HaMeR assets before using that backend.
-- The first benchmark plan still targets FreiHAND + HO3D v2. Do not silently mix
-  HO3D v3 into the first clean benchmark; if only v3 is available, document that
-  protocol change before running scores.
+- The first benchmark anchor is still FreiHAND + HO3D v2. HO3D v3 now has full
+  clean runs and may appear in the clean report, but label it explicitly as
+  HO3D v3 rather than merging it into HO3D v2 numbers.
 - Current working Python/PyTorch environment uses `torch==2.5.*`, so PyTorch 2.6
   checkpoint-loading changes are not the active issue unless the environment is
   upgraded later.
