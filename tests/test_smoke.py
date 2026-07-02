@@ -20,7 +20,7 @@ class SmokeTest(unittest.TestCase):
         pred = PredictionRecord(
             sample_id=sample.sample_id,
             backend="hamer_original",
-            pred_joints3d_mm_path="outputs/predictions/hamer_original/000001_joints3d.npy",
+            pred_joints3d_mm_path="predictions/hamer_original/000001_joints3d.npy",
         )
 
         with tempfile.TemporaryDirectory() as tmp:

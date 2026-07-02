@@ -17,8 +17,6 @@ configs/          Dataset and experiment config entry points.
 data/             Local dataset links and generated manifests. No real data in git.
 docs/knowledge/   Short local copy of the hand4D/now decisions.
 experience/       Experiment notes, failures, and an index to avoid repeating work.
-experiments/      Runnable experiment folders and result pointers.
-outputs/          Generated predictions, metrics, and figures. Ignored by git.
 scripts/          CLI entry points once loaders/runners exist.
 src/ropetrack/    Core schemas, IO, metrics, wrappers, eval, viz, rope code.
 tests/            Small smoke checks.
@@ -50,3 +48,6 @@ New-Item -ItemType Junction -Path data\raw\ho3d_v2 -Target D:\datasets\HO3D_v2
 4. Save predictions in one schema.
 5. Compute MPJPE and fingertip error.
 6. Write findings under `experience/` before scaling up.
+
+Generated predictions, metrics, and figures stay out of git. Current full-run
+outputs live under the HPC data root, usually `/data/wentao/ropetrack/runs`.
