@@ -15,3 +15,4 @@
 | 2026-07-03 | [0009_freihand_eval_gt_upload.md](0009_freihand_eval_gt_upload.md) | Uploaded FreiHAND evaluation GT package, merged `evaluation/anno` and `facemap`, and copied the root eval JSON files. |
 | 2026-07-03 | [0010_freihand_wilor_gtbbox_eval.md](0010_freihand_wilor_gtbbox_eval.md) | FreiHAND AnyHand-WiLoR gt-bbox smoke, full prediction, CPU eval scores, and joint-order fix. |
 | 2026-07-03 | [0011_ho3d_generic_wilor_original_gtbbox_full.md](0011_ho3d_generic_wilor_original_gtbbox_full.md) | Full HO3D v2 GT-bbox run with generic `bench_ho3d.py` and original WiLoR checkpoint. |
+| 2026-07-03 | [0012_freihand_four_gtbbox_baselines.md](0012_freihand_four_gtbbox_baselines.md) | Full FreiHAND GT-bbox HaMeR/WiLoR/AnyHand scores and paper-table comparison. |
