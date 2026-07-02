@@ -137,6 +137,14 @@ These are pred-only GPU jobs for
 `third_party/anyhand/pretrained_models/wilor_final.ckpt`. After they finish,
 run the parallel HO3D eval on each `eval_input` directory.
 
+Update: jobs `161691` and `161692` timed out after their 1-hour limit. Retry
+jobs were submitted with 3-hour GPU limits and dependent parallel CPU eval:
+
+| Mode | Retry GPU job | CPU eval job | Run dir |
+|---|---:|---:|---|
+| detector | 161879 | 161880 | `/data/wentao/ropetrack/runs/ho3d_v2_wilor_final_detector_retry_20260702_195752` |
+| gt_bbox | 161881 | 161882 | `/data/wentao/ropetrack/runs/ho3d_v2_wilor_final_gtbbox_retry_20260702_195752` |
+
 Final fixed scores:
 
 | Mode | PA joint mean | PA joint AUC | ST joint mean | ST joint AUC | PA mesh mean | PA mesh AUC | aligned F@5 | aligned F@15 |

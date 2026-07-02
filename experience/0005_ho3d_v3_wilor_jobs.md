@@ -54,3 +54,23 @@ python scripts/eval_ho3d_parallel.py \
   --num-workers 16 \
   --chunksize 16
 ```
+
+## Retry Note
+
+The original gt-bbox submissions used the invalid mode string `gtbbox`; the
+script only accepts `gt_bbox`. The bad GPU jobs failed immediately and their
+dependent CPU eval jobs were cancelled:
+
+```text
+161781 anyhand_wilor/gtbbox failed: invalid --mode gtbbox
+161782 cancelled: dependency never satisfied
+161785 wilor_final/gtbbox failed: invalid --mode gtbbox
+161786 cancelled: dependency never satisfied
+```
+
+Retry jobs with the correct `--mode gt_bbox` and 3-hour GPU limits:
+
+| Experiment | Run dir | GPU job | CPU eval job |
+|---|---|---:|---:|
+| AnyHand WiLoR gt_bbox | `/data/wentao/ropetrack/runs/ho3d_v3_anyhand_wilor_gtbbox_retry_20260702_195752` | 161883 | 161884 |
+| WiLoR final gt_bbox | `/data/wentao/ropetrack/runs/ho3d_v3_wilor_final_gtbbox_retry_20260702_195752` | 161885 | 161886 |
