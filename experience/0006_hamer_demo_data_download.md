@@ -53,3 +53,21 @@ _DATA/data/mano_mean_params.npz                 1178 bytes
 The archive passed `gzip -tv`. The intermediate `hamer_demo_data.tar.gz` and
 `hamer_demo_data.tar` were removed after extraction.
 
+## Asset Placement
+
+CPU job `161936` moved the extracted assets into the shared model root:
+
+```text
+/data/wentao/ropetrack/pretrained_models/hamer_ckpts/checkpoints/hamer.ckpt
+/data/wentao/ropetrack/pretrained_models/hamer_ckpts/model_config.yaml
+/data/wentao/ropetrack/pretrained_models/hamer_ckpts/dataset_config.yaml
+/data/wentao/ropetrack/pretrained_models/hamer_ckpts/data/mano_mean_params.npz
+/data/wentao/ropetrack/pretrained_models/hamer_ckpts/vitpose_ckpts/vitpose+_huge/wholebody.pth
+```
+
+The stale 0-byte
+`pretrained_models/hamer_ckpts/checkpoints/model_config.yaml` was replaced with
+a symlink to `../model_config.yaml`, because the current AnyHand HaMeR loader
+looks for `model_config.yaml` next to the selected checkpoint.
+
+After verification, `/data/wentao/ropetrack/hamer_demo_data/_DATA` was removed.
