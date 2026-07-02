@@ -159,3 +159,13 @@ python scripts/eval_ho3d_parallel.py \
 It writes `scores.txt` with the same field names as the official HO3D eval,
 plus `scores.json`. Keep the official `third_party/ho3d_eval/eval.py` as the
 reference implementation and use it for occasional exactness checks.
+
+Verified on the fixed gt-bbox run:
+
+```text
+Slurm: CPU 161720 completed
+workers: 16
+elapsed: 00:04:57
+output: /data/wentao/ropetrack/runs/ho3d_v2_wilor_gtbbox_joints_from_verts_20260702/eval_results_parallel_16cpu
+check: diff against official eval_results/scores.txt was empty
+```
