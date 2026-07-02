@@ -47,31 +47,30 @@ def iter_ho3d_samples(root: Path, limit: int | None) -> Iterable[Ho3dSample]:
         )
 
 
-def _root_key(values) -> tuple[float, float, float]:
-    return tuple(np.round(np.asarray(values, dtype=np.float64).reshape(-1)[:3], 6).tolist())
-
-
 def infer_sample_order_from_gt_roots(root: Path) -> list[str]:
     eval_dir = root / "evaluation"
-    meta_by_root = {}
+    meta_items = []
     for meta_path in eval_dir.glob("*/meta/*.pkl"):
         with meta_path.open("rb") as f:
             meta = pickle.load(f, encoding="latin1")
-        key = _root_key(meta["handJoints3D"])
         seq = meta_path.parents[1].name
         sample_id = f"{seq}/{meta_path.stem}"
-        if key in meta_by_root:
-            raise ValueError(f"duplicate HO3D root key: {key}")
-        meta_by_root[key] = sample_id
+        meta_items.append((sample_id, np.asarray(meta["handJoints3D"], dtype=np.float64).reshape(-1)[:3]))
 
-    gt_xyz = json.loads((root / "evaluation_xyz.json").read_text())
+    meta_ids = [item[0] for item in meta_items]
+    meta_roots = np.stack([item[1] for item in meta_items], axis=0)
+    gt_roots = np.asarray(json.loads((root / "evaluation_xyz.json").read_text()), dtype=np.float64)[:, 0, :]
     ids = []
-    for idx, joints in enumerate(gt_xyz):
-        key = _root_key(joints[0])
-        try:
-            ids.append(meta_by_root[key])
-        except KeyError as exc:
-            raise ValueError(f"could not match evaluation_xyz root at index {idx}: {key}") from exc
+    used = set()
+    max_dist = 0.0
+    for idx, root_xyz in enumerate(gt_roots):
+        dists = np.linalg.norm(meta_roots - root_xyz[None, :], axis=1)
+        match = next(int(i) for i in np.argsort(dists) if int(i) not in used)
+        used.add(match)
+        max_dist = max(max_dist, float(dists[match]))
+        ids.append(meta_ids[match])
+    if max_dist > 1e-4:
+        raise ValueError(f"HO3D order matching too loose: max root distance {max_dist}")
     return ids
 
 
