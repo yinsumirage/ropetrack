@@ -9,15 +9,15 @@ from pathlib import Path
 
 
 def load_script():
-    path = Path(__file__).resolve().parents[1] / "scripts" / "bench_ho3d_v2_wilor.py"
-    spec = importlib.util.spec_from_file_location("bench_ho3d_v2_wilor", path)
+    path = Path(__file__).resolve().parents[1] / "scripts" / "bench_ho3d_v2.py"
+    spec = importlib.util.spec_from_file_location("bench_ho3d_v2", path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
 
-class Ho3dWilorBenchTest(unittest.TestCase):
+class Ho3dV2BenchTest(unittest.TestCase):
     def test_iter_samples_prefers_evaluation_txt_order(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -125,6 +125,61 @@ class Ho3dWilorBenchTest(unittest.TestCase):
 
         self.assertIsNone(bench.optional_path_str(None))
         self.assertEqual(bench.optional_path_str(Path("model.ckpt")), "model.ckpt")
+
+    def test_parse_args_accepts_hamer_backend_and_checkpoint(self):
+        bench = load_script()
+        old_argv = sys.argv
+        sys.argv = [
+            "bench",
+            "--out-dir",
+            "out",
+            "--backend",
+            "hamer",
+            "--hamer-ckpt",
+            "hamer.ckpt",
+        ]
+        try:
+            args = bench.parse_args()
+        finally:
+            sys.argv = old_argv
+
+        self.assertEqual(args.backend, "hamer")
+        self.assertEqual(args.hamer_ckpt, Path("hamer.ckpt"))
+
+    def test_predictor_kwargs_passes_backend_specific_checkpoints(self):
+        bench = load_script()
+        args = type("Args", (), {
+            "backend": "hamer",
+            "device": "cuda",
+            "batch_size": 2,
+            "wilor_ckpt": Path("wilor.ckpt"),
+            "wilor_cfg": Path("wilor.yaml"),
+            "hamer_ckpt": Path("hamer.ckpt"),
+        })()
+
+        kwargs = bench.predictor_kwargs(args)
+
+        self.assertEqual(kwargs["backend"], "hamer")
+        self.assertEqual(kwargs["hamer_ckpt"], "hamer.ckpt")
+        self.assertEqual(kwargs["wilor_ckpt"], "wilor.ckpt")
+        self.assertEqual(kwargs["wilor_cfg"], "wilor.yaml")
+
+    def test_run_backend_with_bbox_dispatches_to_hamer(self):
+        bench = load_script()
+        calls = []
+
+        class Predictor:
+            def _run_wilor(self, *args):
+                calls.append("wilor")
+                return []
+
+            def _run_hamer(self, *args):
+                calls.append("hamer")
+                return []
+
+        bench.run_backend_with_bbox(Predictor(), "hamer", "img", "boxes", "is_right", "scores")
+
+        self.assertEqual(calls, ["hamer"])
 
 
 if __name__ == "__main__":

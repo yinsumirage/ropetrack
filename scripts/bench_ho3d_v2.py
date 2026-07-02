@@ -140,6 +140,25 @@ def optional_path_str(path: Path | None) -> str | None:
     return str(path) if path is not None else None
 
 
+def predictor_kwargs(args: argparse.Namespace) -> dict:
+    return {
+        "backend": args.backend,
+        "device": args.device,
+        "batch_size": args.batch_size,
+        "wilor_ckpt": optional_path_str(args.wilor_ckpt),
+        "wilor_cfg": optional_path_str(args.wilor_cfg),
+        "hamer_ckpt": optional_path_str(args.hamer_ckpt),
+    }
+
+
+def run_backend_with_bbox(predictor, backend: str, img, boxes, is_right, scores):
+    if backend == "wilor":
+        return predictor._run_wilor(img, boxes, is_right, scores)
+    if backend == "hamer":
+        return predictor._run_hamer(img, boxes, is_right, scores)
+    raise ValueError(f"unsupported backend: {backend}")
+
+
 def run_export(args: argparse.Namespace) -> Path:
     repo = Path(__file__).resolve().parents[1]
     anyhand_root = repo / "third_party" / "anyhand"
@@ -159,13 +178,7 @@ def run_export(args: argparse.Namespace) -> Path:
     xyz_pred, verts_pred, failures = [], [], []
 
     with pushd(anyhand_root):
-        predictor = AnyHandPredictor(
-            backend="wilor",
-            device=args.device,
-            batch_size=args.batch_size,
-            wilor_ckpt=optional_path_str(args.wilor_ckpt),
-            wilor_cfg=optional_path_str(args.wilor_cfg),
-        )
+        predictor = AnyHandPredictor(**predictor_kwargs(args))
 
         for idx, sample in enumerate(samples):
             try:
@@ -175,7 +188,9 @@ def run_export(args: argparse.Namespace) -> Path:
                         raise FileNotFoundError(sample.image_path)
                     with sample.meta_path.open("rb") as f:
                         meta = pickle.load(f, encoding="latin1")
-                    hands = predictor._run_wilor(
+                    hands = run_backend_with_bbox(
+                        predictor,
+                        args.backend,
                         img,
                         hand_bbox_from_meta(meta),
                         np.asarray([1.0], dtype=np.float32),
@@ -205,7 +220,7 @@ def run_export(args: argparse.Namespace) -> Path:
             shutil.copy2(gt_path, eval_input / gt_name)
     (out_dir / "failures.json").write_text(json.dumps(failures, indent=2))
     (out_dir / "run_meta.json").write_text(json.dumps({
-        "backend": "anyhand_wilor",
+        "backend": f"anyhand_{args.backend}",
         "mode": args.mode,
         "limit": args.limit,
         "num_samples": len(samples),
@@ -214,6 +229,7 @@ def run_export(args: argparse.Namespace) -> Path:
         "joint_source": args.joint_source,
         "wilor_ckpt": optional_path_str(args.wilor_ckpt),
         "wilor_cfg": optional_path_str(args.wilor_cfg),
+        "hamer_ckpt": optional_path_str(args.hamer_ckpt),
         "coordinate_transform": "points + cam_t; output metres; flip y and z to OpenGL",
         "sample_order": [sample.sample_id for sample in samples],
     }, indent=2))
@@ -238,12 +254,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--out-dir", type=Path, required=True)
     parser.add_argument("--limit", type=int, default=20, help="Number of samples to run; <=0 means all.")
     parser.add_argument("--mode", choices=["detector", "gt_bbox"], default="detector")
+    parser.add_argument("--backend", choices=["wilor", "hamer"], default="wilor")
     parser.add_argument("--units", choices=["m", "mm"], default="m")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--joint-source", choices=["mano_vertices", "anyhand_keypoints"], default="mano_vertices")
     parser.add_argument("--wilor-ckpt", type=Path, default=None)
     parser.add_argument("--wilor-cfg", type=Path, default=None)
+    parser.add_argument("--hamer-ckpt", type=Path, default=None)
     parser.add_argument("--run-eval", action="store_true")
     return parser.parse_args()
 

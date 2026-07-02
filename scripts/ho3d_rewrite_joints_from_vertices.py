@@ -5,7 +5,7 @@ import json
 import shutil
 from pathlib import Path
 
-from bench_ho3d_v2_wilor import ho3d_joints_from_vertices, load_mano_j_regressor
+from bench_ho3d_v2 import ho3d_joints_from_vertices, load_mano_j_regressor
 
 
 def rewrite(args: argparse.Namespace) -> Path:
