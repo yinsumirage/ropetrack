@@ -14,6 +14,8 @@ from typing import Iterable
 
 import numpy as np
 
+HO3D_TIP_VERTEX_IDS = np.asarray([744, 333, 444, 555, 672], dtype=np.int64)
+
 
 @dataclass(frozen=True)
 class Ho3dSample:
@@ -107,6 +109,25 @@ def to_opengl_camera(points, cam_t, units: str) -> np.ndarray:
     return pts
 
 
+def dense_regressor(regressor) -> np.ndarray:
+    if hasattr(regressor, "toarray"):
+        regressor = regressor.toarray()
+    return np.asarray(regressor, dtype=np.float32)
+
+
+def load_mano_j_regressor(mano_path: Path) -> np.ndarray:
+    with mano_path.open("rb") as f:
+        mano = pickle.load(f, encoding="latin1")
+    return dense_regressor(mano["J_regressor"])
+
+
+def ho3d_joints_from_vertices(vertices: np.ndarray, j_regressor: np.ndarray) -> np.ndarray:
+    verts = np.asarray(vertices, dtype=np.float32)
+    joints16 = np.asarray(j_regressor, dtype=np.float32) @ verts
+    tips = verts[HO3D_TIP_VERTEX_IDS]
+    return np.concatenate([joints16, tips], axis=0)
+
+
 def run_export(args: argparse.Namespace) -> Path:
     repo = Path(__file__).resolve().parents[1]
     anyhand_root = repo / "third_party" / "anyhand"
@@ -122,6 +143,7 @@ def run_export(args: argparse.Namespace) -> Path:
     eval_input.mkdir(parents=True, exist_ok=True)
     eval_results.mkdir(parents=True, exist_ok=True)
 
+    j_regressor = load_mano_j_regressor(anyhand_root / "mano_data" / "MANO_RIGHT.pkl")
     xyz_pred, verts_pred, failures = [], [], []
 
     with pushd(anyhand_root):
@@ -146,8 +168,11 @@ def run_export(args: argparse.Namespace) -> Path:
                 hand = select_hand(hands)
                 if hand is None:
                     raise RuntimeError("no hand detected")
-                xyz = to_opengl_camera(hand.keypoints_3d, hand.cam_t, args.units)
                 verts = to_opengl_camera(hand.vertices, hand.cam_t, args.units)
+                if args.joint_source == "mano_vertices":
+                    xyz = ho3d_joints_from_vertices(verts, j_regressor)
+                else:
+                    xyz = to_opengl_camera(hand.keypoints_3d, hand.cam_t, args.units)
             except Exception as exc:
                 failures.append({"idx": idx, "sample_id": sample.sample_id, "error": repr(exc)})
                 xyz = np.zeros((21, 3), dtype=np.float32)
@@ -166,6 +191,7 @@ def run_export(args: argparse.Namespace) -> Path:
         "num_samples": len(samples),
         "num_failures": len(failures),
         "units": args.units,
+        "joint_source": args.joint_source,
         "coordinate_transform": "points + cam_t; output metres; flip y and z to OpenGL",
         "sample_order": [sample.sample_id for sample in samples],
     }, indent=2))
@@ -193,6 +219,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--units", choices=["m", "mm"], default="m")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--batch-size", type=int, default=1)
+    parser.add_argument("--joint-source", choices=["mano_vertices", "anyhand_keypoints"], default="mano_vertices")
     parser.add_argument("--run-eval", action="store_true")
     return parser.parse_args()
 

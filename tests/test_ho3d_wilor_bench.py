@@ -91,6 +91,22 @@ class Ho3dWilorBenchTest(unittest.TestCase):
 
         self.assertEqual(os.getcwd(), before)
 
+    def test_ho3d_joints_from_vertices_uses_mano_order_and_tips(self):
+        bench = load_script()
+        verts = [[float(i), float(i + 1), float(i + 2)] for i in range(778)]
+        regressor = [[0.0] * 778 for _ in range(16)]
+        for joint_id in range(16):
+            regressor[joint_id][joint_id] = 1.0
+
+        joints = bench.ho3d_joints_from_vertices(verts, regressor)
+
+        self.assertEqual(joints.shape, (21, 3))
+        self.assertEqual(joints[0].tolist(), [0.0, 1.0, 2.0])
+        self.assertEqual(joints[15].tolist(), [15.0, 16.0, 17.0])
+        self.assertEqual(joints[16].tolist(), [744.0, 745.0, 746.0])
+        self.assertEqual(joints[17].tolist(), [333.0, 334.0, 335.0])
+        self.assertEqual(joints[20].tolist(), [672.0, 673.0, 674.0])
+
 
 if __name__ == "__main__":
     unittest.main()
