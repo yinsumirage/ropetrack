@@ -8,6 +8,10 @@ Create `scripts/bench_ho3d.py` as the generic successor to
 `scripts/bench_ho3d_v2.py`, while keeping the v2 script untouched as the
 verified baseline.
 
+Follow-up on 2026-07-03: after a full original-WiLoR GT-bbox run reproduced the
+old result, `scripts/bench_ho3d_v2.py` was removed and the generic script became
+the only HO3D benchmark entrypoint.
+
 The new script supports a generic candidate flow:
 
 ```text
@@ -33,7 +37,7 @@ sample may have multiple hand boxes.
 $env:PYTHONPATH='src'; python -m unittest discover -s tests
 21 tests OK
 
-python -m py_compile scripts/bench_ho3d.py scripts/bench_ho3d_v2.py scripts/eval_ho3d_parallel.py
+python -m py_compile scripts/bench_ho3d.py scripts/eval_ho3d_parallel.py
 OK
 
 git diff --check

@@ -9,15 +9,15 @@ from pathlib import Path
 
 
 def load_script():
-    path = Path(__file__).resolve().parents[1] / "scripts" / "bench_ho3d_v2.py"
-    spec = importlib.util.spec_from_file_location("bench_ho3d_v2", path)
+    path = Path(__file__).resolve().parents[1] / "scripts" / "bench_ho3d.py"
+    spec = importlib.util.spec_from_file_location("bench_ho3d", path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
 
-class Ho3dV2BenchTest(unittest.TestCase):
+class Ho3dBenchLegacyTest(unittest.TestCase):
     def test_iter_samples_prefers_evaluation_txt_order(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -81,7 +81,7 @@ class Ho3dV2BenchTest(unittest.TestCase):
                 })())
 
             bench = load_script()
-            items = bench.load_gt_bbox_items(samples)
+            items = bench.load_gt_bbox_candidates(samples)
 
         self.assertEqual([item.sample.sample_id for item in items], ["B/0001", "A/0000"])
         self.assertEqual([item.bbox_xyxy.tolist() for item in items], [[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0]])
@@ -213,7 +213,7 @@ class Ho3dV2BenchTest(unittest.TestCase):
             self.skipTest("torch is not installed")
 
         bench = load_script()
-        old_dataset = bench.CrossImageGtBBoxDataset
+        old_dataset = bench.CrossImageBBoxDataset
 
         class ModelCfg:
             IMAGE_SIZE = 10
@@ -244,7 +244,7 @@ class Ho3dV2BenchTest(unittest.TestCase):
                     "box_size": torch.tensor(100.0),
                     "img_size": torch.tensor([100.0, 100.0]),
                     "right": torch.tensor(1.0),
-                    "sample_index": torch.tensor(idx),
+                    "candidate_index": torch.tensor(idx),
                 }
 
         class FakeModel:
@@ -264,10 +264,18 @@ class Ho3dV2BenchTest(unittest.TestCase):
             _wilor_model_cfg = Cfg()
 
         try:
-            bench.CrossImageGtBBoxDataset = FakeDataset
-            preds = bench.run_gt_bbox_batch_predictions(Predictor(), "wilor", [object(), object()], batch_size=2, num_workers=0)
+            bench.CrossImageBBoxDataset = FakeDataset
+            samples = [
+                bench.Ho3dSample("A/0000", Path("a.png"), Path("a.pkl")),
+                bench.Ho3dSample("B/0001", Path("b.png"), Path("b.pkl")),
+            ]
+            candidates = [
+                bench.BBoxItem(0, 0, samples[0], torch.zeros(4).numpy(), True, 1.0, "gt_bbox"),
+                bench.BBoxItem(1, 0, samples[1], torch.zeros(4).numpy(), True, 1.0, "gt_bbox"),
+            ]
+            preds = bench.run_gt_bbox_batch_predictions(Predictor(), "wilor", candidates, batch_size=2, num_workers=0)
         finally:
-            bench.CrossImageGtBBoxDataset = old_dataset
+            bench.CrossImageBBoxDataset = old_dataset
 
         self.assertEqual(len(preds), 2)
         self.assertEqual(preds[0].vertices[0].tolist(), [0.0, 0.0, 0.0])
