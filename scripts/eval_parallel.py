@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Parallel HO3D eval compatible with the official scores.txt fields."""
+"""Parallel mesh/joint eval compatible with the current benchmark scores."""
 
 from __future__ import annotations
 
@@ -203,11 +203,10 @@ def write_scores(output_dir, scores):
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Parallel HO3D evaluation.")
+    parser = argparse.ArgumentParser(description="Parallel benchmark evaluation.")
     parser.add_argument("input_dir", help="Directory containing pred.json and evaluation_* ground truth JSON files.")
     parser.add_argument("output_dir", help="Directory where scores.txt should be written.")
     parser.add_argument("--pred_file_name", default="pred.json", help="Prediction JSON filename.")
-    parser.add_argument("--version", choices=["v2", "v3"], default="v2", help="Accepted for CLI compatibility.")
     parser.add_argument("--num-workers", type=int, default=max(1, min(8, os.cpu_count() or 1)))
     parser.add_argument("--chunksize", type=int, default=16)
     return parser.parse_args()

@@ -502,11 +502,9 @@ def run_export(args: argparse.Namespace) -> Path:
     if args.run_eval:
         cmd = [
             sys.executable,
-            str(repo / "scripts" / "eval_ho3d_parallel.py"),
+            str(repo / "scripts" / "eval_parallel.py"),
             str(eval_input),
             str(eval_results),
-            "--version",
-            "v2",
             "--num-workers",
             str(args.eval_num_workers),
         ]

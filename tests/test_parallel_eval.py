@@ -7,15 +7,15 @@ import numpy as np
 
 
 def load_script():
-    path = Path(__file__).resolve().parents[1] / "scripts" / "eval_ho3d_parallel.py"
-    spec = importlib.util.spec_from_file_location("eval_ho3d_parallel", path)
+    path = Path(__file__).resolve().parents[1] / "scripts" / "eval_parallel.py"
+    spec = importlib.util.spec_from_file_location("eval_parallel", path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
 
-class Ho3dParallelEvalTest(unittest.TestCase):
+class ParallelEvalTest(unittest.TestCase):
     def test_measure_distances_matches_ho3d_evalutil_semantics(self):
         eval_parallel = load_script()
         distances = np.array(
