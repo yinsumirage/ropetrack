@@ -74,3 +74,28 @@ Retry jobs with the correct `--mode gt_bbox` and 3-hour GPU limits:
 |---|---|---:|---:|
 | AnyHand WiLoR gt_bbox | `/data/wentao/ropetrack/runs/ho3d_v3_anyhand_wilor_gtbbox_retry_20260702_195752` | 161883 | 161884 |
 | WiLoR final gt_bbox | `/data/wentao/ropetrack/runs/ho3d_v3_wilor_final_gtbbox_retry_20260702_195752` | 161885 | 161886 |
+
+## Completed Results
+
+AnyHand WiLoR detector completed:
+
+```text
+run: /data/wentao/ropetrack/runs/ho3d_v3_anyhand_wilor_detector_20260702_161953
+GPU pred: 161779 completed in 01:21:24
+CPU eval: 161780 completed in 00:08:14
+num_samples: 20137
+num_failures: 66
+```
+
+Scores:
+
+```text
+xyz_procrustes_al_mean3d: 0.714346 cm ~= 7.14 mm
+xyz_procrustes_al_auc3d: 0.857561
+xyz_scale_trans_al_mean3d: 1.429216 cm
+xyz_scale_trans_al_auc3d: 0.721412
+mesh_al_mean3d: 0.668057 cm ~= 6.68 mm
+mesh_al_auc3d: 0.866959
+f_al_score_5: 0.694082
+f_al_score_15: 0.979677
+```

@@ -145,6 +145,28 @@ jobs were submitted with 3-hour GPU limits and dependent parallel CPU eval:
 | detector | 161879 | 161880 | `/data/wentao/ropetrack/runs/ho3d_v2_wilor_final_detector_retry_20260702_195752` |
 | gt_bbox | 161881 | 161882 | `/data/wentao/ropetrack/runs/ho3d_v2_wilor_final_gtbbox_retry_20260702_195752` |
 
+WiLoR final gt-bbox retry completed:
+
+```text
+GPU pred: 161881 completed in 00:19:51
+CPU eval: 161882 completed in 00:05:15
+num_samples: 11524
+num_failures: 0
+```
+
+Scores:
+
+```text
+xyz_procrustes_al_mean3d: 0.753656 cm ~= 7.54 mm
+xyz_procrustes_al_auc3d: 0.849366
+xyz_scale_trans_al_mean3d: 1.488247 cm
+xyz_scale_trans_al_auc3d: 0.706184
+mesh_al_mean3d: 0.777823 cm ~= 7.78 mm
+mesh_al_auc3d: 0.844507
+f_al_score_5: 0.640977
+f_al_score_15: 0.982330
+```
+
 Final fixed scores:
 
 | Mode | PA joint mean | PA joint AUC | ST joint mean | ST joint AUC | PA mesh mean | PA mesh AUC | aligned F@5 | aligned F@15 |
