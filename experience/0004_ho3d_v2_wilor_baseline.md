@@ -125,6 +125,18 @@ gt_bbox fixed eval: 161654
 detector fixed eval: 161655
 ```
 
+Original WiLoR final checkpoint jobs are still pending and should be checked
+next:
+
+| Mode | GPU job | Time limit | Expected window | Run dir |
+|---|---:|---:|---|---|
+| detector | 161691 | 01:00:00 | 2026-07-03 08:00-09:00 | `/data/wentao/ropetrack/runs/ho3d_v2_wilor_final_detector_pred_20260702_151639` |
+| gt_bbox | 161692 | 01:00:00 | 2026-07-03 12:00-13:00 | `/data/wentao/ropetrack/runs/ho3d_v2_wilor_final_gtbbox_pred_20260702_151639` |
+
+These are pred-only GPU jobs for
+`third_party/anyhand/pretrained_models/wilor_final.ckpt`. After they finish,
+run the parallel HO3D eval on each `eval_input` directory.
+
 Final fixed scores:
 
 | Mode | PA joint mean | PA joint AUC | ST joint mean | ST joint AUC | PA mesh mean | PA mesh AUC | aligned F@5 | aligned F@15 |
