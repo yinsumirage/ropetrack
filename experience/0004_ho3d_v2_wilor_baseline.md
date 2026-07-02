@@ -167,6 +167,28 @@ f_al_score_5: 0.640977
 f_al_score_15: 0.982330
 ```
 
+WiLoR final detector retry completed:
+
+```text
+GPU pred: 161879 completed in 00:59:00
+CPU eval: 161880 completed in 00:06:11
+num_samples: 11524
+num_failures: 30
+```
+
+Scores:
+
+```text
+xyz_procrustes_al_mean3d: 0.770504 cm ~= 7.71 mm
+xyz_procrustes_al_auc3d: 0.846357
+xyz_scale_trans_al_mean3d: 1.515787 cm
+xyz_scale_trans_al_auc3d: 0.704183
+mesh_al_mean3d: 0.795209 cm ~= 7.95 mm
+mesh_al_auc3d: 0.841490
+f_al_score_5: 0.635685
+f_al_score_15: 0.979001
+```
+
 Final fixed scores:
 
 | Mode | PA joint mean | PA joint AUC | ST joint mean | ST joint AUC | PA mesh mean | PA mesh AUC | aligned F@5 | aligned F@15 |

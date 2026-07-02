@@ -99,3 +99,72 @@ mesh_al_auc3d: 0.866959
 f_al_score_5: 0.694082
 f_al_score_15: 0.979677
 ```
+
+AnyHand WiLoR gt-bbox completed:
+
+```text
+run: /data/wentao/ropetrack/runs/ho3d_v3_anyhand_wilor_gtbbox_retry_20260702_195752
+GPU pred: 161883 completed in 00:47:31
+CPU eval: 161884 completed in 00:07:23
+num_samples: 20137
+num_failures: 0
+```
+
+Scores:
+
+```text
+xyz_procrustes_al_mean3d: 0.693829 cm ~= 6.94 mm
+xyz_procrustes_al_auc3d: 0.861273
+xyz_scale_trans_al_mean3d: 1.400026 cm
+xyz_scale_trans_al_auc3d: 0.723425
+mesh_al_mean3d: 0.646108 cm ~= 6.46 mm
+mesh_al_auc3d: 0.870803
+f_al_score_5: 0.700943
+f_al_score_15: 0.983929
+```
+
+WiLoR final detector completed:
+
+```text
+run: /data/wentao/ropetrack/runs/ho3d_v3_wilor_final_detector_20260702_161953
+GPU pred: 161783 completed in 01:32:54
+CPU eval: 161784 completed in 00:08:34
+num_samples: 20137
+num_failures: 66
+```
+
+Scores:
+
+```text
+xyz_procrustes_al_mean3d: 0.731226 cm ~= 7.31 mm
+xyz_procrustes_al_auc3d: 0.854195
+xyz_scale_trans_al_mean3d: 1.463014 cm
+xyz_scale_trans_al_auc3d: 0.715313
+mesh_al_mean3d: 0.683100 cm ~= 6.83 mm
+mesh_al_auc3d: 0.863956
+f_al_score_5: 0.684130
+f_al_score_15: 0.979185
+```
+
+WiLoR final gt-bbox completed:
+
+```text
+run: /data/wentao/ropetrack/runs/ho3d_v3_wilor_final_gtbbox_retry_20260702_195752
+GPU pred: 161885 completed in 00:47:31
+CPU eval: 161886 completed in 00:07:24
+num_samples: 20137
+num_failures: 0
+```
+
+Scores:
+
+```text
+xyz_procrustes_al_mean3d: 0.708798 cm ~= 7.09 mm
+xyz_procrustes_al_auc3d: 0.858267
+xyz_scale_trans_al_mean3d: 1.430366 cm
+xyz_scale_trans_al_auc3d: 0.717750
+mesh_al_mean3d: 0.659566 cm ~= 6.60 mm
+mesh_al_auc3d: 0.868113
+f_al_score_5: 0.691721
+f_al_score_15: 0.983520
+```
