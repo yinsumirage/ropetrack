@@ -64,6 +64,20 @@ class FreiHandBenchTest(unittest.TestCase):
         self.assertEqual(joints[16].tolist(), [555.0, 556.0, 557.0])
         self.assertEqual(joints[20].tolist(), [672.0, 673.0, 674.0])
 
+    def test_write_eval_gt_subset_limits_gt_files_to_prediction_count(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "root"
+            out = Path(tmp) / "out"
+            root.mkdir()
+            (root / "evaluation_xyz.json").write_text(json.dumps([1, 2, 3]))
+            (root / "evaluation_verts.json").write_text(json.dumps([4, 5, 6]))
+
+            bench = load_script()
+            bench.write_eval_gt_subset(root, out, 2)
+
+            self.assertEqual(json.loads((out / "evaluation_xyz.json").read_text()), [1, 2])
+            self.assertEqual(json.loads((out / "evaluation_verts.json").read_text()), [4, 5])
+
 
 if __name__ == "__main__":
     unittest.main()

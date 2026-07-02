@@ -32,4 +32,8 @@ ends with the clean baseline report before hard splits or rope labels.
 
 ## Stage 2: Hard Splits And Rope Signals
 
-Not started. Begin after the clean baseline report is written and checked.
+### Hard Image Smoke
+
+| Date | Note | Why read it |
+|---|---|---|
+| 2026-07-03 | [0014_stage2_ho3d_v2_hard_mask_smoke.md](0014_stage2_ho3d_v2_hard_mask_smoke.md) | First hard-image generator, HO3D v2 clean vs mask smoke, limited-GT eval fix, and severity lesson. |

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -123,6 +122,13 @@ def check_joint_protocol(root: Path, j_regressor: np.ndarray, max_samples: int, 
     return max_err
 
 
+def write_eval_gt_subset(root: Path, eval_input: Path, count: int) -> None:
+    eval_input.mkdir(parents=True, exist_ok=True)
+    for gt_name in ("evaluation_xyz.json", "evaluation_verts.json"):
+        values = read_json(root / gt_name)
+        (eval_input / gt_name).write_text(json.dumps(values[:count]))
+
+
 def run_export(args: argparse.Namespace) -> Path:
     repo = Path(__file__).resolve().parents[1]
     anyhand_root = repo / "third_party" / "anyhand"
@@ -177,8 +183,7 @@ def run_export(args: argparse.Namespace) -> Path:
             verts_pred.append(verts.tolist())
 
     (eval_input / "pred.json").write_text(json.dumps([xyz_pred, verts_pred]))
-    for gt_name in ("evaluation_xyz.json", "evaluation_verts.json"):
-        shutil.copy2(args.freihand_root / gt_name, eval_input / gt_name)
+    write_eval_gt_subset(args.freihand_root, eval_input, len(samples))
     (out_dir / "failures.json").write_text(json.dumps(failures, indent=2))
     (out_dir / "run_meta.json").write_text(json.dumps({
         "backend": f"anyhand_{args.backend}",

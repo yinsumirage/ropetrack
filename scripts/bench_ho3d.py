@@ -5,7 +5,6 @@ import contextlib
 import json
 import os
 import pickle
-import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -421,6 +420,15 @@ def select_sample_predictions(samples: list[Ho3dSample], predictions: list[Batch
     return selected, failures
 
 
+def write_eval_gt_subset(root: Path, eval_input: Path, count: int) -> None:
+    eval_input.mkdir(parents=True, exist_ok=True)
+    for gt_name in ("evaluation_xyz.json", "evaluation_verts.json"):
+        gt_path = root / gt_name
+        if gt_path.exists():
+            values = json.loads(gt_path.read_text())
+            (eval_input / gt_name).write_text(json.dumps(values[:count]))
+
+
 def run_export(args: argparse.Namespace) -> Path:
     repo = Path(__file__).resolve().parents[1]
     anyhand_root = repo / "third_party" / "anyhand"
@@ -474,10 +482,7 @@ def run_export(args: argparse.Namespace) -> Path:
             verts_pred.append(verts.tolist())
 
     (eval_input / "pred.json").write_text(json.dumps([xyz_pred, verts_pred]))
-    for gt_name in ("evaluation_xyz.json", "evaluation_verts.json"):
-        gt_path = args.ho3d_root / gt_name
-        if gt_path.exists():
-            shutil.copy2(gt_path, eval_input / gt_name)
+    write_eval_gt_subset(args.ho3d_root, eval_input, len(samples))
     (out_dir / "failures.json").write_text(json.dumps(failures, indent=2))
     (out_dir / "run_meta.json").write_text(json.dumps({
         "backend": f"anyhand_{args.backend}",

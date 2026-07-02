@@ -1,5 +1,7 @@
 import importlib.util
+import json
 import sys
+import tempfile
 import types
 import unittest
 from pathlib import Path
@@ -118,6 +120,20 @@ class Ho3dBenchGenericTest(unittest.TestCase):
         self.assertEqual([c.bbox_index for c in candidates], [0, 1, 0])
         self.assertEqual([c.is_right for c in candidates], [True, False, True])
         self.assertEqual([round(c.score, 3) for c in candidates], [0.4, 0.9, 0.7])
+
+    def test_write_eval_gt_subset_limits_gt_files_to_prediction_count(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "root"
+            out = Path(tmp) / "out"
+            root.mkdir()
+            (root / "evaluation_xyz.json").write_text(json.dumps([1, 2, 3]))
+            (root / "evaluation_verts.json").write_text(json.dumps([4, 5, 6]))
+
+            bench = load_script()
+            bench.write_eval_gt_subset(root, out, 2)
+
+            self.assertEqual(json.loads((out / "evaluation_xyz.json").read_text()), [1, 2])
+            self.assertEqual(json.loads((out / "evaluation_verts.json").read_text()), [4, 5])
 
 
 if __name__ == "__main__":
