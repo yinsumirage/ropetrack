@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 import pickle
 import sys
 import tempfile
@@ -79,6 +80,16 @@ class Ho3dWilorBenchTest(unittest.TestCase):
             samples = list(bench.iter_ho3d_samples(root, limit=None))
 
         self.assertEqual([s.sample_id for s in samples], ["B/0001", "A/0000"])
+
+    def test_pushd_restores_cwd(self):
+        bench = load_script()
+        before = os.getcwd()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with bench.pushd(Path(tmp)):
+                self.assertEqual(os.getcwd(), str(Path(tmp)))
+
+        self.assertEqual(os.getcwd(), before)
 
 
 if __name__ == "__main__":

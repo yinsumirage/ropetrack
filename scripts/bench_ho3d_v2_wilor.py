@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
+import os
 import pickle
 import shutil
 import subprocess
@@ -18,6 +20,16 @@ class Ho3dSample:
     sample_id: str
     image_path: Path
     meta_path: Path
+
+
+@contextlib.contextmanager
+def pushd(path: Path):
+    old = Path.cwd()
+    os.chdir(path)
+    try:
+        yield
+    finally:
+        os.chdir(old)
 
 
 def iter_ho3d_samples(root: Path, limit: int | None) -> Iterable[Ho3dSample]:
@@ -110,36 +122,38 @@ def run_export(args: argparse.Namespace) -> Path:
     eval_input.mkdir(parents=True, exist_ok=True)
     eval_results.mkdir(parents=True, exist_ok=True)
 
-    predictor = AnyHandPredictor(backend="wilor", device=args.device, batch_size=args.batch_size)
     xyz_pred, verts_pred, failures = [], [], []
 
-    for idx, sample in enumerate(samples):
-        try:
-            if args.mode == "gt_bbox":
-                img = cv2.imread(str(sample.image_path))
-                if img is None:
-                    raise FileNotFoundError(sample.image_path)
-                with sample.meta_path.open("rb") as f:
-                    meta = pickle.load(f, encoding="latin1")
-                hands = predictor._run_wilor(
-                    img,
-                    hand_bbox_from_meta(meta),
-                    np.asarray([1.0], dtype=np.float32),
-                    np.asarray([1.0], dtype=np.float32),
-                )
-            else:
-                hands = predictor.predict(str(sample.image_path))
-            hand = select_hand(hands)
-            if hand is None:
-                raise RuntimeError("no hand detected")
-            xyz = to_opengl_camera(hand.keypoints_3d, hand.cam_t, args.units)
-            verts = to_opengl_camera(hand.vertices, hand.cam_t, args.units)
-        except Exception as exc:
-            failures.append({"idx": idx, "sample_id": sample.sample_id, "error": repr(exc)})
-            xyz = np.zeros((21, 3), dtype=np.float32)
-            verts = np.zeros((778, 3), dtype=np.float32)
-        xyz_pred.append(xyz.tolist())
-        verts_pred.append(verts.tolist())
+    with pushd(anyhand_root):
+        predictor = AnyHandPredictor(backend="wilor", device=args.device, batch_size=args.batch_size)
+
+        for idx, sample in enumerate(samples):
+            try:
+                if args.mode == "gt_bbox":
+                    img = cv2.imread(str(sample.image_path))
+                    if img is None:
+                        raise FileNotFoundError(sample.image_path)
+                    with sample.meta_path.open("rb") as f:
+                        meta = pickle.load(f, encoding="latin1")
+                    hands = predictor._run_wilor(
+                        img,
+                        hand_bbox_from_meta(meta),
+                        np.asarray([1.0], dtype=np.float32),
+                        np.asarray([1.0], dtype=np.float32),
+                    )
+                else:
+                    hands = predictor.predict(str(sample.image_path))
+                hand = select_hand(hands)
+                if hand is None:
+                    raise RuntimeError("no hand detected")
+                xyz = to_opengl_camera(hand.keypoints_3d, hand.cam_t, args.units)
+                verts = to_opengl_camera(hand.vertices, hand.cam_t, args.units)
+            except Exception as exc:
+                failures.append({"idx": idx, "sample_id": sample.sample_id, "error": repr(exc)})
+                xyz = np.zeros((21, 3), dtype=np.float32)
+                verts = np.zeros((778, 3), dtype=np.float32)
+            xyz_pred.append(xyz.tolist())
+            verts_pred.append(verts.tolist())
 
     (eval_input / "pred.json").write_text(json.dumps([xyz_pred, verts_pred]))
     shutil.copy2(args.ho3d_root / "evaluation_xyz.json", eval_input / "evaluation_xyz.json")
