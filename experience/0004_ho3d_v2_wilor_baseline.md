@@ -221,8 +221,8 @@ python scripts/eval_ho3d_parallel.py \
 ```
 
 It writes `scores.txt` with the same field names as the official HO3D eval,
-plus `scores.json`. Keep the official `third_party/ho3d_eval/eval.py` as the
-reference implementation and use it for occasional exactness checks.
+plus `scores.json`. The vendored `third_party/ho3d_eval` copy was removed after
+this diff check; use `scripts/eval_ho3d_parallel.py` for repo runs.
 
 Verified on the fixed gt-bbox run:
 

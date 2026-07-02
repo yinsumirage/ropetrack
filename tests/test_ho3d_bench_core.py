@@ -171,6 +171,18 @@ class Ho3dBenchLegacyTest(unittest.TestCase):
         self.assertEqual(args.backend, "hamer")
         self.assertEqual(args.hamer_ckpt, Path("hamer.ckpt"))
 
+    def test_parse_args_accepts_eval_num_workers(self):
+        bench = load_script()
+        old_argv = sys.argv
+        sys.argv = ["bench", "--out-dir", "out", "--run-eval", "--eval-num-workers", "12"]
+        try:
+            args = bench.parse_args()
+        finally:
+            sys.argv = old_argv
+
+        self.assertTrue(args.run_eval)
+        self.assertEqual(args.eval_num_workers, 12)
+
     def test_predictor_kwargs_passes_backend_specific_checkpoints(self):
         bench = load_script()
         args = type("Args", (), {

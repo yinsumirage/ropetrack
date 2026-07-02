@@ -502,11 +502,13 @@ def run_export(args: argparse.Namespace) -> Path:
     if args.run_eval:
         cmd = [
             sys.executable,
-            str(repo / "third_party" / "ho3d_eval" / "eval.py"),
+            str(repo / "scripts" / "eval_ho3d_parallel.py"),
             str(eval_input),
             str(eval_results),
             "--version",
             "v2",
+            "--num-workers",
+            str(args.eval_num_workers),
         ]
         subprocess.run(cmd, check=True)
 
@@ -529,6 +531,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--wilor-ckpt", type=Path, default=None)
     parser.add_argument("--wilor-cfg", type=Path, default=None)
     parser.add_argument("--hamer-ckpt", type=Path, default=None)
+    parser.add_argument("--eval-num-workers", type=int, default=16)
     parser.add_argument("--run-eval", action="store_true")
     return parser.parse_args()
 
