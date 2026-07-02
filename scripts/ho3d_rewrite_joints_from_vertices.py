@@ -15,7 +15,9 @@ def rewrite(args: argparse.Namespace) -> Path:
     xyz = [ho3d_joints_from_vertices(v, j_regressor).tolist() for v in verts]
 
     eval_input = args.out_dir / "eval_input"
+    eval_results = args.out_dir / "eval_results"
     eval_input.mkdir(parents=True, exist_ok=True)
+    eval_results.mkdir(parents=True, exist_ok=True)
     (eval_input / "pred.json").write_text(json.dumps([xyz, verts]))
     for name in ["evaluation_xyz.json", "evaluation_verts.json"]:
         shutil.copy2(args.src / "eval_input" / name, eval_input / name)
