@@ -85,8 +85,10 @@ unclear or stale, re-read that folder before writing or running cluster scripts.
   - `HO3D_v2_eval`: expanded eval set with `evaluation/`,
     `evaluation_xyz.json`, and `evaluation_verts.json`.
   - `HO3D_v3`: renamed from `HO-3D`; full zip was extracted and deleted. It now
-    has `train/`, `evaluation/`, and `train.txt`; train/evaluation sequences
-    contain `rgb`, `depth`, and `meta`, and train sequences also have `seg`.
+    has `train/`, `evaluation/`, `train.txt`, `evaluation.txt`,
+    `evaluation_xyz.json`, and `evaluation_verts.json`. The evaluation split has
+    20137 samples and uses `.jpg` RGB images; train/evaluation sequences contain
+    `rgb`, `depth`, and `meta`, and train sequences also have `seg`.
 - HaMeR checkpoint files were moved under the shared `pretrained_models`, but
   `pretrained_models/hamer_ckpts/checkpoints/model_config.yaml` was observed as
   0 bytes on 2026-07-02. Re-check HaMeR assets before using that backend.
