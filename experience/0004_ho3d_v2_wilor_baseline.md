@@ -125,6 +125,37 @@ gt_bbox fixed eval: 161654
 detector fixed eval: 161655
 ```
 
+Final fixed scores:
+
+| Mode | PA joint mean | PA joint AUC | ST joint mean | ST joint AUC | PA mesh mean | PA mesh AUC | aligned F@5 | aligned F@15 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| detector fixed | 0.758737 cm | 0.848674 | 1.479608 cm | 0.710721 | 0.787432 cm | 0.843035 | 0.639297 | 0.980031 |
+| gt_bbox fixed | 0.740556 cm | 0.851971 | 1.458248 cm | 0.711925 | 0.768836 cm | 0.846304 | 0.645197 | 0.983529 |
+
+In paper units this is approximately:
+
+```text
+detector fixed: PA-MPJPE 7.59 mm, PA-MPVPE 7.87 mm, AUC_j 0.849, AUC_v 0.843
+gt_bbox fixed:  PA-MPJPE 7.41 mm, PA-MPVPE 7.69 mm, AUC_j 0.852, AUC_v 0.846
+```
+
+This is the first credible WiLoR w/ AnyHand HO3D v2 baseline. The original
+unfixed joint scores above should be kept only as a failure example.
+
 Keep CPU eval separate from GPU inference. The official HO3D eval is a
 single-process CPU loop and took about 36-37 minutes; extra Slurm CPUs do not
 help unless the eval code is parallelized.
+
+Parallel eval helper added:
+
+```bash
+python scripts/eval_ho3d_parallel.py \
+  /data/wentao/ropetrack/runs/<run>/eval_input \
+  /data/wentao/ropetrack/runs/<run>/eval_results_parallel \
+  --version v2 \
+  --num-workers 8
+```
+
+It writes `scores.txt` with the same field names as the official HO3D eval,
+plus `scores.json`. Keep the official `third_party/ho3d_eval/eval.py` as the
+reference implementation and use it for occasional exactness checks.
