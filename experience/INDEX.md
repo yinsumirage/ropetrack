@@ -12,4 +12,6 @@
 | 2026-07-02 | [0007_ho3d_gtbbox_batch_export.md](0007_ho3d_gtbbox_batch_export.md) | Cross-image GT bbox batch export path and remote bbox metadata sampling. |
 | 2026-07-02 | [0008_ho3d_generic_detector_batch.md](0008_ho3d_generic_detector_batch.md) | Generic HO3D benchmark script, detector batch smoke, and detector-batch parity caveat. |
 | 2026-07-02 | [0008_ho3d_hamer_gtbbox_jobs.md](0008_ho3d_hamer_gtbbox_jobs.md) | HaMeR/AnyHand-HaMeR gt-bbox scores on HO3D v2 and v3. |
+| 2026-07-03 | [0009_freihand_eval_gt_upload.md](0009_freihand_eval_gt_upload.md) | Uploaded FreiHAND evaluation GT package, merged `evaluation/anno` and `facemap`, and copied the root eval JSON files. |
+| 2026-07-03 | [0010_freihand_wilor_gtbbox_eval.md](0010_freihand_wilor_gtbbox_eval.md) | FreiHAND AnyHand-WiLoR gt-bbox smoke, full prediction, CPU eval scores, and joint-order fix. |
 | 2026-07-03 | [0011_ho3d_generic_wilor_original_gtbbox_full.md](0011_ho3d_generic_wilor_original_gtbbox_full.md) | Full HO3D v2 GT-bbox run with generic `bench_ho3d.py` and original WiLoR checkpoint. |
