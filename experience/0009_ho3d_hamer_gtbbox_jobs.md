@@ -1,4 +1,4 @@
-# 0008 HO3D HaMeR GT BBox Jobs
+# 0009 HO3D HaMeR GT BBox Jobs
 
 Date: 2026-07-02
 
@@ -25,7 +25,7 @@ The jobs used `scripts/bench_ho3d_v2.py` with:
 --joint-source mano_vertices
 ```
 
-Prediction jobs ran on GPU; eval jobs ran with `scripts/eval_ho3d_parallel.py`
+Prediction jobs ran on GPU; eval jobs ran with `scripts/eval_parallel.py`
 on CPU using 16 workers.
 
 ## Jobs

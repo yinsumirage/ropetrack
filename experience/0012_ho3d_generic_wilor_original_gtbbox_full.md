@@ -1,4 +1,4 @@
-# 0011 HO3D Generic WiLoR Original GT-BBox Full Run
+# 0012 HO3D Generic WiLoR Original GT-BBox Full Run
 
 Date: 2026-07-03
 
@@ -37,10 +37,9 @@ GPU command used `scripts/bench_ho3d.py` with:
 CPU eval used:
 
 ```text
-python scripts/eval_ho3d_parallel.py \
+python scripts/eval_parallel.py \
   <run>/eval_input \
   <run>/eval_results_parallel_16cpu \
-  --version v2 \
   --num-workers 16 \
   --chunksize 16
 ```

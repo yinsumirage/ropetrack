@@ -213,16 +213,15 @@ help unless the eval code is parallelized.
 Parallel eval helper added:
 
 ```bash
-python scripts/eval_ho3d_parallel.py \
+python scripts/eval_parallel.py \
   /data/wentao/ropetrack/runs/<run>/eval_input \
   /data/wentao/ropetrack/runs/<run>/eval_results_parallel \
-  --version v2 \
   --num-workers 8
 ```
 
 It writes `scores.txt` with the same field names as the official HO3D eval,
 plus `scores.json`. The vendored `third_party/ho3d_eval` copy was removed after
-this diff check; use `scripts/eval_ho3d_parallel.py` for repo runs.
+this diff check; use `scripts/eval_parallel.py` for repo runs.
 
 Verified on the fixed gt-bbox run:
 

@@ -47,10 +47,9 @@ Each CPU eval job has an `afterok` dependency on its corresponding GPU job and
 runs:
 
 ```bash
-python scripts/eval_ho3d_parallel.py \
+python scripts/eval_parallel.py \
   <run>/eval_input \
   <run>/eval_results_parallel_16cpu \
-  --version v3 \
   --num-workers 16 \
   --chunksize 16
 ```

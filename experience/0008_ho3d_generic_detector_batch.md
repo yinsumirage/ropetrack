@@ -37,7 +37,7 @@ sample may have multiple hand boxes.
 $env:PYTHONPATH='src'; python -m unittest discover -s tests
 21 tests OK
 
-python -m py_compile scripts/bench_ho3d.py scripts/eval_ho3d_parallel.py
+python -m py_compile scripts/bench_ho3d.py scripts/eval_parallel.py
 OK
 
 git diff --check

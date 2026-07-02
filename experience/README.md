@@ -7,6 +7,10 @@ one short note here.
 `docs/` is for stable knowledge and plans. `experience/` is for what actually
 happened: commands, errors, fixes, paths, scores, and next actions.
 
+Keep notes in one folder until a stage has enough entries to justify moving
+files. Use `INDEX.md` section headers for stages first; split directories only
+when the flat list becomes hard to scan.
+
 Before new work:
 
 1. Read `experience/INDEX.md`.
