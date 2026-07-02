@@ -9,3 +9,4 @@
 | 2026-07-02 | [0004_ho3d_v2_wilor_baseline.md](0004_ho3d_v2_wilor_baseline.md) | WiLoR HO3D v2 detector/gt_bbox scores and the joint-order caveat. |
 | 2026-07-02 | [0005_ho3d_v3_wilor_jobs.md](0005_ho3d_v3_wilor_jobs.md) | HO3D v3 WiLoR/AnyHand job IDs, run dirs, GT upload caveat, and eval dependencies. |
 | 2026-07-02 | [0006_hamer_demo_data_download.md](0006_hamer_demo_data_download.md) | Fresh HaMeR demo data download path, contents, and the shared-storage sbatch lesson. |
+| 2026-07-02 | [0007_ho3d_gtbbox_batch_export.md](0007_ho3d_gtbbox_batch_export.md) | Cross-image GT bbox batch export path and remote bbox metadata sampling. |

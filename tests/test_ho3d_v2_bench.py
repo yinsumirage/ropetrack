@@ -61,6 +61,31 @@ class Ho3dV2BenchTest(unittest.TestCase):
 
         self.assertEqual(bbox.tolist(), [[1.0, 2.0, 3.0, 4.0]])
 
+    def test_load_gt_bbox_items_keeps_sample_order(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            samples = []
+            for sample_id, bbox in [("B/0001", [1, 2, 3, 4]), ("A/0000", [5, 6, 7, 8])]:
+                seq, frame = sample_id.split("/")
+                image_path = root / "evaluation" / seq / "rgb" / f"{frame}.png"
+                meta_path = root / "evaluation" / seq / "meta" / f"{frame}.pkl"
+                image_path.parent.mkdir(parents=True, exist_ok=True)
+                meta_path.parent.mkdir(parents=True, exist_ok=True)
+                image_path.write_text("")
+                with meta_path.open("wb") as f:
+                    pickle.dump({"handBoundingBox": bbox}, f)
+                samples.append(type("Sample", (), {
+                    "sample_id": sample_id,
+                    "image_path": image_path,
+                    "meta_path": meta_path,
+                })())
+
+            bench = load_script()
+            items = bench.load_gt_bbox_items(samples)
+
+        self.assertEqual([item.sample.sample_id for item in items], ["B/0001", "A/0000"])
+        self.assertEqual([item.bbox_xyxy.tolist() for item in items], [[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0]])
+
     def test_infers_order_from_gt_root_and_meta_root(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -180,6 +205,74 @@ class Ho3dV2BenchTest(unittest.TestCase):
         bench.run_backend_with_bbox(Predictor(), "hamer", "img", "boxes", "is_right", "scores")
 
         self.assertEqual(calls, ["hamer"])
+
+    def test_run_gt_bbox_batch_predictions_keeps_order(self):
+        try:
+            import torch
+        except ImportError:
+            self.skipTest("torch is not installed")
+
+        bench = load_script()
+        old_dataset = bench.CrossImageGtBBoxDataset
+
+        class ModelCfg:
+            IMAGE_SIZE = 10
+            IMAGE_MEAN = [0.0, 0.0, 0.0]
+            IMAGE_STD = [1.0, 1.0, 1.0]
+
+            def get(self, _name, default=None):
+                return default
+
+        class ExtraCfg:
+            FOCAL_LENGTH = 100.0
+
+        class Cfg:
+            MODEL = ModelCfg()
+            EXTRA = ExtraCfg()
+
+        class FakeDataset:
+            def __init__(self, *_args):
+                pass
+
+            def __len__(self):
+                return 2
+
+            def __getitem__(self, idx):
+                return {
+                    "img": torch.zeros(3, 10, 10),
+                    "box_center": torch.tensor([50.0, 50.0]),
+                    "box_size": torch.tensor(100.0),
+                    "img_size": torch.tensor([100.0, 100.0]),
+                    "right": torch.tensor(1.0),
+                    "sample_index": torch.tensor(idx),
+                }
+
+        class FakeModel:
+            def __call__(self, batch):
+                batch_size = batch["img"].shape[0]
+                values = torch.arange(batch_size, dtype=torch.float32)[:, None, None]
+                return {
+                    "pred_cam": torch.tensor([[1.0, 0.0, 0.0]] * batch_size),
+                    "pred_vertices": values.expand(batch_size, 778, 3).clone(),
+                    "pred_keypoints_3d": values.expand(batch_size, 21, 3).clone(),
+                }
+
+        class Predictor:
+            device = torch.device("cpu")
+            rescale_factor = 2.0
+            _wilor_model = FakeModel()
+            _wilor_model_cfg = Cfg()
+
+        try:
+            bench.CrossImageGtBBoxDataset = FakeDataset
+            preds = bench.run_gt_bbox_batch_predictions(Predictor(), "wilor", [object(), object()], batch_size=2, num_workers=0)
+        finally:
+            bench.CrossImageGtBBoxDataset = old_dataset
+
+        self.assertEqual(len(preds), 2)
+        self.assertEqual(preds[0].vertices[0].tolist(), [0.0, 0.0, 0.0])
+        self.assertEqual(preds[1].vertices[0].tolist(), [1.0, 1.0, 1.0])
+        self.assertEqual(preds[0].cam_t.tolist(), [0.0, 0.0, 20.0])
 
 
 if __name__ == "__main__":

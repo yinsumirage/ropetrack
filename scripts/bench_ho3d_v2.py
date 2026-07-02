@@ -24,6 +24,20 @@ class Ho3dSample:
     meta_path: Path
 
 
+@dataclass(frozen=True)
+class GtBBoxItem:
+    sample: Ho3dSample
+    bbox_xyxy: np.ndarray
+
+
+@dataclass(frozen=True)
+class BatchHandPrediction:
+    vertices: np.ndarray
+    keypoints_3d: np.ndarray
+    cam_t: np.ndarray
+    score: float
+
+
 @contextlib.contextmanager
 def pushd(path: Path):
     old = Path.cwd()
@@ -106,6 +120,15 @@ def hand_bbox_from_meta(meta: dict) -> np.ndarray:
     return np.asarray(meta["handBoundingBox"], dtype=np.float32).reshape(1, 4)
 
 
+def load_gt_bbox_items(samples: Iterable[Ho3dSample]) -> list[GtBBoxItem]:
+    items = []
+    for sample in samples:
+        with sample.meta_path.open("rb") as f:
+            meta = pickle.load(f, encoding="latin1")
+        items.append(GtBBoxItem(sample=sample, bbox_xyxy=hand_bbox_from_meta(meta)[0]))
+    return items
+
+
 def to_opengl_camera(points, cam_t, units: str) -> np.ndarray:
     pts = np.asarray(points, dtype=np.float32) + np.asarray(cam_t, dtype=np.float32)[None, :]
     if units == "mm":
@@ -159,13 +182,139 @@ def run_backend_with_bbox(predictor, backend: str, img, boxes, is_right, scores)
     raise ValueError(f"unsupported backend: {backend}")
 
 
+def backend_model_and_cfg(predictor, backend: str):
+    if backend == "wilor":
+        return predictor._wilor_model, predictor._wilor_model_cfg
+    if backend == "hamer":
+        return predictor._hamer_model, predictor._hamer_model_cfg
+    raise ValueError(f"unsupported backend: {backend}")
+
+
+def backend_dataset_utils(backend: str):
+    if backend == "wilor":
+        from wilor.datasets import utils
+    elif backend == "hamer":
+        from hamer.datasets import utils
+    else:
+        raise ValueError(f"unsupported backend: {backend}")
+    return utils
+
+
+class CrossImageGtBBoxDataset:
+    def __init__(self, cfg, items: list[GtBBoxItem], backend: str, rescale_factor: float):
+        self.cfg = cfg
+        self.items = items
+        self.rescale_factor = rescale_factor
+        self.img_size = cfg.MODEL.IMAGE_SIZE
+        self.mean = 255.0 * np.asarray(cfg.MODEL.IMAGE_MEAN, dtype=np.float32)
+        self.std = 255.0 * np.asarray(cfg.MODEL.IMAGE_STD, dtype=np.float32)
+        self.utils = backend_dataset_utils(backend)
+
+    def __len__(self) -> int:
+        return len(self.items)
+
+    def __getitem__(self, idx: int):
+        import cv2
+        from skimage.filters import gaussian
+
+        item = self.items[idx]
+        img = cv2.imread(str(item.sample.image_path))
+        if img is None:
+            raise FileNotFoundError(item.sample.image_path)
+
+        box = item.bbox_xyxy.astype(np.float32)
+        center = (box[2:4] + box[0:2]) / 2.0
+        scale = self.rescale_factor * (box[2:4] - box[0:2]) / 200.0
+        bbox_shape = self.cfg.MODEL.get("BBOX_SHAPE", None)
+        bbox_size = self.utils.expand_to_aspect_ratio(scale * 200, target_aspect_ratio=bbox_shape).max()
+        right = np.float32(1.0)
+        flip = False
+
+        cvimg = img.copy()
+        downsampling_factor = (float(bbox_size) / float(self.img_size)) / 2.0
+        if downsampling_factor > 1.1:
+            cvimg = gaussian(cvimg, sigma=(downsampling_factor - 1) / 2, channel_axis=2, preserve_range=True)
+
+        img_patch_cv, _ = self.utils.generate_image_patch_cv2(
+            cvimg,
+            float(center[0]),
+            float(center[1]),
+            float(bbox_size),
+            float(bbox_size),
+            int(self.img_size),
+            int(self.img_size),
+            flip,
+            1.0,
+            0,
+            border_mode=cv2.BORDER_CONSTANT,
+        )
+        img_patch = self.utils.convert_cvimg_to_tensor(img_patch_cv[:, :, ::-1])
+        for channel in range(min(img.shape[2], 3)):
+            img_patch[channel, :, :] = (img_patch[channel, :, :] - self.mean[channel]) / self.std[channel]
+
+        return {
+            "img": img_patch,
+            "box_center": center.astype(np.float32),
+            "box_size": np.float32(bbox_size),
+            "img_size": np.asarray([cvimg.shape[1], cvimg.shape[0]], dtype=np.float32),
+            "right": right,
+            "sample_index": np.int64(idx),
+        }
+
+
+def cam_crop_to_full(cam_bbox, box_center, box_size, img_size, focal_length):
+    import torch
+
+    img_w, img_h = img_size[:, 0], img_size[:, 1]
+    cx, cy, b = box_center[:, 0], box_center[:, 1], box_size
+    w_2, h_2 = img_w / 2.0, img_h / 2.0
+    bs = b * cam_bbox[:, 0] + 1e-9
+    tz = 2 * focal_length / bs
+    tx = (2 * (cx - w_2) / bs) + cam_bbox[:, 1]
+    ty = (2 * (cy - h_2) / bs) + cam_bbox[:, 2]
+    return torch.stack([tx, ty, tz], dim=-1)
+
+
+def run_gt_bbox_batch_predictions(predictor, backend: str, items: list[GtBBoxItem], batch_size: int, num_workers: int):
+    import torch
+
+    model, cfg = backend_model_and_cfg(predictor, backend)
+    dataset = CrossImageGtBBoxDataset(cfg, items, backend, predictor.rescale_factor)
+    loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
+    predictions: list[BatchHandPrediction | None] = [None] * len(items)
+
+    with torch.inference_mode():
+        for batch in loader:
+            batch = {k: v.to(predictor.device) for k, v in batch.items()}
+            out = model(batch)
+            multiplier = (2 * batch["right"] - 1).float()
+            pred_cam = out["pred_cam"].clone()
+            pred_cam[:, 1] = multiplier * pred_cam[:, 1]
+            img_size = batch["img_size"].float()
+            focal = cfg.EXTRA.FOCAL_LENGTH / cfg.MODEL.IMAGE_SIZE * img_size.max(dim=1).values
+            cam_t = cam_crop_to_full(pred_cam, batch["box_center"].float(), batch["box_size"].float(), img_size, focal)
+
+            for batch_i, item_i in enumerate(batch["sample_index"].detach().cpu().numpy().astype(int).tolist()):
+                verts = out["pred_vertices"][batch_i].detach().cpu().numpy().astype(np.float32)
+                joints = out["pred_keypoints_3d"][batch_i].detach().cpu().numpy().astype(np.float32)
+                predictions[item_i] = BatchHandPrediction(
+                    vertices=verts,
+                    keypoints_3d=joints,
+                    cam_t=cam_t[batch_i].detach().cpu().numpy().astype(np.float32),
+                    score=1.0,
+                )
+
+    if any(pred is None for pred in predictions):
+        raise RuntimeError("missing batch predictions")
+    return predictions
+
+
 def run_export(args: argparse.Namespace) -> Path:
     repo = Path(__file__).resolve().parents[1]
     anyhand_root = repo / "third_party" / "anyhand"
     sys.path.insert(0, str(anyhand_root))
 
     from scripts.rgb_predictor import AnyHandPredictor
-    import cv2
 
     samples = list(iter_ho3d_samples(args.ho3d_root, args.limit))
     out_dir = args.out_dir
@@ -180,38 +329,46 @@ def run_export(args: argparse.Namespace) -> Path:
     with pushd(anyhand_root):
         predictor = AnyHandPredictor(**predictor_kwargs(args))
 
-        for idx, sample in enumerate(samples):
-            try:
-                if args.mode == "gt_bbox":
-                    img = cv2.imread(str(sample.image_path))
-                    if img is None:
-                        raise FileNotFoundError(sample.image_path)
-                    with sample.meta_path.open("rb") as f:
-                        meta = pickle.load(f, encoding="latin1")
-                    hands = run_backend_with_bbox(
-                        predictor,
-                        args.backend,
-                        img,
-                        hand_bbox_from_meta(meta),
-                        np.asarray([1.0], dtype=np.float32),
-                        np.asarray([1.0], dtype=np.float32),
-                    )
-                else:
+        if args.mode == "gt_bbox":
+            items = load_gt_bbox_items(samples)
+            hands_by_sample = run_gt_bbox_batch_predictions(
+                predictor,
+                args.backend,
+                items,
+                args.batch_size,
+                args.num_workers,
+            )
+            for idx, (sample, hand) in enumerate(zip(samples, hands_by_sample)):
+                try:
+                    verts = to_opengl_camera(hand.vertices, hand.cam_t, args.units)
+                    if args.joint_source == "mano_vertices":
+                        xyz = ho3d_joints_from_vertices(verts, j_regressor)
+                    else:
+                        xyz = to_opengl_camera(hand.keypoints_3d, hand.cam_t, args.units)
+                except Exception as exc:
+                    failures.append({"idx": idx, "sample_id": sample.sample_id, "error": repr(exc)})
+                    xyz = np.zeros((21, 3), dtype=np.float32)
+                    verts = np.zeros((778, 3), dtype=np.float32)
+                xyz_pred.append(xyz.tolist())
+                verts_pred.append(verts.tolist())
+        else:
+            for idx, sample in enumerate(samples):
+                try:
                     hands = predictor.predict(str(sample.image_path))
-                hand = select_hand(hands)
-                if hand is None:
-                    raise RuntimeError("no hand detected")
-                verts = to_opengl_camera(hand.vertices, hand.cam_t, args.units)
-                if args.joint_source == "mano_vertices":
-                    xyz = ho3d_joints_from_vertices(verts, j_regressor)
-                else:
-                    xyz = to_opengl_camera(hand.keypoints_3d, hand.cam_t, args.units)
-            except Exception as exc:
-                failures.append({"idx": idx, "sample_id": sample.sample_id, "error": repr(exc)})
-                xyz = np.zeros((21, 3), dtype=np.float32)
-                verts = np.zeros((778, 3), dtype=np.float32)
-            xyz_pred.append(xyz.tolist())
-            verts_pred.append(verts.tolist())
+                    hand = select_hand(hands)
+                    if hand is None:
+                        raise RuntimeError("no hand detected")
+                    verts = to_opengl_camera(hand.vertices, hand.cam_t, args.units)
+                    if args.joint_source == "mano_vertices":
+                        xyz = ho3d_joints_from_vertices(verts, j_regressor)
+                    else:
+                        xyz = to_opengl_camera(hand.keypoints_3d, hand.cam_t, args.units)
+                except Exception as exc:
+                    failures.append({"idx": idx, "sample_id": sample.sample_id, "error": repr(exc)})
+                    xyz = np.zeros((21, 3), dtype=np.float32)
+                    verts = np.zeros((778, 3), dtype=np.float32)
+                xyz_pred.append(xyz.tolist())
+                verts_pred.append(verts.tolist())
 
     (eval_input / "pred.json").write_text(json.dumps([xyz_pred, verts_pred]))
     for gt_name in ("evaluation_xyz.json", "evaluation_verts.json"):
@@ -225,6 +382,9 @@ def run_export(args: argparse.Namespace) -> Path:
         "limit": args.limit,
         "num_samples": len(samples),
         "num_failures": len(failures),
+        "prediction_path": "gt_bbox_cross_image_batch" if args.mode == "gt_bbox" else "detector_wrapper_serial",
+        "batch_size": args.batch_size,
+        "num_workers": args.num_workers,
         "units": args.units,
         "joint_source": args.joint_source,
         "wilor_ckpt": optional_path_str(args.wilor_ckpt),
@@ -257,7 +417,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--backend", choices=["wilor", "hamer"], default="wilor")
     parser.add_argument("--units", choices=["m", "mm"], default="m")
     parser.add_argument("--device", default="cuda")
-    parser.add_argument("--batch-size", type=int, default=1)
+    parser.add_argument("--batch-size", type=int, default=128)
+    parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--joint-source", choices=["mano_vertices", "anyhand_keypoints"], default="mano_vertices")
     parser.add_argument("--wilor-ckpt", type=Path, default=None)
     parser.add_argument("--wilor-cfg", type=Path, default=None)
