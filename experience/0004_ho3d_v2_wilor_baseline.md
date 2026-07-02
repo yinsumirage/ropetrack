@@ -60,12 +60,70 @@ export and aligned mesh evaluation are probably correct, but
 `hand.keypoints_3d` is not in the HO3D official joint convention/order. Do not
 use current `xyz_*` scores as final WiLoR joint benchmark numbers.
 
-## Next Fix
+## Coordinate Note
 
-Regenerate `pred.json` joint predictions from the exported MANO vertices using
-the HO3D/MANO joint convention instead of AnyHand/WiLoR `pred_keypoints_3d`.
-This can likely be done from the existing `pred.json` vertices without
-rerunning GPU inference.
+HO3D submissions use an OpenGL-style camera frame:
+
+```text
+x: right
+y: up
+z: camera-forward is negative, so the hand is usually at z < 0
+```
+
+Convert ordinary OpenCV camera coordinates with:
+
+```python
+M_cv_to_ho3d = np.diag([1.0, -1.0, -1.0]).astype("float32")
+points_ho3d = points_cv @ M_cv_to_ho3d.T
+```
+
+This matters for raw `xyz_mean3d`, `mesh_mean3d`, training targets, projection,
+and any non-PA metric. It does not explain the original `45 mm` PA-MPJPE by
+itself, because Procrustes alignment can absorb a global 180-degree rotation.
+When PA-MPJPE is bad but PA-MPVPE is good, first suspect joint source/order.
+
+## Joint Fix
+
+Commit `8b6b5a9` changed HO3D export to derive joints from MANO vertices:
+
+```text
+16 joints = MANO_RIGHT.pkl J_regressor @ vertices
+5 tips = vertices[[744, 333, 444, 555, 672]]
+```
+
+This is the HO3D/MANO-order adapter and avoids using AnyHand/WiLoR
+`pred_keypoints_3d` directly. The first CPU eval jobs failed only because the
+converted output directory lacked `eval_results/`; the metrics were printed
+before the write failure.
+
+Observed from the fixed gt-bbox eval log:
+
+```text
+xyz_procrustes_al_mean3d: 0.74 cm ~= 7.4 mm
+xyz_procrustes_al_auc3d: 0.852
+xyz_scale_trans_al_mean3d: 1.46 cm
+xyz_scale_trans_al_auc3d: 0.712
+mesh_al_mean3d: 0.77 cm
+mesh_al_auc3d: 0.846
+f_al_score_5: 0.645
+f_al_score_15: 0.984
+```
+
+This matches the AnyHand table closely and confirms the previous joint result
+was a joint-convention bug, not model quality.
+
+## Next Action
+
+Use `joint_source="mano_vertices"` for HO3D exports. Keep the original
+AnyHand/WiLoR joints only as backend-native diagnostics, not as HO3D submission
+joints.
+
+Wait for the rerun CPU eval jobs to write exact `scores.txt` files:
+
+```text
+gt_bbox fixed eval: 161654
+detector fixed eval: 161655
+```
 
 Keep CPU eval separate from GPU inference. The official HO3D eval is a
 single-process CPU loop and took about 36-37 minutes; extra Slurm CPUs do not
