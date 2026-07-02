@@ -107,6 +107,12 @@ class Ho3dWilorBenchTest(unittest.TestCase):
         self.assertEqual(joints[17].tolist(), [333.0, 334.0, 335.0])
         self.assertEqual(joints[20].tolist(), [672.0, 673.0, 674.0])
 
+    def test_optional_path_str_keeps_none_unset(self):
+        bench = load_script()
+
+        self.assertIsNone(bench.optional_path_str(None))
+        self.assertEqual(bench.optional_path_str(Path("model.ckpt")), "model.ckpt")
+
 
 if __name__ == "__main__":
     unittest.main()

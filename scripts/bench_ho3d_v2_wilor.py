@@ -128,6 +128,10 @@ def ho3d_joints_from_vertices(vertices: np.ndarray, j_regressor: np.ndarray) -> 
     return np.concatenate([joints16, tips], axis=0)
 
 
+def optional_path_str(path: Path | None) -> str | None:
+    return str(path) if path is not None else None
+
+
 def run_export(args: argparse.Namespace) -> Path:
     repo = Path(__file__).resolve().parents[1]
     anyhand_root = repo / "third_party" / "anyhand"
@@ -147,7 +151,13 @@ def run_export(args: argparse.Namespace) -> Path:
     xyz_pred, verts_pred, failures = [], [], []
 
     with pushd(anyhand_root):
-        predictor = AnyHandPredictor(backend="wilor", device=args.device, batch_size=args.batch_size)
+        predictor = AnyHandPredictor(
+            backend="wilor",
+            device=args.device,
+            batch_size=args.batch_size,
+            wilor_ckpt=optional_path_str(args.wilor_ckpt),
+            wilor_cfg=optional_path_str(args.wilor_cfg),
+        )
 
         for idx, sample in enumerate(samples):
             try:
@@ -192,6 +202,8 @@ def run_export(args: argparse.Namespace) -> Path:
         "num_failures": len(failures),
         "units": args.units,
         "joint_source": args.joint_source,
+        "wilor_ckpt": optional_path_str(args.wilor_ckpt),
+        "wilor_cfg": optional_path_str(args.wilor_cfg),
         "coordinate_transform": "points + cam_t; output metres; flip y and z to OpenGL",
         "sample_order": [sample.sample_id for sample in samples],
     }, indent=2))
@@ -220,6 +232,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--joint-source", choices=["mano_vertices", "anyhand_keypoints"], default="mano_vertices")
+    parser.add_argument("--wilor-ckpt", type=Path, default=None)
+    parser.add_argument("--wilor-cfg", type=Path, default=None)
     parser.add_argument("--run-eval", action="store_true")
     return parser.parse_args()
 
