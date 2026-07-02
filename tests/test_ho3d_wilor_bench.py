@@ -91,6 +91,19 @@ class Ho3dWilorBenchTest(unittest.TestCase):
 
         self.assertEqual(os.getcwd(), before)
 
+    def test_iter_samples_accepts_jpg_images(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "evaluation" / "SM1" / "rgb").mkdir(parents=True, exist_ok=True)
+            (root / "evaluation" / "SM1" / "meta").mkdir(parents=True, exist_ok=True)
+            (root / "evaluation" / "SM1" / "rgb" / "0000.jpg").write_text("")
+            (root / "evaluation.txt").write_text("SM1/0000\n")
+
+            bench = load_script()
+            sample = next(iter(bench.iter_ho3d_samples(root, limit=None)))
+
+        self.assertTrue(sample.image_path.as_posix().endswith("SM1/rgb/0000.jpg"))
+
     def test_ho3d_joints_from_vertices_uses_mano_order_and_tips(self):
         bench = load_script()
         verts = [[float(i), float(i + 1), float(i + 2)] for i in range(778)]

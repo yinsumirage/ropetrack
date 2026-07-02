@@ -56,9 +56,17 @@ def iter_ho3d_samples(root: Path, limit: int | None) -> Iterable[Ho3dSample]:
         seq, frame = sample_id.split("/")
         yield Ho3dSample(
             sample_id=sample_id,
-            image_path=eval_dir / seq / "rgb" / f"{frame}.png",
+            image_path=resolve_image_path(eval_dir / seq / "rgb", frame),
             meta_path=eval_dir / seq / "meta" / f"{frame}.pkl",
         )
+
+
+def resolve_image_path(rgb_dir: Path, frame: str) -> Path:
+    for suffix in (".png", ".jpg", ".jpeg"):
+        path = rgb_dir / f"{frame}{suffix}"
+        if path.exists():
+            return path
+    return rgb_dir / f"{frame}.png"
 
 
 def infer_sample_order_from_gt_roots(root: Path) -> list[str]:
@@ -191,8 +199,10 @@ def run_export(args: argparse.Namespace) -> Path:
             verts_pred.append(verts.tolist())
 
     (eval_input / "pred.json").write_text(json.dumps([xyz_pred, verts_pred]))
-    shutil.copy2(args.ho3d_root / "evaluation_xyz.json", eval_input / "evaluation_xyz.json")
-    shutil.copy2(args.ho3d_root / "evaluation_verts.json", eval_input / "evaluation_verts.json")
+    for gt_name in ("evaluation_xyz.json", "evaluation_verts.json"):
+        gt_path = args.ho3d_root / gt_name
+        if gt_path.exists():
+            shutil.copy2(gt_path, eval_input / gt_name)
     (out_dir / "failures.json").write_text(json.dumps(failures, indent=2))
     (out_dir / "run_meta.json").write_text(json.dumps({
         "backend": "anyhand_wilor",
