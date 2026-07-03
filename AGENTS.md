@@ -55,6 +55,18 @@ unclear or stale, re-read that folder before writing or running cluster scripts.
 - Before remote `git pull` or other Git network operations, set
   `http_proxy=http://hkuhpc.com:7999` and
   `https_proxy=http://hkuhpc.com:7999`.
+- From Windows/PowerShell, run remote commands through an explicit login shell:
+  `ssh hpc "bash -lc 'cd ~/project/ropetrack && ...'"`.
+- Do not diagnose missing `conda`, `squeue`, `sbatch`, or modules from a bare
+  `ssh hpc "command"` failure. First retry with `bash -lc`; for conda, also
+  source `/public/home/guowt2512/miniforge3/etc/profile.d/conda.sh` in that same
+  remote command.
+- PowerShell expands `$...` before `ssh` inside double quotes. Escape remote
+  shell variables as `` `$VAR`` or avoid inline `$` entirely. If a command needs
+  nested quotes, `$`, here-docs, or multi-line Python, put it in a short remote
+  shell script and run that script instead of fighting PowerShell quoting.
+- In PowerShell, quote Git refs with braces, such as `git stash drop 'stash@{0}'`;
+  unquoted `stash@{0}` is parsed by PowerShell before Git sees it.
 - Default Slurm commands and scripts must include `-A engram`.
 - Current practical partitions are `cpu` and `gpu`; do not confuse `-A engram`
   with `-p engram`.
@@ -79,6 +91,10 @@ unclear or stale, re-read that folder before writing or running cluster scripts.
 
 ## Current Remote Facts
 
+- Treat `E:\Desktop\ropetrack` as the primary local worktree for this repo.
+  Codex may also create detached worktrees under `C:\Users\gwt\.codex\worktrees`;
+  before editing or committing, check `git worktree list` and prefer the primary
+  worktree unless the user explicitly asks to keep an isolated Codex worktree.
 - The stable HPC repo path is `~/project/ropetrack`. Do not record transient
   compute node names; Slurm may assign a different node.
 - The repo lives under `~/project/ropetrack` on the HPC account, not under
