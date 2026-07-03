@@ -131,10 +131,7 @@ def write_eval_gt_subset(root: Path, eval_input: Path, count: int) -> None:
 
 def run_export(args: argparse.Namespace) -> Path:
     repo = Path(__file__).resolve().parents[1]
-    anyhand_root = repo / "third_party" / "anyhand"
-    sys.path.insert(0, str(anyhand_root))
-
-    from scripts.rgb_predictor import AnyHandPredictor
+    from ropetrack.backends.hand_predictor import HandPredictor
 
     samples = list(iter_freihand_eval_samples(args.freihand_root, args.limit))
     candidates = load_gt_bbox_candidates(samples)
@@ -144,7 +141,7 @@ def run_export(args: argparse.Namespace) -> Path:
     eval_input.mkdir(parents=True, exist_ok=True)
     eval_results.mkdir(parents=True, exist_ok=True)
 
-    j_regressor = load_mano_j_regressor(anyhand_root / "mano_data" / "MANO_RIGHT.pkl")
+    j_regressor = load_mano_j_regressor(HandPredictor.DEFAULT_MANO_RIGHT)
     protocol_max_err = check_joint_protocol(
         args.freihand_root,
         j_regressor,
@@ -153,34 +150,33 @@ def run_export(args: argparse.Namespace) -> Path:
     )
     xyz_pred, verts_pred, failures = [], [], []
 
-    with pushd(anyhand_root):
-        predictor = AnyHandPredictor(**predictor_kwargs(args))
-        candidate_predictions = run_bbox_batch_predictions(
-            predictor,
-            args.backend,
-            candidates,
-            args.batch_size,
-            args.num_workers,
-        )
-        hands_by_sample, missing_failures = select_sample_predictions(samples, candidate_predictions)
-        failures.extend(missing_failures)
+    predictor = HandPredictor(**predictor_kwargs(args))
+    candidate_predictions = run_bbox_batch_predictions(
+        predictor,
+        args.backend,
+        candidates,
+        args.batch_size,
+        args.num_workers,
+    )
+    hands_by_sample, missing_failures = select_sample_predictions(samples, candidate_predictions)
+    failures.extend(missing_failures)
 
-        for idx, (sample, hand) in enumerate(zip(samples, hands_by_sample)):
-            try:
-                if hand is None:
-                    raise RuntimeError("no hand predicted")
-                verts = to_camera(hand.vertices, hand.cam_t, args.units)
-                if args.joint_source == "mano_vertices":
-                    xyz = freihand_joints_from_vertices(verts, j_regressor)
-                else:
-                    xyz = to_camera(hand.keypoints_3d, hand.cam_t, args.units)
-            except Exception as exc:
-                if hand is not None:
-                    failures.append({"idx": idx, "sample_id": sample.sample_id, "error": repr(exc)})
-                xyz = np.zeros((21, 3), dtype=np.float32)
-                verts = np.zeros((778, 3), dtype=np.float32)
-            xyz_pred.append(xyz.tolist())
-            verts_pred.append(verts.tolist())
+    for idx, (sample, hand) in enumerate(zip(samples, hands_by_sample)):
+        try:
+            if hand is None:
+                raise RuntimeError("no hand predicted")
+            verts = to_camera(hand.vertices, hand.cam_t, args.units)
+            if args.joint_source == "mano_vertices":
+                xyz = freihand_joints_from_vertices(verts, j_regressor)
+            else:
+                xyz = to_camera(hand.keypoints_3d, hand.cam_t, args.units)
+        except Exception as exc:
+            if hand is not None:
+                failures.append({"idx": idx, "sample_id": sample.sample_id, "error": repr(exc)})
+            xyz = np.zeros((21, 3), dtype=np.float32)
+            verts = np.zeros((778, 3), dtype=np.float32)
+        xyz_pred.append(xyz.tolist())
+        verts_pred.append(verts.tolist())
 
     (eval_input / "pred.json").write_text(json.dumps([xyz_pred, verts_pred]))
     write_eval_gt_subset(args.freihand_root, eval_input, len(samples))

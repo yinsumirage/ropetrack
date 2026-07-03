@@ -8,7 +8,7 @@ backends:
 
 - HaMeR original
 - WiLoR original
-- AnyHand checkpoints / predictor style
+- AnyHand fine-tuned checkpoints through the local `HandPredictor`
 
 ## Layout
 
@@ -18,9 +18,9 @@ data/             Local dataset links and generated manifests. No real data in g
 docs/knowledge/   Short local copy of the hand4D/now decisions.
 experience/       Experiment notes, failures, and an index to avoid repeating work.
 scripts/          CLI entry points once loaders/runners exist.
-src/ropetrack/    Core schemas, IO, metrics, wrappers, eval, viz, rope code.
+src/ropetrack/    Core schemas, IO, metrics, backend wrappers, eval, viz, rope code.
 tests/            Small smoke checks.
-third_party/      Git submodules for HaMeR, WiLoR, AnyHand.
+third_party/      Git submodules for HaMeR and WiLoR.
 ```
 
 ## First Commands
@@ -44,7 +44,7 @@ New-Item -ItemType Junction -Path data\raw\ho3d_v2 -Target D:\datasets\HO3D_v2
 
 1. Audit FreiHAND and HO3D v2 raw data.
 2. Export small unified manifests.
-3. Run HaMeR/WiLoR/AnyHand wrappers on 20 + 20 samples.
+3. Run HaMeR/WiLoR checkpoints through `HandPredictor` on 20 + 20 samples.
 4. Save predictions in one schema.
 5. Compute MPJPE and fingertip error.
 6. Write findings under `experience/` before scaling up.

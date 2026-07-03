@@ -18,6 +18,10 @@ data/rope/*
 logs/
 
 checkpoints/
+mano_data/
+mano_data
+pretrained_models/
+pretrained_models
 *.ckpt
 *.pth
 *.pt

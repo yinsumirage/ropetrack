@@ -29,6 +29,7 @@ ends with the clean baseline report before hard splits or rope labels.
 | 2026-07-03 | [0011_freihand_wilor_gtbbox_eval.md](0011_freihand_wilor_gtbbox_eval.md) | FreiHAND AnyHand-WiLoR gt-bbox smoke, full prediction, CPU eval scores, and joint-order fix. |
 | 2026-07-03 | [0012_ho3d_generic_wilor_original_gtbbox_full.md](0012_ho3d_generic_wilor_original_gtbbox_full.md) | Full HO3D v2 GT-bbox run with generic `bench_ho3d.py` and original WiLoR checkpoint. |
 | 2026-07-03 | [0013_freihand_four_gtbbox_baselines.md](0013_freihand_four_gtbbox_baselines.md) | Full FreiHAND GT-bbox HaMeR/WiLoR/AnyHand scores and paper-table comparison. |
+| 2026-07-03 | [0017_hand_predictor_migration.md](0017_hand_predictor_migration.md) | Conservative first step moving predictor ownership into `src/ropetrack/backends` while keeping AnyHand for parity review. |
 
 ## Stage 2: Hard Splits And Rope Signals
 

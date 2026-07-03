@@ -8,7 +8,6 @@ Planned first scripts:
 - `prepare_ho3d_v2.py`
 - `run_hamer.py`
 - `run_wilor.py`
-- `run_anyhand.py`
 - `eval_predictions.py`
 - `viz_overlay.py`
 

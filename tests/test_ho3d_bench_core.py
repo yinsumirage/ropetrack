@@ -201,6 +201,15 @@ class Ho3dBenchLegacyTest(unittest.TestCase):
         self.assertEqual(kwargs["wilor_ckpt"], "wilor.ckpt")
         self.assertEqual(kwargs["wilor_cfg"], "wilor.yaml")
 
+    def test_run_export_uses_outer_hand_predictor(self):
+        bench = load_script()
+
+        source = Path(bench.__file__).read_text()
+
+        self.assertIn("from ropetrack.backends.hand_predictor import HandPredictor", source)
+        self.assertNotIn('repo / "third_party" / "anyhand"', source)
+        self.assertNotIn("from scripts.rgb_predictor import AnyHandPredictor", source)
+
     def test_run_backend_with_bbox_dispatches_to_hamer(self):
         bench = load_script()
         calls = []

@@ -78,6 +78,15 @@ class FreiHandBenchTest(unittest.TestCase):
             self.assertEqual(json.loads((out / "evaluation_xyz.json").read_text()), [1, 2])
             self.assertEqual(json.loads((out / "evaluation_verts.json").read_text()), [4, 5])
 
+    def test_run_export_uses_outer_hand_predictor(self):
+        bench = load_script()
+
+        source = Path(bench.__file__).read_text()
+
+        self.assertIn("from ropetrack.backends.hand_predictor import HandPredictor", source)
+        self.assertNotIn('repo / "third_party" / "anyhand"', source)
+        self.assertNotIn("from scripts.rgb_predictor import AnyHandPredictor", source)
+
 
 if __name__ == "__main__":
     unittest.main()

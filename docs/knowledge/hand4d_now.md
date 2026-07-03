@@ -12,10 +12,9 @@ HaMeR/WiLoR baselines, then add hard benchmarks and rope experiments.
 
 - Keep outer repo clean: data, manifests, eval, visualization, wrappers, outputs,
   and experiment records.
-- Put HaMeR, WiLoR, and AnyHand under `third_party/`.
+- Put HaMeR and WiLoR under `third_party/`.
 - Do not start by refactoring HaMeR or filling in WiLoR training code.
-- Treat AnyHand mainly as a backend/predictor organization reference and strong
-  checkpoint source.
+- Treat AnyHand as a checkpoint/provenance source, not as a runtime submodule.
 
 ## Data Strategy
 
@@ -41,7 +40,7 @@ Important protocol decisions:
 1. Stable links for `data/raw/freihand` and `data/raw/ho3d_v2`.
 2. Small manifests for FreiHAND and HO3D v2.
 3. Overlay checks for 20 images from each dataset.
-4. HaMeR/WiLoR/AnyHand runners writing the prediction schema.
+4. HaMeR/WiLoR checkpoints running through one local predictor path.
 5. Minimal MPJPE and fingertip error evaluator.
 
 ## Do Not Do Yet

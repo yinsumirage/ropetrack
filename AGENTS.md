@@ -37,7 +37,7 @@ work. Treat `E:\Desktop\hand4D\now` as the external knowledge base and
 ## Current Research Line
 
 Stage 1 is clean baseline reproduction: FreiHAND, HO3D v2, and now HO3D v3
-clean GT-bbox baselines for HaMeR/WiLoR/AnyHand variants, followed by a stable
+clean GT-bbox baselines for HaMeR/WiLoR and AnyHand fine-tuned checkpoints, followed by a stable
 report. The Stage 1 report is `docs/2026-07-03-clean-baseline-summary.md`.
 Stage 2 is hard mask/blur/crop/appearance splits. Only after clean and hard
 benchmarks are credible, test fingertip-to-wrist rope distance as post-opt, then
@@ -79,8 +79,8 @@ unclear or stale, re-read that folder before writing or running cluster scripts.
   `/data`.
 - Current data root: `/data/wentao/ropetrack`.
 - Current data under `/data/wentao/ropetrack`:
-  - `pretrained_models`: shared checkpoint root. `third_party/anyhand/pretrained_models`
-    on HPC is a symlink to this directory.
+  - `pretrained_models`: shared checkpoint root. `pretrained_models` at the
+    repo root on HPC is a symlink to this directory.
   - `FreiHAND`: extracted root is `/data/wentao/ropetrack/FreiHAND`; original
     archives and download-shell metadata were deleted after successful
     extraction.
@@ -100,9 +100,9 @@ unclear or stale, re-read that folder before writing or running cluster scripts.
 - Current working Python/PyTorch environment uses `torch==2.5.*`, so PyTorch 2.6
   checkpoint-loading changes are not the active issue unless the environment is
   upgraded later.
-- Prefer AnyHand/WiLoR first for smoke inference. Treat HaMeR as a separate
-  environment path because its `detectron2`, `mmcv`, `ViTPose`, and `chumpy`
-  stack is brittle.
+- Prefer WiLoR first for smoke inference. Treat HaMeR as a separate environment
+  path because its `detectron2`, `mmcv`, `ViTPose`, and `chumpy` stack is
+  brittle.
 
 Minimal GPU job header:
 
@@ -138,7 +138,6 @@ python -c "import torch; print(torch.__version__); print(torch.cuda.is_available
 
 - `third_party/hamer`: https://github.com/geopavlakos/hamer
 - `third_party/wilor`: https://github.com/rolpotamias/WiLoR
-- `third_party/anyhand`: https://github.com/chen-si-cs/AnyHand
 
 ## Expected Schemas
 
