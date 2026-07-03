@@ -49,6 +49,12 @@ Treat `E:\Desktop\hpc` as the external HPC knowledge base. If these notes are
 unclear or stale, re-read that folder before writing or running cluster scripts.
 
 - SSH host is `hpc`; Slurm account is `engram`.
+- HPC Miniforge root is `/public/home/guowt2512/miniforge3`; use
+  `source /public/home/guowt2512/miniforge3/etc/profile.d/conda.sh && conda activate ropetrack`
+  for RopeTrack checks.
+- Before remote `git pull` or other Git network operations, set
+  `http_proxy=http://hkuhpc.com:7999` and
+  `https_proxy=http://hkuhpc.com:7999`.
 - Default Slurm commands and scripts must include `-A engram`.
 - Current practical partitions are `cpu` and `gpu`; do not confuse `-A engram`
   with `-p engram`.
