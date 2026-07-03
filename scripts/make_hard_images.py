@@ -210,7 +210,8 @@ def build_ho3d_hard_root(
         with sample.meta_path.open("rb") as f:
             meta = pickle.load(f, encoding="latin1")
         bbox = hand_bbox_from_meta(meta)[0].tolist()
-        points_xy = fingertip_points_from_meta(meta)
+        K = camera_matrix_from_meta(meta)
+        points_xy = project_fingertips_from_joints(xyz[idx], K) if K is not None else fingertip_points_from_meta(meta)
         sample_seed = seed + idx
         save_hard_image(sample.image_path, dst_image, bbox, effect, severity, sample_seed, points_xy=points_xy)
         dst_meta.parent.mkdir(parents=True, exist_ok=True)

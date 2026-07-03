@@ -129,6 +129,30 @@ class MakeHardImagesTest(unittest.TestCase):
 
             self.assertEqual((out / "evaluation.txt").read_text(), "AP10/0000\n")
 
+    def test_build_ho3d_uses_evaluation_xyz_for_fingertip_points(self):
+        hard = load_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "ho3d"
+            out = Path(tmp) / "hard"
+            rgb = src / "evaluation" / "AP10" / "rgb"
+            meta = src / "evaluation" / "AP10" / "meta"
+            rgb.mkdir(parents=True)
+            meta.mkdir(parents=True)
+            Image.new("RGB", (64, 64), (255, 255, 255)).save(rgb / "0000.png")
+            K = [[10.0, 0.0, 1.0], [0.0, 10.0, 2.0], [0.0, 0.0, 1.0]]
+            with (meta / "0000.pkl").open("wb") as f:
+                pickle.dump({"handBoundingBox": [10, 10, 50, 50], "handJoints3D": [0, 0, 1], "camMat": K}, f)
+            joints = [[0.0, 0.0, 1.0] for _ in range(21)]
+            joints[4] = [4.0, 5.0, 1.0]
+            (src / "evaluation_xyz.json").write_text(json.dumps([joints]))
+            (src / "evaluation_verts.json").write_text(json.dumps([[[0, 0, 0]]]))
+            (src / "evaluation.txt").write_text("AP10/0000\n")
+
+            hard.build_ho3d_hard_root(src, out, effect="tip_square", severity=0.5, limit=1, seed=3)
+
+            rows = [(json.loads(line)) for line in (out / "hard_manifest.jsonl").read_text().splitlines()]
+            self.assertEqual(rows[0]["points_xy"][0], [41.0, 52.0])
+
 
 if __name__ == "__main__":
     unittest.main()
