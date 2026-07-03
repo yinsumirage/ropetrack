@@ -14,7 +14,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from bench_freihand import bbox_from_projected_points, project_points, read_json  # noqa: E402
 from bench_ho3d import Ho3dSample, hand_bbox_from_meta, iter_ho3d_samples, resolve_image_path  # noqa: E402
 
-FINGERTIP_JOINT_IDS = np.asarray([4, 8, 12, 16, 20], dtype=np.int64)
+FREIHAND_FINGERTIP_JOINT_IDS = np.asarray([4, 8, 12, 16, 20], dtype=np.int64)
+HO3D_FINGERTIP_JOINT_IDS = np.asarray([16, 17, 18, 19, 20], dtype=np.int64)
+HO3D_TO_OPENCV_CAMERA = np.asarray([1.0, -1.0, -1.0], dtype=np.float32)
 
 
 def clamp_bbox(bbox, width: int, height: int) -> tuple[int, int, int, int]:
@@ -41,12 +43,18 @@ def fingertip_radius(bbox_xyxy, severity: float) -> int:
     return max(3, int(round(base * max(0.05, min(0.95, float(severity))) * 0.15)))
 
 
-def project_fingertips_from_joints(joints3d, K) -> list[tuple[float, float]]:
+def project_fingertips_from_joints(joints3d, K, tip_ids=FREIHAND_FINGERTIP_JOINT_IDS) -> list[tuple[float, float]]:
     joints = np.asarray(joints3d, dtype=np.float32)
-    if joints.shape[0] <= int(FINGERTIP_JOINT_IDS.max()):
+    tip_ids = np.asarray(tip_ids, dtype=np.int64)
+    if joints.shape[0] <= int(tip_ids.max()):
         return []
-    uv = project_points(joints[FINGERTIP_JOINT_IDS], K)
+    uv = project_points(joints[tip_ids], K)
     return [tuple(map(float, point)) for point in uv if np.isfinite(point).all()]
+
+
+def project_ho3d_fingertips_from_joints(joints3d, K) -> list[tuple[float, float]]:
+    joints = np.asarray(joints3d, dtype=np.float32) * HO3D_TO_OPENCV_CAMERA
+    return project_fingertips_from_joints(joints, K, tip_ids=HO3D_FINGERTIP_JOINT_IDS)
 
 
 def camera_matrix_from_meta(meta: dict):
@@ -60,7 +68,7 @@ def fingertip_points_from_meta(meta: dict) -> list[tuple[float, float]]:
     K = camera_matrix_from_meta(meta)
     if K is None or "handJoints3D" not in meta:
         return []
-    return project_fingertips_from_joints(meta["handJoints3D"], K)
+    return project_ho3d_fingertips_from_joints(meta["handJoints3D"], K)
 
 
 def draw_tip_mask(out: Image.Image, bbox, points_xy, shape: str, severity: float, seed: int) -> None:
@@ -211,7 +219,7 @@ def build_ho3d_hard_root(
             meta = pickle.load(f, encoding="latin1")
         bbox = hand_bbox_from_meta(meta)[0].tolist()
         K = camera_matrix_from_meta(meta)
-        points_xy = project_fingertips_from_joints(xyz[idx], K) if K is not None else fingertip_points_from_meta(meta)
+        points_xy = project_ho3d_fingertips_from_joints(xyz[idx], K) if K is not None else fingertip_points_from_meta(meta)
         sample_seed = seed + idx
         save_hard_image(sample.image_path, dst_image, bbox, effect, severity, sample_seed, points_xy=points_xy)
         dst_meta.parent.mkdir(parents=True, exist_ok=True)

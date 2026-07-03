@@ -56,6 +56,17 @@ class MakeHardImagesTest(unittest.TestCase):
         self.assertEqual(tips[0], (41.0, 52.0))
         self.assertEqual(tips[-1], (201.0, 212.0))
 
+    def test_project_ho3d_fingertips_uses_ho3d_tip_indices_and_camera_axes(self):
+        hard = load_script()
+        joints = [[0.0, 0.0, -1.0] for _ in range(21)]
+        joints[4] = [9.0, 9.0, 1.0]
+        joints[16] = [1.0, -2.0, -1.0]
+        K = [[10.0, 0.0, 1.0], [0.0, 10.0, 2.0], [0.0, 0.0, 1.0]]
+
+        tips = hard.project_ho3d_fingertips_from_joints(joints, K)
+
+        self.assertEqual(tips[0], (11.0, 22.0))
+
     def test_build_freihand_subset_writes_hard_root_and_manifest(self):
         hard = load_script()
         with tempfile.TemporaryDirectory() as tmp:
@@ -143,7 +154,7 @@ class MakeHardImagesTest(unittest.TestCase):
             with (meta / "0000.pkl").open("wb") as f:
                 pickle.dump({"handBoundingBox": [10, 10, 50, 50], "handJoints3D": [0, 0, 1], "camMat": K}, f)
             joints = [[0.0, 0.0, 1.0] for _ in range(21)]
-            joints[4] = [4.0, 5.0, 1.0]
+            joints[16] = [4.0, -5.0, -1.0]
             (src / "evaluation_xyz.json").write_text(json.dumps([joints]))
             (src / "evaluation_verts.json").write_text(json.dumps([[[0, 0, 0]]]))
             (src / "evaluation.txt").write_text("AP10/0000\n")
