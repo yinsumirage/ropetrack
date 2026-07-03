@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import numpy as np
 
-HO3D_TIP_VERTEX_IDS = np.asarray([744, 333, 444, 555, 672], dtype=np.int64)
+HAMER_MANO_TIP_VERTEX_IDS = np.asarray([744, 320, 443, 554, 671], dtype=np.int64)
+HO3D_TIP_VERTEX_IDS = HAMER_MANO_TIP_VERTEX_IDS
 FREIHAND_TIP_VERTEX_IDS = np.asarray([744, 320, 443, 555, 672], dtype=np.int64)
 FREIHAND_JOINT_ORDER = np.asarray(
     [0, 13, 14, 15, 16, 1, 2, 3, 17, 4, 5, 6, 18, 10, 11, 12, 19, 7, 8, 9, 20],

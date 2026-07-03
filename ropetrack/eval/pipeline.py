@@ -17,6 +17,7 @@ from .datasets import (
     bbox_candidates_from_sample,
     iter_eval_samples,
     load_gt_bbox_candidates,
+    validate_eval_protocol,
     write_eval_gt_subset,
 )
 from .protocols import eval_points_from_model, joints_from_vertices
@@ -261,6 +262,7 @@ def run_export(args: argparse.Namespace) -> Path:
 
     root = args.freihand_root if args.adapter == "freihand" else args.ho3d_root
     samples = list(iter_eval_samples(args.adapter, root, args.limit))
+    validate_eval_protocol(args.adapter, root, samples, args.protocol_check_samples, args.protocol_tolerance_m)
     out_dir = args.out_dir
     eval_input = out_dir / "eval_input"
     eval_results = out_dir / "eval_results"

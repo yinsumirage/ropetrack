@@ -14,6 +14,7 @@ from ropetrack.eval.datasets import (
     iter_eval_samples,
     load_gt_bbox_candidates,
     resolve_image_path,
+    validate_eval_protocol,
     write_eval_gt_subset,
 )
 
@@ -89,6 +90,19 @@ class EvalDatasetsTest(unittest.TestCase):
 
             self.assertEqual(json.loads((out / "evaluation_xyz.json").read_text()), [1, 2])
             self.assertEqual(json.loads((out / "evaluation_verts.json").read_text()), [4, 5])
+
+    def test_ho3d_protocol_check_rejects_wrong_gt_order(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            meta_path = root / "meta.pkl"
+            with meta_path.open("wb") as f:
+                pickle.dump({"handJoints3D": [[1.0, 0.0, 0.0]]}, f)
+            (root / "evaluation_xyz.json").write_text(json.dumps([[[2.0, 0.0, 0.0]]]))
+            (root / "evaluation_verts.json").write_text(json.dumps([[[0.0, 0.0, 0.0]]]))
+            sample = Ho3dSample("S/0001", Path("img.png"), meta_path)
+
+            with self.assertRaisesRegex(ValueError, "HO3D protocol check failed"):
+                validate_eval_protocol("ho3d", root, [sample], 1, 0.001)
 
     def test_small_helpers_remain_available_for_hard_image_builder(self):
         self.assertEqual(hand_bbox_from_meta({"handBoundingBox": [1, 2, 3, 4]}).tolist(), [[1.0, 2.0, 3.0, 4.0]])

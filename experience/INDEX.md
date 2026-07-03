@@ -31,6 +31,7 @@ ends with the clean baseline report before hard splits or rope labels.
 | 2026-07-03 | [0013_freihand_four_gtbbox_baselines.md](0013_freihand_four_gtbbox_baselines.md) | Full FreiHAND GT-bbox HaMeR/WiLoR/AnyHand scores and paper-table comparison. |
 | 2026-07-03 | [0017_hand_predictor_migration.md](0017_hand_predictor_migration.md) | Conservative first step moving predictor ownership into `src/ropetrack/backends` while keeping AnyHand for parity review. |
 | 2026-07-03 | [0018_eval_protocol_adapter.md](0018_eval_protocol_adapter.md) | Unified config-driven eval entrypoint and dataset adapters replacing the old bench scripts. |
+| 2026-07-04 | [0019_hamer_tip_policy_and_protocol_check.md](0019_hamer_tip_policy_and_protocol_check.md) | HaMeR-native HO3D fingertip vertices and the now-active protocol check for sample order. |
 
 ## Stage 2: Hard Splits And Rope Signals
 

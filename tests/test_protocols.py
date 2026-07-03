@@ -35,7 +35,7 @@ class ProtocolTest(unittest.TestCase):
 
         self.assertEqual(pts.tolist(), [[1.0, 0.0, 0.0]])
 
-    def test_ho3d_joints_keep_mano_order_and_ho3d_tips(self):
+    def test_ho3d_joints_keep_mano_order_and_hamer_tips(self):
         verts = np.asarray([[float(i), float(i + 1), float(i + 2)] for i in range(778)], dtype=np.float32)
         regressor = np.zeros((16, 778), dtype=np.float32)
         for joint_id in range(16):
@@ -45,8 +45,10 @@ class ProtocolTest(unittest.TestCase):
 
         self.assertEqual(joints.shape, (21, 3))
         self.assertEqual(joints[16].tolist(), [744.0, 745.0, 746.0])
-        self.assertEqual(joints[17].tolist(), [333.0, 334.0, 335.0])
-        self.assertEqual(joints[20].tolist(), [672.0, 673.0, 674.0])
+        self.assertEqual(joints[17].tolist(), [320.0, 321.0, 322.0])
+        self.assertEqual(joints[18].tolist(), [443.0, 444.0, 445.0])
+        self.assertEqual(joints[19].tolist(), [554.0, 555.0, 556.0])
+        self.assertEqual(joints[20].tolist(), [671.0, 672.0, 673.0])
 
     def test_freihand_joints_reorder_mano_and_use_freihand_tips(self):
         verts = np.asarray([[float(i), float(i + 1), float(i + 2)] for i in range(778)], dtype=np.float32)

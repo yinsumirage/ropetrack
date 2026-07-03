@@ -209,3 +209,27 @@ def write_eval_gt_subset(adapter: str, root: Path, eval_input: Path, count: int)
         if gt_path.exists():
             values = read_json(gt_path)
             (eval_input / gt_name).write_text(json.dumps(values[:count]))
+
+
+def validate_eval_protocol(adapter: str, root: Path, samples: list, count: int | None, tolerance_m: float | None) -> None:
+    if count is None or count <= 0 or tolerance_m is None:
+        return
+    check_count = min(count, len(samples))
+    xyz = read_json(root / "evaluation_xyz.json")
+    verts = read_json(root / "evaluation_verts.json")
+    if len(xyz) < check_count or len(verts) < check_count:
+        raise ValueError(f"{adapter} GT shorter than protocol check count {check_count}")
+    if adapter != "ho3d":
+        return
+
+    for idx, sample in enumerate(samples[:check_count]):
+        with sample.meta_path.open("rb") as f:
+            meta = pickle.load(f, encoding="latin1")
+        meta_root = np.asarray(meta["handJoints3D"], dtype=np.float64)[0]
+        gt_root = np.asarray(xyz[idx], dtype=np.float64)[0]
+        dist = float(np.linalg.norm(meta_root - gt_root))
+        if dist > tolerance_m:
+            raise ValueError(
+                f"HO3D protocol check failed at {idx} {sample.sample_id}: "
+                f"root distance {dist:.6f}m > {tolerance_m:.6f}m"
+            )
