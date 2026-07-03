@@ -1,4 +1,5 @@
 name: ho3d_v2
+adapter: ho3d
 remote_root: /data/wentao/ropetrack/HO3D_v2_eval
 local_link: data/raw/ho3d_v2
 eval:
@@ -11,4 +12,5 @@ protocol:
   units: m
   camera: HO3D/OpenGL-style; flip y and z from OpenCV predictions
   benchmark_mode: gt_bbox
+  joint_source: mano_vertices
 notes: Stage-1 anchor dataset with verified clean baseline reproduction.

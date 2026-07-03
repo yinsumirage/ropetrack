@@ -115,7 +115,6 @@ Expected: prediction JSONL files under `outputs/predictions/*_tiny.jsonl`.
 Run:
 
 ```powershell
-$env:PYTHONPATH='src'
 python scripts\eval_predictions.py --manifest data\manifests\freihand_val_tiny.jsonl --pred outputs\predictions\hamer_tiny.jsonl
 ```
 
@@ -214,7 +213,6 @@ Gate: success is not lower rope residual; success is lower 3D fingertip/occluded
 Daily minimum:
 
 ```powershell
-$env:PYTHONPATH='src'
 python -m unittest discover -s tests
 git status --short --branch
 ```

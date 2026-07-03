@@ -15,8 +15,8 @@ Stage 1 is complete enough for the next step:
 - FreiHAND clean GT-bbox baselines are reproduced.
 - HO3D v2 clean GT-bbox baselines are reproduced.
 - HO3D v3 clean GT-bbox baselines are reproduced and reported separately.
-- `scripts/bench_freihand.py`, `scripts/bench_ho3d.py`, and
-  `scripts/eval_parallel.py` are the current benchmark path.
+- `scripts/eval.py` and `scripts/eval_parallel.py` are the current benchmark
+  path.
 
 ## Stage 2A: Hard Image Smoke
 
@@ -124,7 +124,6 @@ Keep login-node work to copying code, checking small files, and submitting jobs.
 First local checks:
 
 ```powershell
-$env:PYTHONPATH='src'
 python -m unittest discover -s tests
 python -m py_compile scripts\make_hard_images.py
 ```
@@ -142,4 +141,6 @@ python scripts/make_hard_images.py \
   --seed 7
 ```
 
-Then run `scripts/bench_ho3d.py` on the generated root with `--mode gt_bbox`.
+Then run `scripts/eval.py` on the generated root with `--dataset ho3d_v2`,
+`--ho3d-root /data/wentao/ropetrack/hard/ho3d_v2/mask_s1_32`, and
+`--mode gt_bbox`.

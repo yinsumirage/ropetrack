@@ -141,7 +141,7 @@ python -c "import torch; print(torch.__version__); print(torch.cuda.is_available
 
 ## Expected Schemas
 
-Core sample fields live in `src/ropetrack/schema.py`: `sample_id`, `dataset`,
+Core sample fields live in `ropetrack/schema.py`: `sample_id`, `dataset`,
 `split`, `image_path`, `hand_side`, `bbox_xyxy`, optional camera and label paths.
 
 Core prediction fields live there too: `sample_id`, `backend`,

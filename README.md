@@ -18,7 +18,7 @@ data/             Local dataset links and generated manifests. No real data in g
 docs/knowledge/   Short local copy of the hand4D/now decisions.
 experience/       Experiment notes, failures, and an index to avoid repeating work.
 scripts/          CLI entry points once loaders/runners exist.
-src/ropetrack/    Core schemas, IO, metrics, backend wrappers, eval, viz, rope code.
+ropetrack/        Core schemas, IO, metrics, backend wrappers, eval, viz, rope code.
 tests/            Small smoke checks.
 third_party/      Git submodules for HaMeR and WiLoR.
 ```
@@ -27,7 +27,6 @@ third_party/      Git submodules for HaMeR and WiLoR.
 
 ```powershell
 git submodule update --init --recursive
-$env:PYTHONPATH = "src"
 python -m unittest discover -s tests
 ```
 

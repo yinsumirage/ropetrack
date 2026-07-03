@@ -1,14 +1,29 @@
 name: clean_baseline
 stage: 1
+defaults:
+  method: wilor_anyhand
+  mode: gt_bbox
+  units: m
+  device: cuda
+  batch_size: 128
+  detector_batch_size: 1
+  num_workers: 0
+  protocol_check_samples: 32
+  protocol_tolerance_m: 0.001
+  eval_num_workers: 8
+  out_dir: runs/{experiment}/{dataset}_{method}
 datasets:
   - freihand
   - ho3d_v2
   - ho3d_v3
 methods:
-  - hamer
-  - hamer_anyhand
-  - wilor
-  - wilor_anyhand
+  wilor_anyhand:
+    backend: wilor
+    wilor_ckpt: pretrained_models/anyhand_wilor.ckpt
+    wilor_cfg: pretrained_models/model_config_wilor.yaml
+  hamer_anyhand:
+    backend: hamer
+    hamer_ckpt: pretrained_models/hamer_ckpts/checkpoints/anyhand_hamer.ckpt
 metrics:
   freihand:
     - pa_mpjpe_mm

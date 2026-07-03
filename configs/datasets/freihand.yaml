@@ -1,4 +1,5 @@
 name: freihand
+adapter: freihand
 remote_root: /data/wentao/ropetrack/FreiHAND
 local_link: data/raw/freihand
 eval:
@@ -12,4 +13,5 @@ protocol:
   units: m
   camera: OpenCV-style, no HO3D y/z flip
   benchmark_mode: gt_bbox
+  joint_source: model_keypoints
 notes: Use aligned PA metrics for paper comparison.

@@ -10,9 +10,16 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from bench_freihand import bbox_from_projected_points, project_points, read_json  # noqa: E402
-from bench_ho3d import Ho3dSample, hand_bbox_from_meta, iter_ho3d_samples, resolve_image_path  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from ropetrack.eval.datasets import (  # noqa: E402
+    Ho3dSample,
+    bbox_from_projected_points,
+    hand_bbox_from_meta,
+    iter_ho3d_samples,
+    project_points,
+    read_json,
+    resolve_image_path,
+)
 
 FREIHAND_FINGERTIP_JOINT_IDS = np.asarray([4, 8, 12, 16, 20], dtype=np.int64)
 HO3D_FINGERTIP_JOINT_IDS = np.asarray([16, 17, 18, 19, 20], dtype=np.int64)
