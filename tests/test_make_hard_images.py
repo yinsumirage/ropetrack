@@ -28,6 +28,34 @@ class MakeHardImagesTest(unittest.TestCase):
         self.assertEqual(out.getpixel((0, 0)), (255, 0, 0))
         self.assertEqual(out.getpixel((5, 5)), (0, 0, 0))
 
+    def test_tip_square_masks_given_fingertip_points(self):
+        hard = load_script()
+        image = Image.new("RGB", (20, 20), (255, 255, 255))
+
+        out = hard.apply_hard_effect(
+            image,
+            [0, 0, 20, 20],
+            effect="tip_square",
+            severity=0.2,
+            seed=1,
+            points_xy=[(5, 5)],
+        )
+
+        self.assertEqual(out.getpixel((5, 5)), (0, 0, 0))
+        self.assertEqual(out.getpixel((15, 15)), (255, 255, 255))
+
+    def test_project_fingertips_from_joints_uses_tip_indices(self):
+        hard = load_script()
+        joints = [[0.0, 0.0, 1.0] for _ in range(21)]
+        for joint_id in (4, 8, 12, 16, 20):
+            joints[joint_id] = [float(joint_id), float(joint_id + 1), 1.0]
+        K = [[10.0, 0.0, 1.0], [0.0, 10.0, 2.0], [0.0, 0.0, 1.0]]
+
+        tips = hard.project_fingertips_from_joints(joints, K)
+
+        self.assertEqual(tips[0], (41.0, 52.0))
+        self.assertEqual(tips[-1], (201.0, 212.0))
+
     def test_build_freihand_subset_writes_hard_root_and_manifest(self):
         hard = load_script()
         with tempfile.TemporaryDirectory() as tmp:
