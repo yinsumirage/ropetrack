@@ -67,6 +67,9 @@ unclear or stale, re-read that folder before writing or running cluster scripts.
   shell script and run that script instead of fighting PowerShell quoting.
 - In PowerShell, quote Git refs with braces, such as `git stash drop 'stash@{0}'`;
   unquoted `stash@{0}` is parsed by PowerShell before Git sees it.
+- PowerShell here-strings may send CRLF to remote bash; if a streamed script
+  fails with commands like `sort\r`, pipe through `tr -d '\r'` or run a saved
+  `.sh` file.
 - Default Slurm commands and scripts must include `-A engram`.
 - Current practical partitions are `cpu` and `gpu`; do not confuse `-A engram`
   with `-p engram`.
