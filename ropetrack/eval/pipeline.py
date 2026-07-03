@@ -291,7 +291,10 @@ def run_export(args: argparse.Namespace) -> Path:
         verts_pred.append(verts.tolist())
 
     (eval_input / "pred.json").write_text(json.dumps([xyz_pred, verts_pred]))
-    write_eval_gt_subset(args.adapter, root, eval_input, len(samples))
+    gt_dir = root
+    if args.limit is not None and args.limit > 0:
+        write_eval_gt_subset(args.adapter, root, eval_input, len(samples))
+        gt_dir = eval_input
     (out_dir / "failures.json").write_text(json.dumps(failures, indent=2))
     (out_dir / "run_meta.json").write_text(json.dumps({
         "dataset": args.dataset,
@@ -318,9 +321,11 @@ def run_export(args: argparse.Namespace) -> Path:
     if args.run_eval:
         subprocess.run([
             sys.executable,
-            str(repo / "scripts" / "eval_parallel.py"),
+            str(repo / "scripts" / "score_predictions.py"),
             str(eval_input),
             str(eval_results),
+            "--gt-dir",
+            str(gt_dir),
             "--num-workers",
             str(args.eval_num_workers),
         ], check=True)

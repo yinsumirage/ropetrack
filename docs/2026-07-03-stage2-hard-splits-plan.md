@@ -15,7 +15,7 @@ Stage 1 is complete enough for the next step:
 - FreiHAND clean GT-bbox baselines are reproduced.
 - HO3D v2 clean GT-bbox baselines are reproduced.
 - HO3D v3 clean GT-bbox baselines are reproduced and reported separately.
-- `scripts/eval.py` and `scripts/eval_parallel.py` are the current benchmark
+- `scripts/eval.py` and `scripts/score_predictions.py` are the current benchmark
   path.
 
 ## Stage 2A: Hard Image Smoke

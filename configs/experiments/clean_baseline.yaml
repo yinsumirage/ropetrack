@@ -11,7 +11,7 @@ defaults:
   protocol_check_samples: 32
   protocol_tolerance_m: 0.001
   eval_num_workers: 8
-  out_dir: runs/{experiment}/{dataset}_{method}
+  out_dir: /data/wentao/ropetrack/runs/{experiment}/{dataset}_{method}
 datasets:
   - freihand
   - ho3d_v2

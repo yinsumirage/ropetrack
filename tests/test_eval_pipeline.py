@@ -80,12 +80,16 @@ class EvalPipelineTest(unittest.TestCase):
         self.assertNotIn("bench_ho3d", source)
         self.assertNotIn("bench_freihand", source)
 
+        pipeline_source = (Path(__file__).resolve().parents[1] / "ropetrack" / "eval" / "pipeline.py").read_text()
+        self.assertIn("score_predictions.py", pipeline_source)
+
     def test_old_bench_entrypoints_are_removed(self):
         scripts = Path(__file__).resolve().parents[1] / "scripts"
 
         self.assertFalse((scripts / "bench_ho3d.py").exists())
         self.assertFalse((scripts / "bench_freihand.py").exists())
         self.assertFalse((scripts / "bench_eval.py").exists())
+        self.assertFalse((scripts / "eval_parallel.py").exists())
 
 
 if __name__ == "__main__":

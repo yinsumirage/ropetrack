@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Parallel mesh/joint eval compatible with the current benchmark scores."""
+"""Score benchmark predictions against joint and vertex ground truth."""
 
 from __future__ import annotations
 
@@ -109,11 +109,12 @@ def read_json(path):
         return json.load(f)
 
 
-def load_inputs(input_dir, pred_file_name, set_name):
-    input_dir = Path(input_dir)
-    xyz = read_json(input_dir / f"{set_name}_xyz.json")
-    verts = read_json(input_dir / f"{set_name}_verts.json")
-    pred = read_json(input_dir / pred_file_name)
+def load_inputs(pred_dir, gt_dir=None, pred_file_name="pred.json", set_name="evaluation"):
+    pred_dir = Path(pred_dir)
+    gt_dir = Path(gt_dir) if gt_dir is not None else pred_dir
+    xyz = read_json(gt_dir / f"{set_name}_xyz.json")
+    verts = read_json(gt_dir / f"{set_name}_verts.json")
+    pred = read_json(pred_dir / pred_file_name)
     if len(pred) != 2:
         raise ValueError("Expected pred.json to contain [xyz_predictions, vertex_predictions].")
     if not (len(xyz) == len(verts) == len(pred[0]) == len(pred[1])):
@@ -124,9 +125,9 @@ def load_inputs(input_dir, pred_file_name, set_name):
     return xyz, verts, pred[0], pred[1]
 
 
-def evaluate_dataset(input_dir, pred_file_name="pred.json", set_name="evaluation", num_workers=1, chunksize=16):
+def evaluate_dataset(pred_dir, gt_dir=None, pred_file_name="pred.json", set_name="evaluation", num_workers=1, chunksize=16):
     global _GT_XYZ, _GT_VERTS, _PRED_XYZ, _PRED_VERTS
-    _GT_XYZ, _GT_VERTS, _PRED_XYZ, _PRED_VERTS = load_inputs(input_dir, pred_file_name, set_name)
+    _GT_XYZ, _GT_VERTS, _PRED_XYZ, _PRED_VERTS = load_inputs(pred_dir, gt_dir, pred_file_name, set_name)
     indices = range(len(_GT_XYZ))
     if num_workers <= 1:
         return [evaluate_index(i) for i in indices]
@@ -204,8 +205,9 @@ def write_scores(output_dir, scores):
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Parallel benchmark evaluation.")
-    parser.add_argument("input_dir", help="Directory containing pred.json and evaluation_* ground truth JSON files.")
+    parser.add_argument("pred_dir", help="Directory containing pred.json.")
     parser.add_argument("output_dir", help="Directory where scores.txt should be written.")
+    parser.add_argument("--gt-dir", default=None, help="Directory containing evaluation_xyz.json and evaluation_verts.json. Defaults to pred_dir.")
     parser.add_argument("--pred_file_name", default="pred.json", help="Prediction JSON filename.")
     parser.add_argument("--num-workers", type=int, default=max(1, min(8, os.cpu_count() or 1)))
     parser.add_argument("--chunksize", type=int, default=16)
@@ -215,7 +217,8 @@ def parse_args():
 def main():
     args = parse_args()
     results = evaluate_dataset(
-        args.input_dir,
+        args.pred_dir,
+        gt_dir=args.gt_dir,
         pred_file_name=args.pred_file_name,
         num_workers=args.num_workers,
         chunksize=args.chunksize,

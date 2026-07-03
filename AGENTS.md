@@ -100,6 +100,9 @@ unclear or stale, re-read that folder before writing or running cluster scripts.
 - The repo lives under `~/project/ropetrack` on the HPC account, not under
   `/data`.
 - Current data root: `/data/wentao/ropetrack`.
+- Store benchmark outputs and Slurm logs under `/data/wentao/ropetrack/runs`,
+  not inside `~/project/ropetrack`; keep temporary sbatch/debug scripts in the
+  ignored repo-local `.local_checks/` directory.
 - Current data under `/data/wentao/ropetrack`:
   - `pretrained_models`: shared checkpoint root. `pretrained_models` at the
     repo root on HPC is a symlink to this directory.
