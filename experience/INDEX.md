@@ -38,3 +38,4 @@ ends with the clean baseline report before hard splits or rope labels.
 |---|---|---|
 | 2026-07-03 | [0014_stage2_ho3d_v2_hard_mask_smoke.md](0014_stage2_ho3d_v2_hard_mask_smoke.md) | First hard-image generator, HO3D v2 clean vs mask smoke, limited-GT eval fix, and severity lesson. |
 | 2026-07-03 | [0015_stage2_ho3d_v2_hard_mask_512.md](0015_stage2_ho3d_v2_hard_mask_512.md) | 512-sample HO3D v2 clean/mask comparison, image mask check, and conclusion that 0.45 is weak while 0.85 is a hard candidate. |
+| 2026-07-03 | [0016_stage2_ho3d_v2_fingertip_512.md](0016_stage2_ho3d_v2_fingertip_512.md) | 512-sample fingertip circle/square/blur/mixed comparison, HO3D fingertip projection fix, and conclusion that isolated tip dots are too weak. |
