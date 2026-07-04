@@ -97,3 +97,56 @@ For the next benchmark round, use:
 - `mask70` as the broad severe occlusion split.
 - `finger_end80` as the rope-like finger occlusion split.
 - `tip_square80` as a mild/localized ablation, not the main hard condition.
+
+## Diagnostic Visualizations
+
+Reusable script:
+
+```text
+scripts/visualize_mesh_comparison.py
+```
+
+It reads a clean run, a hard run, the GT root, and optional clean/hard image
+roots, then writes sheets with:
+
+```text
+clean image | hard image | GT mesh | clean pred mesh | hard pred mesh | overlay
+```
+
+Meshes are Procrustes-aligned for visualization, matching the aligned metric
+interpretation and avoiding camera-frame drift.
+
+Generated WiLoR original diagnostic sheets:
+
+```text
+/data/wentao/ropetrack/debug/mesh_compare/ho3d_v2_wilor_original_hard_sheets
+/data/wentao/ropetrack/debug/mesh_compare/freihand_wilor_original_hard_sheets
+```
+
+Local copies:
+
+```text
+.local_checks/mesh_compare/ho3d_v2_wilor_original_hard_sheets
+.local_checks/mesh_compare/freihand_wilor_original_hard_sheets
+```
+
+Each folder has 9 sheets:
+
+```text
+mask70_degradation.png
+mask70_middle_degradation.png
+mask70_low_degradation.png
+tip_square80_degradation.png
+tip_square80_middle_degradation.png
+tip_square80_low_degradation.png
+finger_end80_degradation.png
+finger_end80_middle_degradation.png
+finger_end80_low_degradation.png
+```
+
+Use the `degradation` sheets for clear failure cases, `middle_degradation` for
+moderate examples, and `low_degradation` for controls where the perturbation
+does not change the aligned mesh much.
+
+The PNG sheets are intentionally not tracked by Git; keep only the script and
+the run/debug paths in the repo.
