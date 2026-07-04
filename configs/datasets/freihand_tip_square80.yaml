@@ -1,0 +1,16 @@
+name: freihand_tip_square80
+adapter: freihand
+remote_root: /data/wentao/ropetrack/hard/freihand/tip_square80
+local_link: data/raw/freihand_tip_square80
+eval:
+  images: evaluation/rgb
+  gt:
+    - evaluation_xyz.json
+    - evaluation_verts.json
+    - evaluation_K.json
+protocol:
+  units: m
+  camera: OpenCV-style, no HO3D y/z flip
+  benchmark_mode: gt_bbox
+  joint_source: model_keypoints
+notes: Hard split generated from FreiHAND with fingertip square mask severity 0.80.

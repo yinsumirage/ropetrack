@@ -44,6 +44,23 @@ class MakeHardImagesTest(unittest.TestCase):
         self.assertEqual(out.getpixel((5, 5)), (0, 0, 0))
         self.assertEqual(out.getpixel((15, 15)), (255, 255, 255))
 
+    def test_finger_end_masks_between_projected_joint_pairs(self):
+        hard = load_script()
+        image = Image.new("RGB", (30, 30), (255, 255, 255))
+
+        out = hard.apply_hard_effect(
+            image,
+            [0, 0, 30, 30],
+            effect="finger_end",
+            severity=0.5,
+            seed=1,
+            segments_xy=[((5, 10), (20, 10)), ((5, 20), (20, 20))],
+        )
+
+        self.assertEqual(out.getpixel((12, 10)), (0, 0, 0))
+        self.assertEqual(out.getpixel((12, 20)), (0, 0, 0))
+        self.assertEqual(out.getpixel((12, 2)), (255, 255, 255))
+
     def test_project_fingertips_from_joints_uses_tip_indices(self):
         hard = load_script()
         joints = [[0.0, 0.0, 1.0] for _ in range(21)]
@@ -56,6 +73,23 @@ class MakeHardImagesTest(unittest.TestCase):
         self.assertEqual(tips[0], (41.0, 52.0))
         self.assertEqual(tips[-1], (201.0, 212.0))
 
+    def test_project_freihand_finger_end_segments_cover_tip_to_pip_to_mcp(self):
+        hard = load_script()
+        joints = [[0.0, 0.0, 1.0] for _ in range(21)]
+        joints[1] = [1.0, 2.0, 1.0]
+        joints[4] = [3.0, 4.0, 1.0]
+        joints[5] = [5.0, 6.0, 1.0]
+        joints[6] = [7.0, 8.0, 1.0]
+        joints[8] = [9.0, 10.0, 1.0]
+        K = [[10.0, 0.0, 1.0], [0.0, 10.0, 2.0], [0.0, 0.0, 1.0]]
+
+        segments = hard.project_finger_end_segments_from_joints(joints, K)
+
+        self.assertEqual(segments[0], ((31.0, 42.0), (11.0, 22.0)))
+        self.assertEqual(segments[1], ((91.0, 102.0), (71.0, 82.0)))
+        self.assertEqual(segments[2], ((71.0, 82.0), (51.0, 62.0)))
+        self.assertEqual(len(segments), 9)
+
     def test_project_ho3d_fingertips_uses_ho3d_tip_indices_and_camera_axes(self):
         hard = load_script()
         joints = [[0.0, 0.0, -1.0] for _ in range(21)]
@@ -66,6 +100,23 @@ class MakeHardImagesTest(unittest.TestCase):
         tips = hard.project_ho3d_fingertips_from_joints(joints, K)
 
         self.assertEqual(tips[0], (11.0, 22.0))
+
+    def test_project_ho3d_finger_end_segments_use_thumb_once_and_other_fingers_twice(self):
+        hard = load_script()
+        joints = [[0.0, 0.0, -1.0] for _ in range(21)]
+        joints[13] = [1.0, -2.0, -1.0]
+        joints[16] = [3.0, -4.0, -1.0]
+        joints[1] = [5.0, -6.0, -1.0]
+        joints[2] = [7.0, -8.0, -1.0]
+        joints[17] = [11.0, -12.0, -1.0]
+        K = [[10.0, 0.0, 1.0], [0.0, 10.0, 2.0], [0.0, 0.0, 1.0]]
+
+        segments = hard.project_ho3d_finger_end_segments_from_joints(joints, K)
+
+        self.assertEqual(segments[0], ((31.0, 42.0), (11.0, 22.0)))
+        self.assertEqual(segments[1], ((111.0, 122.0), (71.0, 82.0)))
+        self.assertEqual(segments[2], ((71.0, 82.0), (51.0, 62.0)))
+        self.assertEqual(len(segments), 9)
 
     def test_build_freihand_subset_writes_hard_root_and_manifest(self):
         hard = load_script()

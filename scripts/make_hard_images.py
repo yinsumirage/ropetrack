@@ -22,7 +22,15 @@ from ropetrack.eval.datasets import (  # noqa: E402
 )
 
 FREIHAND_FINGERTIP_JOINT_IDS = np.asarray([4, 8, 12, 16, 20], dtype=np.int64)
+FREIHAND_FINGER_END_SEGMENT_JOINT_IDS = np.asarray(
+    [[4, 1], [8, 6], [6, 5], [12, 10], [10, 9], [16, 14], [14, 13], [20, 18], [18, 17]],
+    dtype=np.int64,
+)
 HO3D_FINGERTIP_JOINT_IDS = np.asarray([16, 17, 18, 19, 20], dtype=np.int64)
+HO3D_FINGER_END_SEGMENT_JOINT_IDS = np.asarray(
+    [[16, 13], [17, 2], [2, 1], [18, 5], [5, 4], [19, 11], [11, 10], [20, 8], [8, 7]],
+    dtype=np.int64,
+)
 HO3D_TO_OPENCV_CAMERA = np.asarray([1.0, -1.0, -1.0], dtype=np.float32)
 
 
@@ -59,9 +67,27 @@ def project_fingertips_from_joints(joints3d, K, tip_ids=FREIHAND_FINGERTIP_JOINT
     return [tuple(map(float, point)) for point in uv if np.isfinite(point).all()]
 
 
+def project_finger_end_segments_from_joints(joints3d, K, segment_ids=FREIHAND_FINGER_END_SEGMENT_JOINT_IDS):
+    joints = np.asarray(joints3d, dtype=np.float32)
+    segment_ids = np.asarray(segment_ids, dtype=np.int64)
+    if joints.shape[0] <= int(segment_ids.max()):
+        return []
+    uv = project_points(joints[segment_ids.reshape(-1)], K).reshape(-1, 2, 2)
+    return [
+        (tuple(map(float, segment[0])), tuple(map(float, segment[1])))
+        for segment in uv
+        if np.isfinite(segment).all()
+    ]
+
+
 def project_ho3d_fingertips_from_joints(joints3d, K) -> list[tuple[float, float]]:
     joints = np.asarray(joints3d, dtype=np.float32) * HO3D_TO_OPENCV_CAMERA
     return project_fingertips_from_joints(joints, K, tip_ids=HO3D_FINGERTIP_JOINT_IDS)
+
+
+def project_ho3d_finger_end_segments_from_joints(joints3d, K):
+    joints = np.asarray(joints3d, dtype=np.float32) * HO3D_TO_OPENCV_CAMERA
+    return project_finger_end_segments_from_joints(joints, K, segment_ids=HO3D_FINGER_END_SEGMENT_JOINT_IDS)
 
 
 def camera_matrix_from_meta(meta: dict):
@@ -109,7 +135,29 @@ def draw_tip_mask(out: Image.Image, bbox, points_xy, shape: str, severity: float
             raise ValueError(f"unsupported tip effect: {shape}")
 
 
-def apply_hard_effect(image: Image.Image, bbox, effect: str, severity: float, seed: int, points_xy=None) -> Image.Image:
+def draw_finger_end_mask(out: Image.Image, bbox, segments_xy, severity: float) -> None:
+    x1, y1, x2, y2 = clamp_bbox(bbox, out.width, out.height)
+    segments = list(segments_xy or [((x1, (y1 + y2) / 2.0), (x2, (y1 + y2) / 2.0))])
+    half_width = fingertip_radius((x1, y1, x2, y2), severity)
+    draw = ImageDraw.Draw(out)
+    for (ax, ay), (bx, by) in segments:
+        dx = float(bx) - float(ax)
+        dy = float(by) - float(ay)
+        length = (dx * dx + dy * dy) ** 0.5
+        if length <= 1e-6:
+            draw.rectangle((ax - half_width, ay - half_width, ax + half_width, ay + half_width), fill=(0, 0, 0))
+            continue
+        nx = -dy / length * half_width
+        ny = dx / length * half_width
+        draw.polygon([
+            (ax + nx, ay + ny),
+            (bx + nx, by + ny),
+            (bx - nx, by - ny),
+            (ax - nx, ay - ny),
+        ], fill=(0, 0, 0))
+
+
+def apply_hard_effect(image: Image.Image, bbox, effect: str, severity: float, seed: int, points_xy=None, segments_xy=None) -> Image.Image:
     import random
 
     rng = random.Random(seed)
@@ -139,6 +187,8 @@ def apply_hard_effect(image: Image.Image, bbox, effect: str, severity: float, se
         draw.rectangle(rect, fill=(0, 0, 0))
     elif effect in {"tip_circle", "tip_square", "tip_blur"}:
         draw_tip_mask(out, (x1, y1, x2, y2), points_xy, effect, severity, seed)
+    elif effect == "finger_end":
+        draw_finger_end_mask(out, (x1, y1, x2, y2), segments_xy, severity)
     else:
         raise ValueError(f"unsupported effect: {effect}")
     return out
@@ -156,9 +206,9 @@ def write_manifest(path: Path, rows: list[dict]) -> None:
             f.write("\n")
 
 
-def save_hard_image(src_image: Path, dst_image: Path, bbox, effect: str, severity: float, seed: int, points_xy=None) -> None:
+def save_hard_image(src_image: Path, dst_image: Path, bbox, effect: str, severity: float, seed: int, points_xy=None, segments_xy=None) -> None:
     dst_image.parent.mkdir(parents=True, exist_ok=True)
-    hard = apply_hard_effect(Image.open(src_image), bbox, effect, severity, seed, points_xy=points_xy)
+    hard = apply_hard_effect(Image.open(src_image), bbox, effect, severity, seed, points_xy=points_xy, segments_xy=segments_xy)
     hard.save(dst_image)
 
 
@@ -182,8 +232,9 @@ def build_freihand_hard_root(
         dst_image = output_root / "evaluation" / "rgb" / src_image.name
         bbox = bbox_from_projected_points(verts[idx], Ks[idx]).tolist()
         points_xy = project_fingertips_from_joints(xyz[idx], Ks[idx])
+        segments_xy = project_finger_end_segments_from_joints(xyz[idx], Ks[idx])
         sample_seed = seed + idx
-        save_hard_image(src_image, dst_image, bbox, effect, severity, sample_seed, points_xy=points_xy)
+        save_hard_image(src_image, dst_image, bbox, effect, severity, sample_seed, points_xy=points_xy, segments_xy=segments_xy)
         rows.append({
             "sample_id": frame,
             "dataset": "freihand",
@@ -191,6 +242,7 @@ def build_freihand_hard_root(
             "hard_image": str(dst_image),
             "bbox_xyxy": bbox,
             "points_xy": points_xy,
+            "segments_xy": segments_xy,
             "effect": effect,
             "severity": severity,
             "seed": sample_seed,
@@ -227,8 +279,9 @@ def build_ho3d_hard_root(
         bbox = hand_bbox_from_meta(meta)[0].tolist()
         K = camera_matrix_from_meta(meta)
         points_xy = project_ho3d_fingertips_from_joints(xyz[idx], K) if K is not None else fingertip_points_from_meta(meta)
+        segments_xy = project_ho3d_finger_end_segments_from_joints(xyz[idx], K) if K is not None else []
         sample_seed = seed + idx
-        save_hard_image(sample.image_path, dst_image, bbox, effect, severity, sample_seed, points_xy=points_xy)
+        save_hard_image(sample.image_path, dst_image, bbox, effect, severity, sample_seed, points_xy=points_xy, segments_xy=segments_xy)
         dst_meta.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(sample.meta_path, dst_meta)
         rows.append({
@@ -238,6 +291,7 @@ def build_ho3d_hard_root(
             "hard_image": str(dst_image),
             "bbox_xyxy": bbox,
             "points_xy": points_xy,
+            "segments_xy": segments_xy,
             "effect": effect,
             "severity": severity,
             "seed": sample_seed,
@@ -272,7 +326,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument(
         "--effect",
-        choices=["mask", "blur", "crop", "mixed", "tip_circle", "tip_square", "tip_blur", "tip_mixed"],
+        choices=["mask", "blur", "crop", "mixed", "tip_circle", "tip_square", "tip_blur", "tip_mixed", "finger_end"],
         default="mask",
     )
     parser.add_argument("--severity", type=float, default=0.45)

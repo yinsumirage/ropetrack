@@ -42,3 +42,4 @@ ends with the clean baseline report before hard splits or rope labels.
 | 2026-07-03 | [0014_stage2_ho3d_v2_hard_mask_smoke.md](0014_stage2_ho3d_v2_hard_mask_smoke.md) | First hard-image generator, HO3D v2 clean vs mask smoke, limited-GT eval fix, and severity lesson. |
 | 2026-07-03 | [0015_stage2_ho3d_v2_hard_mask_512.md](0015_stage2_ho3d_v2_hard_mask_512.md) | 512-sample HO3D v2 clean/mask comparison, image mask check, and conclusion that 0.45 is weak while 0.85 is a hard candidate. |
 | 2026-07-03 | [0016_stage2_ho3d_v2_fingertip_fix_512.md](0016_stage2_ho3d_v2_fingertip_fix_512.md) | Corrected 512-sample fingertip square/blur comparison after fixing HO3D projection; square is stronger, both are milder than mask0.85. |
+| 2026-07-04 | [0020_stage2_hard_original_eval.md](0020_stage2_hard_original_eval.md) | Full HO3D v2/FreiHAND mask70, tip_square80, and finger_end80 hard roots plus original WiLoR/HaMeR GT-bbox scores. |

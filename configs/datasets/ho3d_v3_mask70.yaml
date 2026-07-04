@@ -1,0 +1,16 @@
+name: ho3d_v3_mask70
+adapter: ho3d
+remote_root: /data/wentao/ropetrack/hard/ho3d_v3/mask70
+local_link: data/raw/ho3d_v3_mask70
+eval:
+  list: evaluation.txt
+  images: evaluation/*/rgb
+  gt:
+    - evaluation_xyz.json
+    - evaluation_verts.json
+protocol:
+  units: m
+  camera: HO3D/OpenGL-style; flip y and z from OpenCV predictions
+  benchmark_mode: gt_bbox
+  joint_source: mano_vertices
+notes: Hard split generated from HO3D v3 with centered bbox mask severity 0.70.

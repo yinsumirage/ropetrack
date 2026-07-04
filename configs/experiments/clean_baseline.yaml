@@ -17,10 +17,17 @@ datasets:
   - ho3d_v2
   - ho3d_v3
 methods:
+  wilor_original:
+    backend: wilor
+    wilor_ckpt: pretrained_models/wilor_final.ckpt
+    wilor_cfg: pretrained_models/model_config_wilor.yaml
   wilor_anyhand:
     backend: wilor
     wilor_ckpt: pretrained_models/anyhand_wilor.ckpt
     wilor_cfg: pretrained_models/model_config_wilor.yaml
+  hamer_original:
+    backend: hamer
+    hamer_ckpt: pretrained_models/hamer_ckpts/checkpoints/hamer.ckpt
   hamer_anyhand:
     backend: hamer
     hamer_ckpt: pretrained_models/hamer_ckpts/checkpoints/anyhand_hamer.ckpt
