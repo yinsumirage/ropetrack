@@ -5,6 +5,8 @@ Current benchmark entrypoints:
 - `eval.py`: config-driven benchmark export and eval entrypoint.
 - `eval_parallel.py`: local evaluator used by benchmark exports.
 - `make_hard_images.py`: hard-image split generator.
+- `make_rope_labels.py`: GT fingertip-to-wrist rope label generator.
+- `score_rope_predictions.py`: rope diagnostic scorer for exported `pred.json`.
 
 Typical usage:
 
@@ -20,6 +22,15 @@ python scripts/make_hard_images.py --dataset ho3d --input-root /data/wentao/rope
 python scripts/make_hard_images.py --dataset ho3d --input-root /data/wentao/ropetrack/HO3D_v2_eval --output-root /data/wentao/ropetrack/hard/ho3d_v2/tip_square80 --effect tip_square --severity 0.80 --limit 0
 python scripts/make_hard_images.py --dataset ho3d --input-root /data/wentao/ropetrack/HO3D_v2_eval --output-root /data/wentao/ropetrack/hard/ho3d_v2/finger_end80 --effect finger_end --severity 0.80 --limit 0
 python scripts/eval.py --dataset ho3d_v2_mask70 --method wilor_anyhand --run-eval
+```
+
+Rope labels are JSONL so each row keeps sample id, raw distance, chain length,
+normalized value, validity, and normalization metadata:
+
+```bash
+python scripts/make_rope_labels.py --dataset ho3d --input-root /data/wentao/ropetrack/HO3D_v2_eval --output /data/wentao/ropetrack/rope/ho3d_v2_rope.jsonl --viz-dir /data/wentao/ropetrack/runs/rope_viz/ho3d_v2 --viz-count 16
+python scripts/score_rope_predictions.py /data/wentao/ropetrack/runs/clean_baseline/ho3d_v2_wilor_original/eval_input /data/wentao/ropetrack/rope/ho3d_v2_rope.jsonl /data/wentao/ropetrack/runs/rope_scores/ho3d_v2_wilor_original --dataset ho3d --run-meta /data/wentao/ropetrack/runs/clean_baseline/ho3d_v2_wilor_original/run_meta.json
+python scripts/rope_diagnostics/analyze_rope_errors.py /data/wentao/ropetrack/runs/rope_phase12_20260705_031056/scores /data/wentao/ropetrack/runs/rope_phase12_20260705_031056/diagnostics
 ```
 
 Dataset roots live in `configs/datasets/*.yaml`. Method/backend checkpoint
