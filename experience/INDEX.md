@@ -55,3 +55,4 @@ ends with the clean baseline report before hard splits or rope labels.
 | 2026-07-07 | [0030_p0_wilor_freihand_jobs.md](0030_p0_wilor_freihand_jobs.md) | Submitted WiLoR FreiHAND P0 rope/oracle action-space matrix jobs for mask70 and finger_end80. |
 | 2026-07-07 | [0031_p0_ho3d_v2_mask70_jobs.md](0031_p0_ho3d_v2_mask70_jobs.md) | Submitted fixed-code HO3D v2 mask70 P0 rope/oracle action-space jobs for WiLoR and HaMeR. |
 | 2026-07-07 | [0032_p0_wilor_freihand_results.md](0032_p0_wilor_freihand_results.md) | FreiHAND P0 results: oracle ceiling is large, flex15 has oracle potential, but rope/mult5 remains the best current teacher. |
+| 2026-07-07 | [0033_p1_mult5_convergence_jobs.md](0033_p1_mult5_convergence_jobs.md) | Submitted zero-code rope/mult5 convergence scan to test loss-scale under-optimization before gating conclusions. |

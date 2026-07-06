@@ -59,6 +59,8 @@ the same apply output.
 - Rope residual closure is low for rope objectives (`~2%-4%`) and much higher
   for oracle objectives (`~18%-27%`), implying the current rope objective /
   regularization / gating is the bottleneck, not merely the pose action space.
+  A simpler under-optimization explanation from loss-scale mismatch remains
+  possible and is tested in `experience/0033`.
 - Sliced gains are consistently larger on occluded fingertips than on all
   joints, supporting the report framing around local occluded-finger recovery
   rather than only all-joint averages.
@@ -66,7 +68,8 @@ the same apply output.
 ## Decision
 
 Do not train a rope-conditioned head from the current `flex15` rope teacher.
-First run P1 objective/gating work:
+First rule out rope-objective under-optimization, then run P1 objective/gating
+work:
 
 1. keep `mult5` as the stable baseline teacher;
 2. add residual/finger gating;
