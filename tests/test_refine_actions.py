@@ -33,6 +33,7 @@ class ActionSpaceTest(unittest.TestCase):
         self.assertEqual(alpha_dim("mult5"), 5)
         self.assertEqual(alpha_dim("mult15"), 15)
         self.assertEqual(alpha_dim("flex15"), 15)
+        self.assertEqual(alpha_dim("flex5"), 5)
         with self.assertRaises(ValueError):
             alpha_dim("free45")
 
@@ -75,6 +76,25 @@ class ActionSpaceTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             apply_action_np(self.base, alpha, "flex15")
 
+    def test_flex5_broadcasts_alpha_over_finger_joints(self):
+        rng = np.random.default_rng(19)
+        directions = rng.normal(size=(4, 15, 3)).astype(np.float32)
+        alpha = np.zeros((4, 5), dtype=np.float32)
+        alpha[:, 0] = 0.2  # thumb
+        refined = apply_action_np(self.base, alpha, "flex5", directions)
+        expected = self.base.copy()
+        for joint in FINGER_POSE_GROUPS[0]:
+            expected[:, 3 * joint : 3 * joint + 3] += 0.2 * directions[:, joint]
+        np.testing.assert_allclose(refined, expected, atol=1e-6)
+        # other fingers untouched
+        untouched = [3 * j + a for f in range(1, 5) for j in FINGER_POSE_GROUPS[f] for a in range(3)]
+        np.testing.assert_allclose(refined[:, untouched], self.base[:, untouched], atol=1e-7)
+
+    def test_flex5_requires_directions(self):
+        alpha = np.zeros((4, 5), dtype=np.float32)
+        with self.assertRaises(ValueError):
+            apply_action_np(self.base, alpha, "flex5")
+
     def test_alpha_shape_validation(self):
         with self.assertRaises(ValueError):
             apply_action_np(self.base, np.zeros((4, 15), dtype=np.float32), "mult5")
@@ -88,6 +108,7 @@ class ActionSpaceTest(unittest.TestCase):
             ("mult5", rng.uniform(-0.4, 0.4, size=(4, 5)).astype(np.float32), None),
             ("mult15", rng.uniform(-0.4, 0.4, size=(4, 15)).astype(np.float32), None),
             ("flex15", rng.uniform(-0.4, 0.4, size=(4, 15)).astype(np.float32), directions),
+            ("flex5", rng.uniform(-0.4, 0.4, size=(4, 5)).astype(np.float32), directions),
         ]
         for action_space, alpha, dirs in cases:
             with self.subTest(action_space=action_space):
@@ -112,6 +133,7 @@ class ActionSpaceTest(unittest.TestCase):
     def test_per_finger_alpha_abs(self):
         alpha5 = np.asarray([[0.1, -0.2, 0.3, -0.4, 0.5]], dtype=np.float32)
         np.testing.assert_allclose(per_finger_alpha_abs(alpha5, "mult5"), np.abs(alpha5), atol=1e-7)
+        np.testing.assert_allclose(per_finger_alpha_abs(alpha5, "flex5"), np.abs(alpha5), atol=1e-7)
 
         alpha15 = np.zeros((1, 15), dtype=np.float32)
         alpha15[0, list(FINGER_POSE_GROUPS[0])] = [0.3, -0.3, 0.3]  # thumb joints

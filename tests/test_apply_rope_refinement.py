@@ -69,6 +69,28 @@ class FakeMano:
         return SimpleNamespace(joints=joints, vertices=verts)
 
 
+class FakeManoTwoJoint:
+    """Three-segment toy finger: tip = v + R_j0 @ (v + R_j1 @ v).
+
+    Both the first and second pose joints of each finger move the rope
+    distance, which distinguishes per-finger coupled normalization (flex5)
+    from per-joint normalization (flex15).
+    """
+
+    def __call__(self, global_orient=None, hand_pose=None, betas=None, pose2rot=False):
+        batch = hand_pose.shape[0]
+        bone = torch.tensor([BONE, 0.0, 0.0], dtype=hand_pose.dtype, device=hand_pose.device)
+        joints = torch.zeros(batch, 21, 3, dtype=hand_pose.dtype, device=hand_pose.device)
+        verts = torch.zeros(batch, 778, 3, dtype=hand_pose.dtype, device=hand_pose.device)
+        for finger_idx, chain in enumerate(FINGER_CHAINS["freihand"]):
+            first, second, _ = FINGER_POSE_GROUPS[finger_idx]
+            inner = bone + torch.einsum("bij,j->bi", hand_pose[:, second], bone)
+            tip = bone + torch.einsum("bij,bj->bi", hand_pose[:, first], inner)
+            joints[:, chain[-1]] = tip
+            verts[:, int(FREIHAND_TIP_VERTEX_IDS[finger_idx])] = tip
+        return SimpleNamespace(joints=joints, vertices=verts)
+
+
 def toy_pose(num_samples: int, theta: float) -> np.ndarray:
     """Every finger's first joint rotated by theta around z."""
     pose = np.zeros((num_samples, 45), dtype=np.float32)
@@ -244,6 +266,7 @@ class ParseArgsTest(unittest.TestCase):
         self.assertAlmostEqual(args.opt_lr, 2.0)
         self.assertAlmostEqual(args.opt_alpha_l2, 0.001)
         self.assertAlmostEqual(args.opt_max_alpha, 0.5)
+        self.assertIsNone(args.gate_residual_threshold)
 
     def test_oracle_requires_optimize_mode(self):
         script = load_apply_script()
@@ -266,8 +289,9 @@ class OptimizeAlphaToyTest(unittest.TestCase):
     # Toy lr is much larger than the published real-data recipe (lr=2.0)
     # because the loss is a batch mean: per-sample gradients scale with
     # 1/(batch * 5 fingers), and the toy batch is tiny.
-    def _run(self, script, tmp, action_space, objective="rope", gt_xyz=None, j_regressor=None, lr=20.0, steps=120, dataset="freihand"):
-        cache = toy_cache(self.NUM, self.BASE_THETA, self.TARGET_THETA)
+    def _run(self, script, tmp, action_space, objective="rope", gt_xyz=None, j_regressor=None, lr=20.0, steps=120, dataset="freihand", gate_threshold=None, cache=None):
+        if cache is None:
+            cache = toy_cache(self.NUM, self.BASE_THETA, self.TARGET_THETA)
         mano_cache = Path(tmp) / "mano_cache.npz"
         write_toy_mano_cache(mano_cache, self.NUM)
         return script.optimize_alpha(
@@ -284,6 +308,7 @@ class OptimizeAlphaToyTest(unittest.TestCase):
             objective=objective,
             gt_xyz=gt_xyz,
             j_regressor=j_regressor,
+            gate_threshold=gate_threshold,
             mano_module=FakeMano(),
         ), cache
 
@@ -310,6 +335,89 @@ class OptimizeAlphaToyTest(unittest.TestCase):
             base_res = rope_residual_for_pose(script, cache["base_hand_pose"], target)
             refined_res = rope_residual_for_pose(script, refined, target)
             self.assertLess(refined_res, 0.5 * base_res)
+
+    def test_flex5_rope_objective_reduces_residual(self):
+        script = load_apply_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            (refined, alpha, directions), cache = self._run(script, tmp, "flex5")
+            self.assertEqual(alpha.shape, (self.NUM, 5))
+            self.assertEqual(directions.shape, (self.NUM, 15, 3))
+            target = cache["input_rope_norm"]
+            base_res = rope_residual_for_pose(script, cache["base_hand_pose"], target)
+            refined_res = rope_residual_for_pose(script, refined, target)
+            self.assertLess(refined_res, 0.5 * base_res)
+
+    def test_per_finger_direction_normalization(self):
+        # With two active joints per finger, flex5 normalizes the finger's
+        # concatenated 9-dim gradient to unit length, so individual joint
+        # vectors are shorter than 1; flex15 normalizes each joint to 1.
+        script = load_apply_script()
+        base_pose = torch.from_numpy(toy_pose(self.NUM, self.BASE_THETA))
+        common = (base_pose, torch.zeros(self.NUM, 3), torch.zeros(self.NUM, 10), FakeManoTwoJoint())
+        per_joint = script.compute_flex_directions(*common, batch_size=8, per_finger=False)
+        per_finger = script.compute_flex_directions(*common, batch_size=8, per_finger=True)
+        for finger_idx in range(5):
+            first, second, _ = FINGER_POSE_GROUPS[finger_idx]
+            pj_norms = torch.linalg.norm(per_joint[:, [first, second]], dim=2)
+            self.assertTrue(torch.allclose(pj_norms, torch.ones(self.NUM, 2), atol=1e-4))
+            finger_vec = per_finger[:, list(FINGER_POSE_GROUPS[finger_idx])].reshape(self.NUM, -1)
+            self.assertTrue(torch.allclose(torch.linalg.norm(finger_vec, dim=1), torch.ones(self.NUM), atol=1e-4))
+            pf_norms = torch.linalg.norm(per_finger[:, [first, second]], dim=2)
+            self.assertTrue(bool((pf_norms < 0.999).all()))
+            self.assertTrue(bool((pf_norms > 1e-3).all()))
+
+    def test_gating_freezes_ungated_fingers(self):
+        script = load_apply_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            # only the thumb has a rope residual; other fingers' targets equal
+            # their base value, so a 0.05 threshold gates thumb only
+            cache = toy_cache(self.NUM, self.BASE_THETA, self.TARGET_THETA)
+            base_val = toy_rope_norm(self.BASE_THETA)
+            target_row = np.asarray([toy_rope_norm(self.TARGET_THETA)] + [base_val] * 4, dtype=np.float32)
+            cache["input_rope_norm"] = np.tile(target_row, (self.NUM, 1))
+            (refined, alpha, _), cache = self._run(script, tmp, "mult5", gate_threshold=0.05, cache=cache)
+
+            self.assertTrue(np.all(alpha[:, 1:] == 0.0))
+            self.assertTrue(np.all(np.abs(alpha[:, 0]) > 1e-4))
+            thumb_dims = [3 * j + a for j in FINGER_POSE_GROUPS[0] for a in range(3)]
+            other_dims = [d for d in range(45) if d not in thumb_dims]
+            np.testing.assert_allclose(refined[:, other_dims], cache["base_hand_pose"][:, other_dims], atol=1e-7)
+            self.assertGreater(float(np.abs(refined[:, thumb_dims] - cache["base_hand_pose"][:, thumb_dims]).max()), 1e-4)
+
+    def test_gating_masks_flex15_joint_columns(self):
+        script = load_apply_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = toy_cache(self.NUM, self.BASE_THETA, self.TARGET_THETA)
+            base_val = toy_rope_norm(self.BASE_THETA)
+            target_row = np.asarray([toy_rope_norm(self.TARGET_THETA)] + [base_val] * 4, dtype=np.float32)
+            cache["input_rope_norm"] = np.tile(target_row, (self.NUM, 1))
+            (refined, alpha, _), cache = self._run(script, tmp, "flex15", gate_threshold=0.05, cache=cache)
+
+            thumb_joints = list(FINGER_POSE_GROUPS[0])
+            other_joints = [j for j in range(15) if j not in thumb_joints]
+            self.assertTrue(np.all(alpha[:, other_joints] == 0.0))
+            self.assertGreater(float(np.abs(alpha[:, thumb_joints]).max()), 1e-5)
+
+    def test_gate_from_cache_and_expand(self):
+        script = load_apply_script()
+        cache = {
+            "base_rope_norm": np.asarray([[0.5, 0.5, 0.5, 0.5, 0.5]], dtype=np.float32),
+            "input_rope_norm": np.asarray([[0.8, 0.52, 0.5, 0.5, 0.5]], dtype=np.float32),
+            "rope_valid": np.asarray([[True, True, False, True, True]]),
+        }
+        gate = script.gate_from_cache(cache, 0.1)
+        np.testing.assert_array_equal(gate, [[True, False, False, False, False]])
+        # invalid finger never gated even with a huge residual
+        cache["input_rope_norm"][0, 2] = 5.0
+        gate = script.gate_from_cache(cache, 0.1)
+        self.assertFalse(bool(gate[0, 2]))
+
+        expanded = script.expand_gate_to_alpha(gate, "flex15")
+        self.assertEqual(expanded.shape, (1, 15))
+        for joint in FINGER_POSE_GROUPS[0]:
+            self.assertEqual(expanded[0, joint], 1.0)
+        self.assertAlmostEqual(float(expanded.sum()), 3.0)
+        np.testing.assert_array_equal(script.expand_gate_to_alpha(gate, "mult5"), gate.astype(np.float32))
 
     def test_ho3d_dataset_uses_openpose_wrapper_chains(self):
         # Regression: the WiLoR MANO wrapper always emits OpenPose-ordered

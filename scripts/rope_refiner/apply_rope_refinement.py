@@ -16,6 +16,8 @@ from ropetrack.io import read_jsonl
 from ropetrack.refine.actions import (
     ACTION_SPACES,
     FINGER_POSE_GROUPS,
+    FLEX_ACTION_SPACES,
+    JOINT_TO_FINGER,
     alpha_dim,
     apply_action_np,
     apply_action_torch,
@@ -212,16 +214,26 @@ def compute_flex_directions(
     betas: torch.Tensor,
     mano,
     batch_size: int,
+    per_finger: bool = False,
 ) -> torch.Tensor:
     """Per-sample frozen flexion directions [N, 15, 3].
 
-    Direction of MANO joint j = normalized gradient of its finger's rope
-    distance w.r.t. that joint's axis-angle components, evaluated at the base
-    pose. Positive alpha therefore opens the finger (increases rope distance),
+    Direction of MANO joint j = gradient of its finger's rope distance
+    w.r.t. that joint's axis-angle components, evaluated at the base pose.
+    Positive alpha therefore opens the finger (increases rope distance),
     negative alpha closes it. This defines "flexion" through the rope geometry
     itself rather than an assumed fixed anatomical axis; it is an
-    approximation and is frozen before optimization so flex15 is a
-    well-defined linear subspace per sample.
+    approximation and is frozen before optimization so the flex spaces are
+    well-defined linear subspaces per sample.
+
+    Normalization:
+
+    - ``per_finger=False`` (flex15): each joint's 3-vector is normalized to
+      unit length independently.
+    - ``per_finger=True`` (flex5): the finger's concatenated 9-dim gradient
+      is normalized as one unit vector, so a single per-finger alpha
+      distributes the correction across joints proportionally to their
+      leverage on the rope distance.
     """
     # The WiLoR MANO wrapper always emits OpenPose/FreiHAND-ordered joints
     # (mano_wrapper.py joint_map), regardless of dataset. Dataset-specific
@@ -246,11 +258,42 @@ def compute_flex_directions(
             dist = torch.linalg.norm(joints[:, chain[-1]] - joints[:, chain[0]], dim=1).sum()
             (grad,) = torch.autograd.grad(dist, pose, retain_graph=finger_idx < len(chains) - 1)
             with torch.no_grad():
-                for joint in FINGER_POSE_GROUPS[finger_idx]:
-                    vec = grad[:, 3 * joint : 3 * joint + 3]
-                    norm = torch.linalg.norm(vec, dim=1, keepdim=True)
-                    directions[start:end, joint] = torch.where(norm > 1e-8, vec / norm.clamp_min(1e-8), torch.zeros_like(vec))
+                finger_joints = FINGER_POSE_GROUPS[finger_idx]
+                if per_finger:
+                    dims = [3 * joint + axis for joint in finger_joints for axis in range(3)]
+                    finger_vec = grad[:, dims]
+                    norm = torch.linalg.norm(finger_vec, dim=1, keepdim=True)
+                    unit = torch.where(norm > 1e-8, finger_vec / norm.clamp_min(1e-8), torch.zeros_like(finger_vec))
+                    for slot, joint in enumerate(finger_joints):
+                        directions[start:end, joint] = unit[:, 3 * slot : 3 * slot + 3]
+                else:
+                    for joint in finger_joints:
+                        vec = grad[:, 3 * joint : 3 * joint + 3]
+                        norm = torch.linalg.norm(vec, dim=1, keepdim=True)
+                        directions[start:end, joint] = torch.where(norm > 1e-8, vec / norm.clamp_min(1e-8), torch.zeros_like(vec))
     return directions
+
+
+def gate_from_cache(cache: dict[str, np.ndarray], gate_threshold: float) -> np.ndarray:
+    """Per-finger gate [N, 5]: only fingers whose base rope residual exceeds
+    the threshold (normalized rope units) are allowed to move.
+
+    Low-residual fingers carry little correction signal — letting them
+    participate spreads gradient onto fingers that should stay put and risks
+    breaking clean predictions when the optimization is driven hard.
+    """
+    base = np.asarray(cache["base_rope_norm"], dtype=np.float32)
+    target = np.asarray(cache["input_rope_norm"], dtype=np.float32)
+    valid = np.asarray(cache["rope_valid"], dtype=bool)
+    return (np.abs(base - target) > float(gate_threshold)) & valid
+
+
+def expand_gate_to_alpha(gate: np.ndarray, action_space: str) -> np.ndarray:
+    """[N, 5] finger gate -> [N, alpha_dim] column mask."""
+    gate = np.asarray(gate, dtype=np.float32)
+    if alpha_dim(action_space) == 5:
+        return gate
+    return gate[:, JOINT_TO_FINGER]
 
 
 def optimize_alpha(
@@ -267,6 +310,7 @@ def optimize_alpha(
     objective: str = "rope",
     gt_xyz: np.ndarray | None = None,
     j_regressor: np.ndarray | None = None,
+    gate_threshold: float | None = None,
     mano_module=None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
     """Per-sample alpha optimization; returns (refined_pose, alpha, flex_directions)."""
@@ -305,9 +349,18 @@ def optimize_alpha(
     chains = FINGER_CHAINS["freihand"]
     orient_rot = torch_aa_to_rotmat(global_orient)[:, None]
 
+    gate = None
+    gate_alpha = None
+    if gate_threshold is not None:
+        gate_np = gate_from_cache(cache, gate_threshold)
+        gate = torch.from_numpy(gate_np.astype(np.float32)).to(device)
+        gate_alpha = torch.from_numpy(expand_gate_to_alpha(gate_np, action_space)).to(device)
+
     directions = None
-    if action_space == "flex15":
-        directions = compute_flex_directions(base_pose, global_orient, betas, mano, batch_size)
+    if action_space in FLEX_ACTION_SPACES:
+        directions = compute_flex_directions(
+            base_pose, global_orient, betas, mano, batch_size, per_finger=(action_space == "flex5")
+        )
 
     for _ in range(steps):
         if alpha.grad is not None:
@@ -315,6 +368,8 @@ def optimize_alpha(
         for start in range(0, base_pose.shape[0], batch_size):
             end = min(start + batch_size, base_pose.shape[0])
             alpha_batch = max_alpha * torch.tanh(alpha[start:end])
+            if gate_alpha is not None:
+                alpha_batch = alpha_batch * gate_alpha[start:end]
             dirs_batch = directions[start:end] if directions is not None else None
             hand_pose = apply_action_torch(base_pose[start:end], alpha_batch, action_space, dirs_batch)
             out = mano(
@@ -325,8 +380,9 @@ def optimize_alpha(
             )
             if objective == "rope":
                 pred_rope = torch_rope_norm(out.joints, chains, chain[start:end], fist_ratio[start:end])
-                diff = (pred_rope - target_rope[start:end]) * valid[start:end]
-                denom = valid[start:end].sum().clamp_min(1.0)
+                weight = valid[start:end] if gate is None else valid[start:end] * gate[start:end]
+                diff = (pred_rope - target_rope[start:end]) * weight
+                denom = weight.sum().clamp_min(1.0)
                 data_loss = (diff * diff).sum() / denom
             else:
                 verts_eval = torch_eval_points_from_model(dataset, out.vertices, cam_t[start:end])
@@ -338,6 +394,8 @@ def optimize_alpha(
         with torch.no_grad():
             alpha -= lr * alpha.grad
     final_alpha = (max_alpha * torch.tanh(alpha)).detach().cpu().numpy().astype(np.float32)
+    if gate_alpha is not None:
+        final_alpha = final_alpha * gate_alpha.cpu().numpy()
     directions_np = directions.detach().cpu().numpy().astype(np.float32) if directions is not None else None
     refined = apply_action_np(cache["base_hand_pose"], final_alpha, action_space, directions_np)
     return refined, final_alpha, directions_np
@@ -432,7 +490,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--objective", choices=list(OBJECTIVES), default="rope",
                         help="optimize-mode data term: rope label MSE, or GT-joint oracle ceiling probes.")
     parser.add_argument("--action-space", choices=list(ACTION_SPACES), default="mult5",
-                        help="mult5 = original per-finger curl scale; mult15 = per-joint scale; flex15 = additive per-joint flexion.")
+                        help="mult5 = original per-finger curl scale; mult15 = per-joint scale; "
+                             "flex15 = additive per-joint flexion; flex5 = additive per-finger coupled flexion (matched capacity).")
+    parser.add_argument("--gate-residual-threshold", type=float, default=None,
+                        help="Optimize-mode per-finger gating: only fingers with base rope residual above this "
+                             "threshold (normalized rope units, e.g. 0.1) may move; others keep alpha=0 and are "
+                             "excluded from the rope loss.")
     parser.add_argument("--gt-xyz", type=Path, default=None,
                         help="GT xyz json ([N, 21, 3] eval-frame meters, same row order as run_meta sample_order). Required for oracle objectives.")
     parser.add_argument("--out-dir", type=Path, required=True)
@@ -484,6 +547,7 @@ def main(argv: list[str] | None = None) -> Path:
             objective=args.objective,
             gt_xyz=gt_xyz,
             j_regressor=j_regressor,
+            gate_threshold=args.gate_residual_threshold,
         )
         np.save(args.out_dir / "alpha.npy", alpha)
         if directions is not None:
@@ -514,8 +578,20 @@ def main(argv: list[str] | None = None) -> Path:
             "alpha_l2": args.opt_alpha_l2,
             "max_alpha": args.opt_max_alpha,
             "batch_size": args.batch_size,
+            "gate_residual_threshold": args.gate_residual_threshold,
         }
         summary["alpha"] = alpha_summary(alpha, args.action_space)
+        if args.gate_residual_threshold is not None:
+            gate = gate_from_cache(cache, args.gate_residual_threshold)
+            valid = np.asarray(cache["rope_valid"], dtype=bool)
+            summary["gating"] = {
+                "threshold": args.gate_residual_threshold,
+                "frac_fingers_gated": float(gate.sum() / max(valid.sum(), 1)),
+                "frac_samples_any_gated": float(gate.any(axis=1).mean()),
+                "per_finger_frac_gated": {
+                    finger: float(gate[:, idx].mean()) for idx, finger in enumerate(FINGER_ORDER)
+                },
+            }
         if args.objective in ORACLE_OBJECTIVES:
             summary["oracle_joint_ids"] = oracle_joint_ids(args.dataset, args.objective)
     (args.out_dir / "summary.json").write_text(json.dumps(json_sanitize(summary), indent=2), encoding="utf-8")

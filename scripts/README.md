@@ -57,9 +57,16 @@ Optimize mode supports the P0 probes from
 - `--objective rope|oracle_tip|oracle_chain`: rope-label MSE, or GT-joint
   ceiling probes (`oracle_*` needs `--gt-xyz <split>_xyz.json`, same row
   order as `run_meta.json` `sample_order`).
-- `--action-space mult5|mult15|flex15`: original per-finger curl scale,
-  per-joint scale, or additive per-joint flexion along frozen rope-gradient
-  directions (saved to `flex_directions.npy`).
+- `--action-space mult5|mult15|flex15|flex5`: original per-finger curl scale,
+  per-joint scale, additive per-joint flexion, or additive per-finger coupled
+  flexion (`flex5`: the finger's 9-dim rope gradient normalized as one unit
+  vector — matched capacity with no within-finger null space). Flex
+  directions are frozen rope-gradient directions saved to
+  `flex_directions.npy`.
+- `--gate-residual-threshold 0.1`: P1 gating — only fingers whose base rope
+  residual exceeds the threshold (normalized units) may move; ungated
+  fingers keep `alpha = 0` and are excluded from the rope loss. Gating
+  stats are recorded in `summary.json`.
 - Optimizer defaults are now the published working recipe from
   `experience/0027` (`steps=120 lr=2.0 alpha_l2=0.001 max_alpha=0.5`);
   the old conservative defaults provably did nothing.
