@@ -56,12 +56,15 @@ def rope_distances_for_joints(dataset: str, joints) -> list[float | None]:
     return [point_distance(joints[chain[0]], joints[chain[-1]]) for chain in chains]
 
 
-def normalize_rope_distance(distance: float | None, chain_m: float | None, fist_ratio: float = 0.5) -> float | None:
+def normalize_rope_distance(
+    distance: float | None, chain_m: float | None, fist_ratio: float = 0.5, clamp: bool = True
+) -> float | None:
     if distance is None or chain_m is None or chain_m <= 1e-9:
         return None
     lmin = float(fist_ratio) * chain_m
     denom = max(chain_m - lmin, 1e-9)
-    return max(0.0, min(1.0, (distance - lmin) / denom))
+    value = (distance - lmin) / denom
+    return max(0.0, min(1.0, value)) if clamp else value
 
 
 def rope_values_for_joints(dataset: str, joints, fist_ratio: float = 0.5) -> dict[str, list[Any]]:

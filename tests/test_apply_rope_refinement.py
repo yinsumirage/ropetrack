@@ -1,11 +1,18 @@
 import importlib.util
 import json
+import math
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
+import torch
+
+from ropetrack.eval.protocols import FREIHAND_TIP_VERTEX_IDS
+from ropetrack.refine.actions import FINGER_POSE_GROUPS
+from ropetrack.rope import FINGER_CHAINS
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -34,6 +41,82 @@ def ho3d_joints(tip_x: float = 4.0):
         joints[joint_id] = [1.0, 0.0, 1.0]
     joints[16] = [tip_x, 0.0, 1.0]
     return joints
+
+
+BONE = 0.02
+
+
+class FakeMano:
+    """Two-segment toy hand: each fingertip = v + R(first finger joint) @ v.
+
+    Wrist stays at the origin, so the rope distance of finger f is
+    |v + R v| = 2 * BONE * cos(theta / 2) for a rotation of angle theta:
+    curling the first joint shortens the rope, exactly like a real finger.
+    Fingertip vertices mirror the tip joints so the oracle decode path works.
+    """
+
+    def __call__(self, global_orient=None, hand_pose=None, betas=None, pose2rot=False):
+        batch = hand_pose.shape[0]
+        bone = torch.tensor([BONE, 0.0, 0.0], dtype=hand_pose.dtype, device=hand_pose.device)
+        joints = torch.zeros(batch, 21, 3, dtype=hand_pose.dtype, device=hand_pose.device)
+        verts = torch.zeros(batch, 778, 3, dtype=hand_pose.dtype, device=hand_pose.device)
+        for finger_idx, chain in enumerate(FINGER_CHAINS["freihand"]):
+            first_joint = FINGER_POSE_GROUPS[finger_idx][0]
+            rot = hand_pose[:, first_joint]
+            tip = bone + torch.einsum("bij,j->bi", rot, bone)
+            joints[:, chain[-1]] = tip
+            verts[:, int(FREIHAND_TIP_VERTEX_IDS[finger_idx])] = tip
+        return SimpleNamespace(joints=joints, vertices=verts)
+
+
+def toy_pose(num_samples: int, theta: float) -> np.ndarray:
+    """Every finger's first joint rotated by theta around z."""
+    pose = np.zeros((num_samples, 45), dtype=np.float32)
+    for joints in FINGER_POSE_GROUPS:
+        pose[:, 3 * joints[0] + 2] = theta
+    return pose
+
+
+def toy_rope_norm(theta: float, chain_m: float = 2.0 * BONE, fist_ratio: float = 0.5) -> float:
+    dist = 2.0 * BONE * math.cos(theta / 2.0)
+    lmin = fist_ratio * chain_m
+    return (dist - lmin) / (chain_m - lmin)
+
+
+def toy_cache(num_samples: int, base_theta: float, target_theta: float) -> dict:
+    chain_m = 2.0 * BONE
+    return {
+        "sample_id": np.asarray([f"{i:08d}" for i in range(num_samples)]),
+        "base_hand_pose": toy_pose(num_samples, base_theta),
+        "base_rope_norm": np.full((num_samples, 5), toy_rope_norm(base_theta), dtype=np.float32),
+        "input_rope_norm": np.full((num_samples, 5), toy_rope_norm(target_theta), dtype=np.float32),
+        "gt_rope_norm": np.full((num_samples, 5), toy_rope_norm(target_theta), dtype=np.float32),
+        "rope_chain_m": np.full((num_samples, 5), chain_m, dtype=np.float32),
+        "rope_valid": np.ones((num_samples, 5), dtype=bool),
+        "fist_ratio": np.full(num_samples, 0.5, dtype=np.float32),
+    }
+
+
+def write_toy_mano_cache(path: Path, num_samples: int) -> None:
+    np.savez(
+        path,
+        sample_id=np.asarray([f"{i:08d}" for i in range(num_samples)]),
+        base_hand_pose=toy_pose(num_samples, 0.0),
+        base_global_orient=np.zeros((num_samples, 3), dtype=np.float32),
+        base_betas=np.zeros((num_samples, 10), dtype=np.float32),
+        base_cam_t=np.zeros((num_samples, 3), dtype=np.float32),
+    )
+
+
+def rope_residual_for_pose(script, pose_np: np.ndarray, target: np.ndarray) -> float:
+    fake = FakeMano()
+    with torch.no_grad():
+        hand_pose = torch.from_numpy(pose_np.astype(np.float32))
+        out = fake(hand_pose=script.torch_aa_to_rotmat(hand_pose.reshape(-1, 15, 3)))
+        chain = torch.full((pose_np.shape[0], 5), 2.0 * BONE)
+        fist = torch.full((pose_np.shape[0],), 0.5)
+        pred = script.torch_rope_norm(out.joints, FINGER_CHAINS["freihand"], chain, fist)
+    return float(np.mean(np.abs(pred.numpy() - target)))
 
 
 class ApplyRopeRefinementTest(unittest.TestCase):
@@ -102,6 +185,8 @@ class ApplyRopeRefinementTest(unittest.TestCase):
                 np.testing.assert_array_equal(data["base_hand_pose"][0], np.full(45, 9.0, dtype=np.float32))
                 self.assertEqual(data["base_rope_norm"].shape, (2, 5))
                 self.assertEqual(data["input_rope_norm"].shape, (2, 5))
+                self.assertIn("fist_ratio", data.files)
+                np.testing.assert_allclose(data["fist_ratio"], [0.5, 0.5], atol=1e-7)
 
     def test_build_inference_cache_uses_ho3d_rope_chain(self):
         script = load_apply_script()
@@ -138,6 +223,218 @@ class ApplyRopeRefinementTest(unittest.TestCase):
 
             with np.load(out) as data:
                 self.assertAlmostEqual(float(data["base_rope_norm"][0, 0]), 1.0)
+
+
+class ParseArgsTest(unittest.TestCase):
+    REQUIRED = [
+        "--rope-labels", "rope.jsonl",
+        "--pred-dir", "pred",
+        "--run-meta", "run_meta.json",
+        "--mano-cache", "mano_cache.npz",
+        "--out-dir", "out",
+    ]
+
+    def test_defaults_are_published_working_recipe(self):
+        script = load_apply_script()
+        args = script.parse_args(self.REQUIRED)
+        self.assertEqual(args.mode, "checkpoint")
+        self.assertEqual(args.objective, "rope")
+        self.assertEqual(args.action_space, "mult5")
+        self.assertEqual(args.opt_steps, 120)
+        self.assertAlmostEqual(args.opt_lr, 2.0)
+        self.assertAlmostEqual(args.opt_alpha_l2, 0.001)
+        self.assertAlmostEqual(args.opt_max_alpha, 0.5)
+
+    def test_oracle_requires_optimize_mode(self):
+        script = load_apply_script()
+        with self.assertRaises(ValueError):
+            script.main(self.REQUIRED + ["--objective", "oracle_tip"])
+
+    def test_oracle_requires_gt_xyz(self):
+        script = load_apply_script()
+        with self.assertRaises(ValueError):
+            script.main(self.REQUIRED + ["--mode", "optimize", "--objective", "oracle_tip"])
+
+
+class OptimizeAlphaToyTest(unittest.TestCase):
+    """End-to-end optimization on a differentiable toy hand (no MANO files)."""
+
+    NUM = 4
+    BASE_THETA = 0.8
+    TARGET_THETA = 1.1
+
+    # Toy lr is much larger than the published real-data recipe (lr=2.0)
+    # because the loss is a batch mean: per-sample gradients scale with
+    # 1/(batch * 5 fingers), and the toy batch is tiny.
+    def _run(self, script, tmp, action_space, objective="rope", gt_xyz=None, j_regressor=None, lr=20.0, steps=120, dataset="freihand"):
+        cache = toy_cache(self.NUM, self.BASE_THETA, self.TARGET_THETA)
+        mano_cache = Path(tmp) / "mano_cache.npz"
+        write_toy_mano_cache(mano_cache, self.NUM)
+        return script.optimize_alpha(
+            cache,
+            mano_cache,
+            "cpu",
+            steps,
+            lr,
+            0.0005,
+            0.5,
+            8,
+            dataset,
+            action_space=action_space,
+            objective=objective,
+            gt_xyz=gt_xyz,
+            j_regressor=j_regressor,
+            mano_module=FakeMano(),
+        ), cache
+
+    def test_mult5_rope_objective_reduces_residual(self):
+        script = load_apply_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            (refined, alpha, directions), cache = self._run(script, tmp, "mult5")
+            self.assertEqual(alpha.shape, (self.NUM, 5))
+            self.assertIsNone(directions)
+            target = cache["input_rope_norm"]
+            base_res = rope_residual_for_pose(script, cache["base_hand_pose"], target)
+            refined_res = rope_residual_for_pose(script, refined, target)
+            self.assertLess(refined_res, 0.25 * base_res)
+            # curling further means positive alpha under multiplicative scaling
+            self.assertGreater(float(alpha.mean()), 0.0)
+
+    def test_flex15_rope_objective_reduces_residual(self):
+        script = load_apply_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            (refined, alpha, directions), cache = self._run(script, tmp, "flex15")
+            self.assertEqual(alpha.shape, (self.NUM, 15))
+            self.assertEqual(directions.shape, (self.NUM, 15, 3))
+            target = cache["input_rope_norm"]
+            base_res = rope_residual_for_pose(script, cache["base_hand_pose"], target)
+            refined_res = rope_residual_for_pose(script, refined, target)
+            self.assertLess(refined_res, 0.5 * base_res)
+
+    def test_ho3d_dataset_uses_openpose_wrapper_chains(self):
+        # Regression: the WiLoR MANO wrapper always emits OpenPose-ordered
+        # joints. Indexing them with FINGER_CHAINS["ho3d"] (the old behavior)
+        # made 4/5 finger residuals nonsense; optimization must converge for
+        # --dataset ho3d exactly as it does for freihand.
+        script = load_apply_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            (refined, alpha, _), cache = self._run(script, tmp, "mult5", dataset="ho3d")
+            target = cache["input_rope_norm"]
+            base_res = rope_residual_for_pose(script, cache["base_hand_pose"], target)
+            refined_res = rope_residual_for_pose(script, refined, target)
+            self.assertLess(refined_res, 0.25 * base_res)
+
+    def test_flex_directions_unit_norm_on_active_joints(self):
+        script = load_apply_script()
+        base_pose = torch.from_numpy(toy_pose(self.NUM, self.BASE_THETA))
+        directions = script.compute_flex_directions(
+            base_pose,
+            torch.zeros(self.NUM, 3),
+            torch.zeros(self.NUM, 10),
+            FakeMano(),
+            batch_size=8,
+        )
+        norms = torch.linalg.norm(directions, dim=2)
+        for finger_idx in range(5):
+            first, second, third = FINGER_POSE_GROUPS[finger_idx]
+            # only the first joint of each toy finger moves the rope
+            self.assertTrue(torch.allclose(norms[:, first], torch.ones(self.NUM), atol=1e-4))
+            self.assertTrue(torch.allclose(norms[:, second], torch.zeros(self.NUM), atol=1e-4))
+            self.assertTrue(torch.allclose(norms[:, third], torch.zeros(self.NUM), atol=1e-4))
+
+    def test_oracle_tip_objective_moves_tips_toward_gt(self):
+        script = load_apply_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            theta_t = self.TARGET_THETA
+            tip_target = np.asarray(
+                [BONE + BONE * math.cos(theta_t), BONE * math.sin(theta_t), 0.0], dtype=np.float32
+            )
+            gt = np.zeros((self.NUM, 21, 3), dtype=np.float32)
+            for tip_joint in (4, 8, 12, 16, 20):
+                gt[:, tip_joint] = tip_target
+            j_regressor = np.zeros((16, 778), dtype=np.float32)
+
+            (refined, alpha, _), cache = self._run(
+                script, tmp, "mult5", objective="oracle_tip", gt_xyz=gt, j_regressor=j_regressor, lr=50.0, steps=100
+            )
+
+            def mean_tip_error(pose_np):
+                fake = FakeMano()
+                with torch.no_grad():
+                    out = fake(hand_pose=script.torch_aa_to_rotmat(torch.from_numpy(pose_np).reshape(-1, 15, 3)))
+                tips = out.joints[:, [4, 8, 12, 16, 20]].numpy()
+                return float(np.linalg.norm(tips - gt[:, [4, 8, 12, 16, 20]], axis=2).mean())
+
+            base_err = mean_tip_error(cache["base_hand_pose"])
+            refined_err = mean_tip_error(refined)
+            self.assertLess(refined_err, 0.7 * base_err)
+
+    def test_unknown_action_space_raises(self):
+        script = load_apply_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ValueError):
+                self._run(script, tmp, "free45")
+
+    def test_oracle_requires_gt(self):
+        script = load_apply_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ValueError):
+                self._run(script, tmp, "mult5", objective="oracle_tip")
+
+
+class LoadManoGlobalsTest(unittest.TestCase):
+    def test_reorders_by_sample_id(self):
+        script = load_apply_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "mano_cache.npz"
+            np.savez(
+                path,
+                sample_id=np.asarray(["a", "b", "c"]),
+                base_global_orient=np.asarray([[0.0] * 3, [1.0] * 3, [2.0] * 3], dtype=np.float32),
+                base_betas=np.asarray([[0.0] * 10, [1.0] * 10, [2.0] * 10], dtype=np.float32),
+                base_cam_t=np.asarray([[0.0] * 3, [1.0] * 3, [2.0] * 3], dtype=np.float32),
+            )
+            orient, betas, cam_t = script.load_mano_globals(path, ["c", "a"])
+            np.testing.assert_allclose(orient[:, 0], [2.0, 0.0])
+            np.testing.assert_allclose(betas[:, 0], [2.0, 0.0])
+            np.testing.assert_allclose(cam_t[:, 0], [2.0, 0.0])
+
+    def test_missing_id_raises(self):
+        script = load_apply_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "mano_cache.npz"
+            np.savez(
+                path,
+                sample_id=np.asarray(["a"]),
+                base_global_orient=np.zeros((1, 3), dtype=np.float32),
+                base_betas=np.zeros((1, 10), dtype=np.float32),
+                base_cam_t=np.zeros((1, 3), dtype=np.float32),
+            )
+            with self.assertRaises(ValueError):
+                script.load_mano_globals(path, ["a", "z"])
+
+
+class RopeResidualReportTest(unittest.TestCase):
+    def test_report_from_decoded_joints(self):
+        script = load_apply_script()
+        cache = toy_cache(2, 0.8, 1.1)
+        # decoded joints: put fingertips at the base/refined toy positions
+        def joints_for_theta(theta):
+            joints = np.zeros((21, 3), dtype=np.float32)
+            tip = [BONE + BONE * math.cos(theta), BONE * math.sin(theta), 0.0]
+            for tip_joint in (4, 8, 12, 16, 20):
+                joints[tip_joint] = tip
+            return joints.tolist()
+
+        base_xyz = [joints_for_theta(0.8) for _ in range(2)]
+        refined_xyz = [joints_for_theta(1.1) for _ in range(2)]
+        summary, arrays = script.rope_residual_report("freihand", base_xyz, refined_xyz, cache)
+
+        self.assertAlmostEqual(summary["refined"]["mean_abs"], 0.0, places=5)
+        self.assertGreater(summary["base"]["mean_abs"], 0.1)
+        self.assertAlmostEqual(summary["closure_frac"], 1.0, places=4)
+        self.assertEqual(arrays["base_rope_residual"].shape, (2, 5))
+        self.assertEqual(arrays["refined_rope_residual"].shape, (2, 5))
 
 
 if __name__ == "__main__":

@@ -49,7 +49,35 @@ MANO pose export exists.
 `rope_refiner/apply_rope_refinement.py` has two modes:
 
 - `--mode checkpoint`: apply the exploratory MLP refiner checkpoint.
-- `--mode optimize`: run per-sample rope optimization without training.
+- `--mode optimize`: run per-sample optimization without training.
+
+Optimize mode supports the P0 probes from
+`docs/2026-07-06-rope-refinement-next-plan.md`:
+
+- `--objective rope|oracle_tip|oracle_chain`: rope-label MSE, or GT-joint
+  ceiling probes (`oracle_*` needs `--gt-xyz <split>_xyz.json`, same row
+  order as `run_meta.json` `sample_order`).
+- `--action-space mult5|mult15|flex15`: original per-finger curl scale,
+  per-joint scale, or additive per-joint flexion along frozen rope-gradient
+  directions (saved to `flex_directions.npy`).
+- Optimizer defaults are now the published working recipe from
+  `experience/0027` (`steps=120 lr=2.0 alpha_l2=0.001 max_alpha=0.5`);
+  the old conservative defaults provably did nothing.
+- Every run writes `rope_residuals.npz` plus a `summary.json` with alpha
+  stats and rope residual closure, both computed through the same MANO
+  decode path as `base_pred.json`/`pred.json`.
+
+P0 analysis entrypoints (CPU, numpy-only):
+
+```bash
+python scripts/score_sliced_predictions.py <apply_out_dir> <scores_out_dir> --dataset freihand --gt-dir <hard_root> --hard-manifest <hard_root>/hard_manifest.jsonl --cache <apply_out_dir>/refiner_eval_cache.npz
+python scripts/rope_refiner/analyze_alpha_deadzone.py --cache <apply_out_dir>/refiner_eval_cache.npz --alpha <apply_out_dir>/alpha.npy --residuals <apply_out_dir>/rope_residuals.npz --action-space mult5 --output-dir <deadzone_out_dir>
+```
+
+`score_sliced_predictions.py` slices PA-aligned per-joint errors by
+occluded/clean fingers and rope-residual buckets (H1); its `all_joints`
+slice reproduces `xyz_procrustes_al_mean3d`. `analyze_alpha_deadzone.py`
+correlates base finger curl with correction size and residual closure (H2).
 
 Dataset roots live in `configs/datasets/*.yaml`. Method/backend checkpoint
 settings live in `configs/experiments/clean_baseline.yaml`.
