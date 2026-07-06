@@ -1,5 +1,11 @@
 """Small cached-prediction refinement utilities."""
 
-from .rope_refiner import RopePoseRefiner
-
 __all__ = ["RopePoseRefiner"]
+
+
+def __getattr__(name: str):
+    if name == "RopePoseRefiner":
+        from .rope_refiner import RopePoseRefiner
+
+        return RopePoseRefiner
+    raise AttributeError(name)
