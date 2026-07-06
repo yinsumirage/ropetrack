@@ -39,6 +39,11 @@ class EvalConfigTest(unittest.TestCase):
 
         self.assertEqual(args.out_dir, Path("custom_out"))
 
+    def test_default_limit_is_full_dataset(self):
+        args = build_run_args("freihand", "wilor_original")
+
+        self.assertEqual(args.limit, 0)
+
     def test_hard_split_dataset_config_keeps_base_adapter(self):
         args = build_run_args("ho3d_v2_mask70", "wilor_anyhand")
 

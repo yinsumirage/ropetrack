@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ropetrack.eval.datasets import BBoxItem, Ho3dSample
+from ropetrack.datasets.hand_pose import BBoxItem, Ho3dSample
 from ropetrack.eval.pipeline import BatchHandPrediction, format_prediction, select_sample_predictions
 
 
@@ -82,6 +82,12 @@ class EvalPipelineTest(unittest.TestCase):
 
         pipeline_source = (Path(__file__).resolve().parents[1] / "ropetrack" / "eval" / "pipeline.py").read_text()
         self.assertIn("score_predictions.py", pipeline_source)
+
+    def test_non_eval_split_skips_evaluation_protocol_check(self):
+        pipeline_source = (Path(__file__).resolve().parents[1] / "ropetrack" / "eval" / "pipeline.py").read_text()
+
+        self.assertIn('if split == "evaluation":', pipeline_source)
+        self.assertIn("validate_eval_protocol(", pipeline_source)
 
     def test_old_bench_entrypoints_are_removed(self):
         scripts = Path(__file__).resolve().parents[1] / "scripts"

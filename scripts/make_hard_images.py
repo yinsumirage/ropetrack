@@ -11,7 +11,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from ropetrack.eval.datasets import (  # noqa: E402
+from ropetrack.datasets.hand_pose import (  # noqa: E402
     Ho3dSample,
     bbox_from_projected_points,
     hand_bbox_from_meta,
@@ -219,17 +219,18 @@ def build_freihand_hard_root(
     severity: float,
     limit: int | None,
     seed: int,
+    split: str = "evaluation",
 ) -> Path:
-    Ks = read_json(input_root / "evaluation_K.json")
-    verts = read_json(input_root / "evaluation_verts.json")
-    xyz = read_json(input_root / "evaluation_xyz.json")
+    Ks = read_json(input_root / f"{split}_K.json")
+    verts = read_json(input_root / f"{split}_verts.json")
+    xyz = read_json(input_root / f"{split}_xyz.json")
     count = len(Ks) if limit is None or limit <= 0 else min(limit, len(Ks))
     rows = []
 
     for idx in range(count):
         frame = f"{idx:08d}"
-        src_image = resolve_image_path(input_root / "evaluation" / "rgb", frame)
-        dst_image = output_root / "evaluation" / "rgb" / src_image.name
+        src_image = resolve_image_path(input_root / split / "rgb", frame)
+        dst_image = output_root / split / "rgb" / src_image.name
         bbox = bbox_from_projected_points(verts[idx], Ks[idx]).tolist()
         points_xy = project_fingertips_from_joints(xyz[idx], Ks[idx])
         segments_xy = project_finger_end_segments_from_joints(xyz[idx], Ks[idx])
@@ -248,9 +249,9 @@ def build_freihand_hard_root(
             "seed": sample_seed,
         })
 
-    write_json(output_root / "evaluation_K.json", Ks[:count])
-    write_json(output_root / "evaluation_verts.json", verts[:count])
-    write_json(output_root / "evaluation_xyz.json", xyz[:count])
+    write_json(output_root / f"{split}_K.json", Ks[:count])
+    write_json(output_root / f"{split}_verts.json", verts[:count])
+    write_json(output_root / f"{split}_xyz.json", xyz[:count])
     write_manifest(output_root / "hard_manifest.jsonl", rows)
     return output_root
 
@@ -332,6 +333,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--severity", type=float, default=0.45)
     parser.add_argument("--limit", type=int, default=32, help="Number of samples; <=0 means all.")
     parser.add_argument("--seed", type=int, default=7)
+    parser.add_argument("--split", choices=["evaluation", "training"], default="evaluation")
     parser.add_argument("--sample-order-file", type=Path, default=None,
                         help="Optional HO3D run_meta.json or JSON list with sample_order.")
     return parser.parse_args()
@@ -341,8 +343,10 @@ def main() -> None:
     args = parse_args()
     limit = None if args.limit <= 0 else args.limit
     if args.dataset == "freihand":
-        build_freihand_hard_root(args.input_root, args.output_root, args.effect, args.severity, limit, args.seed)
+        build_freihand_hard_root(args.input_root, args.output_root, args.effect, args.severity, limit, args.seed, split=args.split)
     else:
+        if args.split != "evaluation":
+            raise ValueError("HO3D hard-image generation only supports --split evaluation")
         build_ho3d_hard_root(
             args.input_root,
             args.output_root,

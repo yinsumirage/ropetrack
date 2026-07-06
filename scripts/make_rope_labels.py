@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from PIL import Image, ImageDraw, ImageFont
 
-from ropetrack.eval.datasets import iter_ho3d_samples, project_points, read_json, resolve_image_path
+from ropetrack.datasets.hand_pose import iter_ho3d_samples, project_points, read_json, resolve_image_path
 from ropetrack.io import write_jsonl
 from ropetrack.rope import FINGER_CHAINS, FINGER_ORDER, build_rope_row, canonical_rope_dataset
 
@@ -29,16 +29,17 @@ def iter_ho3d_samples_from_order(root: Path, sample_order_file: Path, limit: int
         yield sample_id, resolve_image_path(eval_dir / seq / "rgb", frame), eval_dir / seq / "meta" / f"{frame}.pkl"
 
 
-def freihand_items(root: Path, limit: int | None):
-    xyz = read_json(root / "evaluation_xyz.json")
-    Ks = read_json(root / "evaluation_K.json") if (root / "evaluation_K.json").exists() else [None] * len(xyz)
+def freihand_items(root: Path, limit: int | None, split: str = "evaluation"):
+    xyz = read_json(root / f"{split}_xyz.json")
+    K_path = root / f"{split}_K.json"
+    Ks = read_json(K_path) if K_path.exists() else [None] * len(xyz)
     count = len(xyz) if limit is None or limit <= 0 else min(limit, len(xyz))
     for idx in range(count):
         frame = f"{idx:08d}"
         yield {
             "sample_id": frame,
             "joints": xyz[idx],
-            "image_path": resolve_image_path(root / "evaluation" / "rgb", frame),
+            "image_path": resolve_image_path(root / split / "rgb", frame),
             "K": Ks[idx],
         }
 
@@ -80,10 +81,12 @@ def camera_matrix_from_meta(meta_path: Path):
     return None
 
 
-def iter_rope_items(dataset: str, root: Path, limit: int | None, sample_order_file: Path | None = None):
+def iter_rope_items(dataset: str, root: Path, limit: int | None, sample_order_file: Path | None = None, split: str = "evaluation"):
     name = canonical_rope_dataset(dataset)
     if name == "freihand":
-        return freihand_items(root, limit)
+        return freihand_items(root, limit, split=split)
+    if split != "evaluation":
+        raise ValueError("HO3D rope-label generation only supports --split evaluation")
     return ho3d_items(root, limit, sample_order_file)
 
 
@@ -96,9 +99,10 @@ def write_rope_labels(
     fist_ratio: float = 0.5,
     viz_dir: Path | None = None,
     viz_count: int = 0,
+    split: str = "evaluation",
 ) -> list[dict]:
     rows = []
-    for idx, item in enumerate(iter_rope_items(dataset, input_root, limit, sample_order_file)):
+    for idx, item in enumerate(iter_rope_items(dataset, input_root, limit, sample_order_file, split=split)):
         row = build_rope_row(dataset, item["sample_id"], item["joints"], fist_ratio=fist_ratio)
         rows.append(row)
         if viz_dir is not None and idx < viz_count:
@@ -170,6 +174,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--limit", type=int, default=0, help="Number of samples; <=0 means all.")
     parser.add_argument("--sample-order-file", type=Path, default=None)
+    parser.add_argument("--split", choices=["evaluation", "training"], default="evaluation")
     parser.add_argument("--fist-ratio", type=float, default=0.5)
     parser.add_argument("--viz-dir", type=Path, default=None)
     parser.add_argument("--viz-count", type=int, default=0)
@@ -188,6 +193,7 @@ def main() -> None:
         fist_ratio=args.fist_ratio,
         viz_dir=args.viz_dir,
         viz_count=args.viz_count,
+        split=args.split,
     )
     print(f"Wrote {len(rows)} rope labels: {args.output}")
 

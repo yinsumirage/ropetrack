@@ -167,11 +167,12 @@ python -c "import torch; print(torch.__version__); print(torch.cuda.is_available
 - `third_party/hamer`: https://github.com/geopavlakos/hamer
 - `third_party/wilor`: https://github.com/rolpotamias/WiLoR
 
-## Expected Schemas
+## Expected Data Interfaces
 
-Core sample fields live in `ropetrack/schema.py`: `sample_id`, `dataset`,
-`split`, `image_path`, `hand_side`, `bbox_xyxy`, optional camera and label paths.
+Hand-pose dataset adapters live in `ropetrack/datasets/hand_pose.py`. They
+provide sample ids, image paths, GT bboxes, and protocol helpers shared by eval,
+hard split generation, rope labels, and training data export.
 
-Core prediction fields live there too: `sample_id`, `backend`,
-predicted joints/vertices/MANO paths, optional projected joints, bbox, hand side,
-confidence, and coordinate notes.
+Benchmark predictions are still written as the project-level `pred.json`
+payload `[xyz_predictions, vertex_predictions]`, with run order recorded in
+`run_meta.json`.

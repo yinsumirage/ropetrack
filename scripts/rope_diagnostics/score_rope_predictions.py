@@ -6,7 +6,7 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from ropetrack.io import read_jsonl, write_jsonl
 from ropetrack.rope import FINGER_ORDER, canonical_rope_dataset, normalize_rope_distance, rope_distances_for_joints

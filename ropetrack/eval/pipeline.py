@@ -8,14 +8,15 @@ import pickle
 import subprocess
 import sys
 from dataclasses import dataclass
+from dataclasses import field
 from pathlib import Path
 
 import numpy as np
 
-from .datasets import (
+from ropetrack.datasets.hand_pose import (
     BBoxItem,
     bbox_candidates_from_sample,
-    iter_eval_samples,
+    iter_hand_pose_samples,
     load_gt_bbox_candidates,
     validate_eval_protocol,
     write_eval_gt_subset,
@@ -29,6 +30,9 @@ class BatchHandPrediction:
     vertices: np.ndarray
     keypoints_3d: np.ndarray
     cam_t: np.ndarray
+    base_global_orient: np.ndarray = field(default_factory=lambda: np.zeros(3, dtype=np.float32))
+    base_hand_pose: np.ndarray = field(default_factory=lambda: np.zeros(45, dtype=np.float32))
+    base_betas: np.ndarray = field(default_factory=lambda: np.zeros(10, dtype=np.float32))
 
     @property
     def score(self) -> float:
@@ -165,8 +169,27 @@ def cam_crop_to_full(cam_bbox, box_center, box_size, img_size, focal_length):
     return torch.stack([tx, ty, tz], dim=-1)
 
 
+def write_mano_cache(path: Path, samples: list, hands_by_sample: list[BatchHandPrediction | None]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    def row(hand, name: str, shape: tuple[int, ...]) -> np.ndarray:
+        if hand is None:
+            return np.zeros(shape, dtype=np.float32)
+        return np.asarray(getattr(hand, name), dtype=np.float32).reshape(shape)
+
+    np.savez(
+        path,
+        sample_id=np.asarray([sample.sample_id for sample in samples]),
+        base_global_orient=np.stack([row(hand, "base_global_orient", (3,)) for hand in hands_by_sample], axis=0),
+        base_hand_pose=np.stack([row(hand, "base_hand_pose", (45,)) for hand in hands_by_sample], axis=0),
+        base_betas=np.stack([row(hand, "base_betas", (10,)) for hand in hands_by_sample], axis=0),
+        base_cam_t=np.stack([row(hand, "cam_t", (3,)) for hand in hands_by_sample], axis=0),
+    )
+
+
 def run_bbox_batch_predictions(predictor, backend: str, candidates: list[BBoxItem], batch_size: int, num_workers: int):
     import torch
+    from ropetrack.backends.hand_predictor import _rotmat_to_aa
 
     if not candidates:
         return []
@@ -185,6 +208,7 @@ def run_bbox_batch_predictions(predictor, backend: str, candidates: list[BBoxIte
             img_size = batch["img_size"].float()
             focal = cfg.EXTRA.FOCAL_LENGTH / cfg.MODEL.IMAGE_SIZE * img_size.max(dim=1).values
             cam_t = cam_crop_to_full(pred_cam, batch["box_center"].float(), batch["box_size"].float(), img_size, focal)
+            mano_params = out["pred_mano_params"]
 
             for batch_i, candidate_i in enumerate(batch["candidate_index"].detach().cpu().numpy().astype(int).tolist()):
                 predictions[candidate_i] = BatchHandPrediction(
@@ -192,6 +216,9 @@ def run_bbox_batch_predictions(predictor, backend: str, candidates: list[BBoxIte
                     vertices=out["pred_vertices"][batch_i].detach().cpu().numpy().astype(np.float32),
                     keypoints_3d=out["pred_keypoints_3d"][batch_i].detach().cpu().numpy().astype(np.float32),
                     cam_t=cam_t[batch_i].detach().cpu().numpy().astype(np.float32),
+                    base_global_orient=_rotmat_to_aa(mano_params["global_orient"][batch_i].detach().cpu().numpy()),
+                    base_hand_pose=_rotmat_to_aa(mano_params["hand_pose"][batch_i].detach().cpu().numpy()),
+                    base_betas=mano_params["betas"][batch_i].detach().cpu().numpy().astype(np.float32),
                 )
 
     if any(pred is None for pred in predictions):
@@ -261,8 +288,14 @@ def run_export(args: argparse.Namespace) -> Path:
     from ropetrack.backends.hand_predictor import HandPredictor
 
     root = args.freihand_root if args.adapter == "freihand" else args.ho3d_root
-    samples = list(iter_eval_samples(args.adapter, root, args.limit))
-    validate_eval_protocol(args.adapter, root, samples, args.protocol_check_samples, args.protocol_tolerance_m)
+    split = getattr(args, "split", "evaluation")
+    if split != "evaluation" and args.adapter == "ho3d":
+        raise ValueError("HO3D eval export only supports the evaluation split")
+    if split != "evaluation" and getattr(args, "run_eval", False):
+        raise ValueError("--run-eval only supports the evaluation split")
+    samples = list(iter_hand_pose_samples(args.adapter, root, args.limit, split))
+    if split == "evaluation":
+        validate_eval_protocol(args.adapter, root, samples, args.protocol_check_samples, args.protocol_tolerance_m)
     out_dir = args.out_dir
     eval_input = out_dir / "eval_input"
     eval_results = out_dir / "eval_results"
@@ -277,6 +310,8 @@ def run_export(args: argparse.Namespace) -> Path:
         candidates = detect_bbox_candidates_batched(predictor, samples, args.detector_batch_size)
     candidate_predictions = run_bbox_batch_predictions(predictor, args.backend, candidates, args.batch_size, args.num_workers)
     hands_by_sample, failures = select_sample_predictions(samples, candidate_predictions)
+    if getattr(args, "save_mano_cache", False):
+        write_mano_cache(out_dir / "mano_cache.npz", samples, hands_by_sample)
     xyz_pred, verts_pred = [], []
 
     for idx, (sample, hand) in enumerate(zip(samples, hands_by_sample)):
@@ -295,7 +330,7 @@ def run_export(args: argparse.Namespace) -> Path:
     (eval_input / "pred.json").write_text(json.dumps([xyz_pred, verts_pred]))
     gt_dir = root
     if args.limit is not None and args.limit > 0:
-        write_eval_gt_subset(args.adapter, root, eval_input, len(samples))
+        write_eval_gt_subset(args.adapter, root, eval_input, len(samples), split)
         gt_dir = eval_input
     (out_dir / "failures.json").write_text(json.dumps(failures, indent=2))
     (out_dir / "run_meta.json").write_text(json.dumps({
@@ -305,6 +340,7 @@ def run_export(args: argparse.Namespace) -> Path:
         "backend": args.backend,
         "mode": args.mode,
         "limit": args.limit,
+        "split": split,
         "num_samples": len(samples),
         "num_failures": len(failures),
         "num_bbox_candidates": len(candidates),

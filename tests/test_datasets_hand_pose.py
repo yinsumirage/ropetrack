@@ -6,12 +6,12 @@ from pathlib import Path
 
 import numpy as np
 
-from ropetrack.eval.datasets import (
+from ropetrack.datasets.hand_pose import (
     Ho3dSample,
     bbox_candidates_from_sample,
     bbox_from_projected_points,
     hand_bbox_from_meta,
-    iter_eval_samples,
+    iter_hand_pose_samples,
     load_gt_bbox_candidates,
     resolve_image_path,
     validate_eval_protocol,
@@ -19,7 +19,7 @@ from ropetrack.eval.datasets import (
 )
 
 
-class EvalDatasetsTest(unittest.TestCase):
+class HandPoseDatasetsTest(unittest.TestCase):
     def test_ho3d_iter_samples_prefers_evaluation_txt_order_and_jpg(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -28,7 +28,7 @@ class EvalDatasetsTest(unittest.TestCase):
             (root / "evaluation" / "SM1" / "rgb" / "0000.jpg").write_text("")
             (root / "evaluation.txt").write_text("SM1/0000\n")
 
-            sample = next(iter(iter_eval_samples("ho3d", root, limit=None)))
+            sample = next(iter(iter_hand_pose_samples("ho3d", root, limit=None)))
 
         self.assertEqual(sample.sample_id, "SM1/0000")
         self.assertTrue(sample.image_path.as_posix().endswith("SM1/rgb/0000.jpg"))
@@ -45,7 +45,7 @@ class EvalDatasetsTest(unittest.TestCase):
                 [[0.1, 0.2, 1.0], [0.4, 0.5, 1.0]]
             ]))
 
-            sample = next(iter(iter_eval_samples("freihand", root, limit=None)))
+            sample = next(iter(iter_hand_pose_samples("freihand", root, limit=None)))
 
         self.assertEqual(sample.sample_id, "00000000")
         self.assertEqual(sample.bbox_xyxy.tolist(), [10.0, 20.0, 40.0, 50.0])

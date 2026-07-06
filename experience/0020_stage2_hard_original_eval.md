@@ -103,7 +103,7 @@ For the next benchmark round, use:
 Reusable script:
 
 ```text
-scripts/visualize_mesh_comparison.py
+scripts/rope_diagnostics/visualize_mesh_comparison.py
 ```
 
 It reads a clean run, a hard run, the GT root, and optional clean/hard image

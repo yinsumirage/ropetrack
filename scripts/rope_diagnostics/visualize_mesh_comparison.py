@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from ropetrack.visualize.mesh_compare import (  # noqa: E402
     load_mano_faces,

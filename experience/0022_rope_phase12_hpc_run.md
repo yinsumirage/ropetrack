@@ -12,7 +12,7 @@ partition against the existing clean and hard baseline outputs.
 - Synced the outer repo rope files to `~/project/ropetrack`; `third_party/` was
   not touched.
 - Remote smoke check passed:
-  `python -m py_compile ropetrack/rope.py scripts/make_rope_labels.py scripts/score_rope_predictions.py`
+  `python -m py_compile ropetrack/rope.py scripts/make_rope_labels.py scripts/rope_diagnostics/score_rope_predictions.py`
   and `python -m unittest tests.test_rope -v`.
 - Main Slurm job: `165814`, CPU partition, failed after completing labels,
   visualizations, and clean scores.

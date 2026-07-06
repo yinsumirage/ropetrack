@@ -21,7 +21,7 @@ pieces only:
   - Optional PNG visualization with projected finger chains and 5 rope bars.
   - When `--sample-order-file` is used, maps sample IDs back to canonical GT
     indices instead of assuming the requested order is a prefix.
-- `scripts/score_rope_predictions.py`
+- `scripts/rope_diagnostics/score_rope_predictions.py`
   - Reads benchmark `pred.json`.
   - Uses `run_meta.json["sample_order"]` when provided.
   - Writes `scores.txt`, `scores.json`, and per-sample `rope_errors.jsonl`.

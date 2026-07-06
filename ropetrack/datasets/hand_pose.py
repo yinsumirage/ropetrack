@@ -65,19 +65,24 @@ def bbox_from_projected_points(points, K, image_size: int = 224) -> np.ndarray:
     return np.clip(xyxy, 0.0, float(image_size))
 
 
-def iter_eval_samples(adapter: str, root: Path, limit: int | None):
+def iter_hand_pose_samples(adapter: str, root: Path, limit: int | None, split: str = "evaluation"):
     if adapter == "freihand":
-        return iter_freihand_eval_samples(root, limit)
+        return iter_freihand_eval_samples(root, limit, split)
     if adapter == "ho3d":
+        if split != "evaluation":
+            raise ValueError("HO3D eval export only supports the evaluation split")
         return iter_ho3d_samples(root, limit)
     raise ValueError(f"unsupported eval adapter: {adapter}")
 
 
-def iter_freihand_eval_samples(root: Path, limit: int | None) -> Iterable[FreiHandSample]:
-    Ks = read_json(root / "evaluation_K.json")
-    verts = read_json(root / "evaluation_verts.json")
+iter_eval_samples = iter_hand_pose_samples
+
+
+def iter_freihand_eval_samples(root: Path, limit: int | None, split: str = "evaluation") -> Iterable[FreiHandSample]:
+    Ks = read_json(root / f"{split}_K.json")
+    verts = read_json(root / f"{split}_verts.json")
     if len(Ks) != len(verts):
-        raise ValueError(f"FreiHAND eval length mismatch: K={len(Ks)} verts={len(verts)}")
+        raise ValueError(f"FreiHAND {split} length mismatch: K={len(Ks)} verts={len(verts)}")
     if limit is not None and limit <= 0:
         limit = None
 
@@ -87,7 +92,7 @@ def iter_freihand_eval_samples(root: Path, limit: int | None) -> Iterable[FreiHa
         frame = f"{idx:08d}"
         yield FreiHandSample(
             sample_id=frame,
-            image_path=resolve_image_path(root / "evaluation" / "rgb", frame),
+            image_path=resolve_image_path(root / split / "rgb", frame),
             bbox_xyxy=bbox_from_projected_points(sample_verts, K),
         )
 
@@ -201,10 +206,10 @@ def load_gt_bbox_candidates(adapter: str, samples: list) -> list[BBoxItem]:
     raise ValueError(f"unsupported eval adapter: {adapter}")
 
 
-def write_eval_gt_subset(adapter: str, root: Path, eval_input: Path, count: int) -> None:
+def write_eval_gt_subset(adapter: str, root: Path, eval_input: Path, count: int, split: str = "evaluation") -> None:
     _ = adapter
     eval_input.mkdir(parents=True, exist_ok=True)
-    for gt_name in ("evaluation_xyz.json", "evaluation_verts.json"):
+    for gt_name in (f"{split}_xyz.json", f"{split}_verts.json"):
         gt_path = root / gt_name
         if gt_path.exists():
             values = read_json(gt_path)

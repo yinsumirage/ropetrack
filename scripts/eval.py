@@ -17,6 +17,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--method", default=None)
     parser.add_argument("--out-dir", type=Path, default=None)
     parser.add_argument("--limit", type=int, default=None, help="Number of samples to run; <=0 means all.")
+    parser.add_argument("--split", choices=["evaluation", "training"], default="evaluation")
     parser.add_argument("--mode", choices=["detector", "gt_bbox"], default=None)
     parser.add_argument("--backend", choices=["wilor", "hamer"], default=None)
     parser.add_argument("--units", choices=["m", "mm"], default=None)
@@ -32,6 +33,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--wilor-ckpt", type=Path, default=None)
     parser.add_argument("--wilor-cfg", type=Path, default=None)
     parser.add_argument("--hamer-ckpt", type=Path, default=None)
+    parser.add_argument("--save-mano-cache", action="store_true", default=False)
     parser.add_argument("--run-eval", action="store_true")
     parser.add_argument("--eval-num-workers", type=int, default=None)
     return parser.parse_args(argv)
@@ -40,6 +42,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> Path:
     cli = parse_args(argv)
     args = build_run_args(**{k: v for k, v in vars(cli).items() if v is not None})
+    args.split = cli.split
+    args.save_mano_cache = cli.save_mano_cache
     return run_export(args)
 
 

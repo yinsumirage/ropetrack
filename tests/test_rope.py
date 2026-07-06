@@ -10,7 +10,10 @@ from PIL import Image
 
 
 def load_script(name: str):
-    path = Path(__file__).resolve().parents[1] / "scripts" / f"{name}.py"
+    rel_paths = {
+        "score_rope_predictions": Path("rope_diagnostics") / "score_rope_predictions.py",
+    }
+    path = Path(__file__).resolve().parents[1] / "scripts" / rel_paths.get(name, Path(f"{name}.py"))
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
