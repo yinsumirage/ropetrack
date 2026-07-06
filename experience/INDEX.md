@@ -52,3 +52,4 @@ ends with the clean baseline report before hard splits or rope labels.
 | 2026-07-05 | [0027_rope_optimization_probe.md](0027_rope_optimization_probe.md) | Non-learning per-sample rope optimization probe with five finger curl scalars, showing small aligned-metric gains on FreiHAND mask70. |
 | 2026-07-05 | [0028_rope_optimization_cross_split_and_ho3d.md](0028_rope_optimization_cross_split_and_ho3d.md) | Cross-split rope optimization results on FreiHAND tip/finger hard splits plus HO3D v2 mask70, with consistent small aligned-metric gains. |
 | 2026-07-07 | [0029_p0_oracle_slice_deadzone_tooling.md](0029_p0_oracle_slice_deadzone_tooling.md) | P0 oracle/action-space/slice/deadzone tooling, plus the HO3D wrapper joint-order fix that invalidates the 0028 HO3D optimize row. |
+| 2026-07-07 | [0030_p0_wilor_freihand_jobs.md](0030_p0_wilor_freihand_jobs.md) | Submitted WiLoR FreiHAND P0 rope/oracle action-space matrix jobs for mask70 and finger_end80. |
