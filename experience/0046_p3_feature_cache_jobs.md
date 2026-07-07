@@ -46,6 +46,52 @@ rg -n "[^\x00-\x7F]" scripts\rope_head\extract_feature_cache.py tests\test_extra
 no matches
 ```
 
+## First Submission Failure And Fix
+
+The first eval job failed quickly:
+
+```text
+170391 p3feat_eval FAILED 00:01:01 ExitCode 1:0
+```
+
+Root cause:
+
+- WiLoR's ViT backbone returns `(pred_mano_params, pred_cam, pred_mano_feats,
+  img_feat)`.
+- The original feature extraction helper unwrapped tuple/list outputs by taking
+  item `0`, so it selected the MANO parameter dict instead of the fourth
+  `img_feat` tensor.
+- The resulting symptom was:
+
+```text
+AttributeError: 'dict' object has no attribute 'dim'
+```
+
+The still-running first train job was cancelled to avoid wasting GPU time:
+
+```text
+170392 p3feat_train CANCELLED
+```
+
+Fix before resubmission:
+
+- Select the image-feature tensor from common backbone output containers,
+  searching tuple/list outputs from the end so WiLoR's `img_feat` wins over
+  parameter dicts.
+
+Follow-up checks after the fix:
+
+```text
+python -m unittest tests.test_extract_feature_cache
+Ran 15 tests in 0.186s - OK
+
+python -m py_compile scripts\rope_head\extract_feature_cache.py
+OK
+
+rg -n "[^\x00-\x7F]" scripts\rope_head\extract_feature_cache.py tests\test_extract_feature_cache.py
+no matches
+```
+
 ## Submitted Jobs
 
 Run root:

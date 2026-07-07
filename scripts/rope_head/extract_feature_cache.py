@@ -52,12 +52,42 @@ def first_candidate_per_sample(num_samples: int, candidates: list) -> list:
     return [first[idx] for idx in range(num_samples)]
 
 
+def select_feature_tensor(output):
+    """Select the image-feature tensor from common backbone output containers."""
+    import torch
+
+    if torch.is_tensor(output):
+        return output
+    if isinstance(output, dict):
+        for key in ("img_feat", "vit_out", "features", "feature", "tokens"):
+            if key in output:
+                try:
+                    return select_feature_tensor(output[key])
+                except ValueError:
+                    pass
+        values = list(output.values())
+    elif isinstance(output, (tuple, list)):
+        # WiLoR's ViT backbone returns (mano_params, cam, mano_feats, img_feat).
+        # Search from the end so the image feature map wins over parameter dicts.
+        values = list(reversed(output))
+    else:
+        raise ValueError(f"unsupported backbone output type: {type(output).__name__}")
+
+    for value in values:
+        try:
+            feat = select_feature_tensor(value)
+        except ValueError:
+            continue
+        if feat.dim() in (3, 4):
+            return feat
+    raise ValueError(f"no 3D/4D tensor feature found in backbone output type {type(output).__name__}")
+
+
 def pool_feature_map(feat, pooling: str):
     """Pool a backbone output to [B, C]; accepts [B, C, H, W] or [B, T, C]."""
     import torch
 
-    if isinstance(feat, (tuple, list)):
-        feat = feat[0]
+    feat = select_feature_tensor(feat)
     if feat.dim() == 4:  # [B, C, H, W]
         tokens = feat.flatten(2).transpose(1, 2)  # [B, T, C]
     elif feat.dim() == 3:  # [B, T, C]

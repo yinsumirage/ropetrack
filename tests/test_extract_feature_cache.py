@@ -100,6 +100,27 @@ class PoolingTest(unittest.TestCase):
         pooled, _ = script.pool_feature_map(feat, "mean")
         self.assertEqual(pooled.shape, (2, 4))
 
+    def test_wilor_backbone_tuple_selects_image_feature(self):
+        script = load_script()
+        img_feat = torch.randn(2, 8, 3, 4)
+        output = (
+            {"hand_pose": torch.randn(2, 96)},
+            torch.randn(2, 3),
+            {"cam": torch.randn(2, 3)},
+            img_feat,
+        )
+        pooled, tokens = script.pool_feature_map(output, "mean")
+        self.assertEqual(pooled.shape, (2, 8))
+        self.assertEqual(tokens.shape, (2, 12, 8))
+        torch.testing.assert_close(pooled, img_feat.flatten(2).mean(dim=2))
+
+    def test_dict_feature_key_supported(self):
+        script = load_script()
+        feat = torch.randn(2, 5, 6)
+        pooled, tokens = script.pool_feature_map({"vit_out": feat}, "mean")
+        self.assertEqual(pooled.shape, (2, 6))
+        self.assertEqual(tokens.shape, (2, 5, 6))
+
     def test_bad_pooling_raises(self):
         script = load_script()
         with self.assertRaises(ValueError):
