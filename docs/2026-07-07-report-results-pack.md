@@ -149,8 +149,30 @@ four most-improved mask70 samples, base PA 28.4-31.5 mm drops to 12.8-18.0 mm
 (halved); the one-pass student matches or slightly beats the 400-step teacher
 on 3 of 4.
 
+## Act 4c - Multi-v2 ablation (5 teachers; 0047)
+
+Adds HO3D v3 finger_end80 stride4 teacher, for 139,344 teacher samples total.
+Conclusion: useful ablation, **not** the release model; keep the 0044
+four-teacher augmented multi student as default.
+
+| Eval cell | Multi-v2 gain (mm) | Four-teacher gain (mm) | Verdict |
+|---|---:|---:|---|
+| FreiHAND mask70 | -1.636 | -1.636 | tie |
+| FreiHAND finger_end80 | -1.619 | -1.623 | tie/slightly worse |
+| HO3D v2 mask70 | -0.834 | -0.972 | worse; adding HO3D finger_end teacher did not help this axis |
+| HO3D v2 finger_end80 | -0.524 | - | new axis; positive but modest |
+| HaMeR mask70 | -1.685 | -1.697 | tie/slightly worse |
+| mask70 + noise 0.05 | -1.536 | -1.539 | tie |
+| Shuffled control | -0.059 | -0.056 | still collapses |
+
+New HO3D finger_end80 slice: occluded-tip gain -0.735 mm, closure 0.343,
+gated fraction 0.499. This says the added teacher produces some transfer to
+the matching HO3D finger-end disturbance, but not enough to justify replacing
+the four-teacher release model.
+
+P3 asset note: frozen WiLoR feature caches are ready for FreiHAND mask70
+eval/train: `(3960, 1280)` and `(32560, 1280)`.
+
 ## Pending slots
 
-- [ ] Multi-v2 student (5 teachers, adds HO3D v3 finger_end80): 8-cell table
-      incl. the new HO3D v2 finger_end80 eval cell (jobs 170342-170347).
 - [ ] Latency numbers from job logs + timed student forward.
