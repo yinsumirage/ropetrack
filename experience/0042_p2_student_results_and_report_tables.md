@@ -72,10 +72,15 @@ Interpretation:
   actually coming from rope conditioning.
 - Seeds are stable: seed0/1/2 are 0.8432/0.8436/0.8438 cm.
 - No-augmentation is slightly better than the default augmented student on
-  clean mask70 eval, but the augmented student remains stronger evidence for
-  noise robustness.
+  mask70 eval and slightly exceeds the teacher delta. A likely explanation is
+  that the student learns a smooth average mapping from noisy per-sample
+  teacher targets. The deployment choice still needs the `noaug@noise0.05`
+  evaluation cell before replacing the augmented default.
 - With rope input noise std 0.05, the student keeps most of the gain
   (-0.152669 cm all-joint, -0.497773 cm occluded-tip).
+- At noise std 0.05, the augmented student also beats the noisy teacher result
+  from `0038` (-0.152669 cm vs -0.1384 cm all-joint), supporting the intended
+  distillation/augmentation denoising effect.
 
 Generalization cells:
 
@@ -84,7 +89,7 @@ Generalization cells:
 | `finger_end80_main` | 0.837320 | -0.160338 | -0.328725 | 0.454829 | Cross-disturbance transfer works. |
 | `ho3d_wilor_main` | 0.852483 | -0.091140 | -0.222336 | 0.407448 | Cross-dataset transfer is positive but smaller. |
 | `hamer_mask70_main` | 0.916856 | -0.165497 | -0.545985 | 0.449297 | Cross-backend eval still improves. |
-| `clean_main` | 0.497948 | - | - | 0.283306 | Clean split needs baseline comparison before calling neutral/harmful. |
+| `clean_main` | 0.497948 | - | - | 0.283306 | Clean split is effectively neutral: previous WiLoR clean baseline was about 0.4956 cm, so the student changes clean PA by only about +0.023 mm. |
 
 ## Queue Results
 
@@ -117,11 +122,15 @@ HO3D strong oracle:
 | WiLoR | 0.827601 | -0.116023 | -0.469764 | -0.308959 |
 | HaMeR | 0.803475 | -0.128727 | -0.468296 | -0.336113 |
 
-This confirms that HO3D has oracle headroom, not just FreiHAND.
+This confirms that HO3D has oracle headroom, not just FreiHAND. The correct
+"remaining headroom" is the oracle-minus-rope gap, not the oracle total gain:
+HO3D WiLoR has only about 0.11 mm left after the rope winner, while HaMeR has
+about 0.63 mm left.
 
 ## Remaining Work
 
-The only still-running job in this set was:
+At the time this note was first written, the only still-running job in this set
+was:
 
 ```text
 169973 h3v3_s4_teach RUNNING
