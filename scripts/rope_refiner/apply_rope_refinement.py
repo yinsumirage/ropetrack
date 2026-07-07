@@ -536,6 +536,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="Simulated sensor dropout: per-finger probability of marking the rope reading invalid.")
     parser.add_argument("--rope-noise-seed", type=int, default=0,
                         help="Seed for the simulated sensor perturbation (deterministic reruns).")
+    parser.add_argument("--feature-cache", type=Path, default=None,
+                        help="Student mode: frozen backbone feature_cache.npz for THIS eval split "
+                             "(required iff the checkpoint was trained with image features).")
     parser.add_argument("--gt-xyz", type=Path, default=None,
                         help="GT xyz json ([N, 21, 3] eval-frame meters, same row order as run_meta sample_order). Required for oracle objectives.")
     parser.add_argument("--out-dir", type=Path, required=True)
@@ -577,9 +580,17 @@ def main(argv: list[str] | None = None) -> Path:
             raise ValueError("--checkpoint is required in checkpoint mode")
         refined = refined_pose(cache, args.checkpoint, args.device)
     elif args.mode == "student":
-        from ropetrack.refine.alpha_student import student_alpha
+        from ropetrack.refine.alpha_student import (
+            join_image_features,
+            load_image_feature_cache,
+            student_alpha,
+        )
 
-        alpha, student_config = student_alpha(cache, args.checkpoint, args.device)
+        image_features = None
+        if args.feature_cache is not None:
+            feature_ids, features = load_image_feature_cache(args.feature_cache)
+            image_features = join_image_features(cache["sample_id"], feature_ids, features)
+        alpha, student_config = student_alpha(cache, args.checkpoint, args.device, image_features=image_features)
         # the checkpoint is authoritative for how its alphas must be applied
         resolved_action_space = student_config["action_space"]
         if resolved_gate_threshold is None:

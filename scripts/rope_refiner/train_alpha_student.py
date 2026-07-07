@@ -36,9 +36,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from ropetrack.refine.actions import ACTION_SPACES, FLEX_ACTION_SPACES, alpha_dim, apply_action_torch
 from ropetrack.refine.alpha_student import (
+    STUDENT_FEATURE_DIM,
     RopeAlphaStudent,
     build_student_features,
     feature_stats,
+    join_image_features,
+    load_image_feature_cache,
     normalize_features,
     save_student_checkpoint,
 )
@@ -182,6 +185,7 @@ def train_student(
     device: str = "cpu",
     mano_module=None,
     sources: list[dict] | None = None,
+    image_features: np.ndarray | None = None,
 ) -> dict:
     if action_space not in ACTION_SPACES:
         raise ValueError(f"unsupported action space: {action_space}")
@@ -206,7 +210,21 @@ def train_student(
     input_rope = np.asarray(cache["input_rope_norm"], dtype=np.float32)
     valid = np.asarray(cache["rope_valid"], dtype=bool)
 
-    clean_features = build_student_features(pose, base_rope, input_rope, valid)
+    image_feature_dim = 0
+    if image_features is not None:
+        image_features = np.asarray(image_features, dtype=np.float32)
+        if len(image_features) != num:
+            raise ValueError(f"image features rows ({len(image_features)}) != samples ({num})")
+        image_feature_dim = int(image_features.shape[1])
+
+    def full_features(rows: np.ndarray, rope_rows: np.ndarray, valid_rows: np.ndarray) -> np.ndarray:
+        base = build_student_features(pose[rows], base_rope[rows], rope_rows, valid_rows)
+        if image_features is None:
+            return base
+        return np.concatenate([base, image_features[rows]], axis=1)
+
+    all_rows = np.arange(num)
+    clean_features = full_features(all_rows, input_rope, valid)
     mean, std = feature_stats(clean_features[train_idx])
     val_features = torch.from_numpy(normalize_features(clean_features[val_idx], mean, std)).to(device)
     target = torch.from_numpy(teacher_alpha).to(device)
@@ -217,7 +235,8 @@ def train_student(
             raise ValueError("--rope-loss-weight > 0 requires --mano-cache")
         rope_loss = RopeConsistency(cache, action_space, directions, mano_cache, device, mano_module=mano_module)
 
-    model = RopeAlphaStudent(out_dim=out_dim, hidden_dim=hidden_dim, max_alpha=max_alpha).to(device)
+    in_dim = STUDENT_FEATURE_DIM + image_feature_dim
+    model = RopeAlphaStudent(out_dim=out_dim, hidden_dim=hidden_dim, max_alpha=max_alpha, in_dim=in_dim).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
     def composite_loss(alpha_pred: torch.Tensor, index: torch.Tensor) -> torch.Tensor:
@@ -241,7 +260,7 @@ def train_student(
         for start in range(0, len(order), batch_size):
             batch = order[start : start + batch_size]
             rope_batch, valid_batch = perturb_rope_reading(input_rope[batch], valid[batch], aug_noise_std, aug_dropout, rng)
-            features = build_student_features(pose[batch], base_rope[batch], rope_batch, valid_batch)
+            features = full_features(batch, rope_batch, valid_batch)
             features_t = torch.from_numpy(normalize_features(features, mean, std)).to(device)
             index_t = torch.from_numpy(batch).to(device)
             alpha_pred = model(features_t)
@@ -270,6 +289,8 @@ def train_student(
         "out_dim": out_dim,
         "hidden_dim": hidden_dim,
         "max_alpha": max_alpha,
+        "in_dim": in_dim,
+        "image_feature_dim": image_feature_dim,
         "action_space": action_space,
         "gate_threshold": gate_threshold,
         "feature_mean": mean.tolist(),
@@ -321,6 +342,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--alpha-l2", type=float, default=1e-4)
     parser.add_argument("--rope-loss-weight", type=float, default=0.0)
     parser.add_argument("--mano-cache", type=Path, default=None)
+    parser.add_argument("--feature-cache", type=Path, default=None,
+                        help="P3: frozen backbone feature_cache.npz (scripts/rope_head/extract_feature_cache.py) "
+                             "for the SAME split as the teacher dir; joined by sample_id and concatenated to the "
+                             "65-d rope/pose features. Single --teacher-dir only for now.")
     parser.add_argument("--shuffle-rope", action="store_true",
                         help="Control: permute rope readings across samples; the trained student's gains must vanish.")
     parser.add_argument("--device", default="cuda")
@@ -332,7 +357,14 @@ def main(argv: list[str] | None = None) -> dict:
     if args.rope_loss_weight > 0.0 and len(args.teacher_dir) > 1:
         raise ValueError("--rope-loss-weight > 0 currently supports a single --teacher-dir "
                          "(per-dataset MANO caches are not merged)")
+    if args.feature_cache is not None and len(args.teacher_dir) > 1:
+        raise ValueError("--feature-cache currently supports a single --teacher-dir "
+                         "(one feature cache per split; multi-dataset P3 comes later)")
     cache, teacher_alpha, sources = load_teacher_dirs(args.teacher_dir)
+    image_features = None
+    if args.feature_cache is not None:
+        feature_ids, features = load_image_feature_cache(args.feature_cache)
+        image_features = join_image_features(cache["sample_id"], feature_ids, features)
     directions = None
     if len(args.teacher_dir) == 1:
         directions_path = args.teacher_dir[0] / "flex_directions.npy"
@@ -361,6 +393,7 @@ def main(argv: list[str] | None = None) -> dict:
         directions=directions,
         device=args.device,
         sources=sources,
+        image_features=image_features,
     )
     print(json.dumps(json_sanitize(summary), indent=2))
     return summary

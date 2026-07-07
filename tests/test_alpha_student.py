@@ -277,6 +277,82 @@ class MultiTeacherTest(unittest.TestCase):
                 ])
 
 
+class ImageFeatureStudentTest(unittest.TestCase):
+    """P3 v0 head: image features concatenated to the 65-d rope/pose features."""
+
+    @staticmethod
+    def image_dependent_teacher(num: int = 512, feat_dim: int = 16, seed: int = 21):
+        """Teacher alpha depends ONLY on the image feature — unlearnable without it."""
+        rng = np.random.default_rng(seed)
+        cache, _ = synthetic_teacher(num=num, seed=seed)
+        image_features = rng.normal(size=(num, feat_dim)).astype(np.float32)
+        teacher_alpha = np.clip(0.3 * image_features[:, :5], -0.4, 0.4).astype(np.float32)
+        return cache, teacher_alpha, image_features
+
+    def _train(self, trainer, cache, teacher_alpha, tmp, image_features=None):
+        return trainer.train_student(
+            cache, teacher_alpha, "mult5", Path(tmp) / "out",
+            gate_threshold=0.1, hidden_dim=64, lr=3e-3, batch_size=128,
+            max_epochs=80, patience=20, val_frac=0.2, seed=0,
+            aug_noise_std=0.0, aug_dropout=0.0, device="cpu",
+            image_features=image_features,
+        )
+
+    def test_image_features_are_necessary_and_sufficient(self):
+        trainer = load_trainer()
+        cache_a, teacher_alpha, image_features = self.image_dependent_teacher()
+        cache_b = {key: np.copy(value) for key, value in cache_a.items()}
+        with tempfile.TemporaryDirectory() as tmp:
+            with_feat = self._train(trainer, cache_a, teacher_alpha, tmp, image_features=image_features)
+        with tempfile.TemporaryDirectory() as tmp:
+            without_feat = self._train(trainer, cache_b, teacher_alpha, tmp)
+        # with image features the mapping is learnable...
+        self.assertLess(with_feat["best_val_loss"], 0.5 * with_feat["zero_baseline_val_l1"])
+        # ...without them it stays near the predict-zero baseline
+        self.assertGreater(without_feat["best_val_loss"], 0.7 * without_feat["zero_baseline_val_l1"])
+        self.assertEqual(with_feat["config"]["image_feature_dim"], 16)
+        self.assertEqual(with_feat["config"]["in_dim"], 65 + 16)
+
+    def test_checkpoint_roundtrip_with_image_features(self):
+        trainer = load_trainer()
+        cache, teacher_alpha, image_features = self.image_dependent_teacher(num=64)
+        with tempfile.TemporaryDirectory() as tmp:
+            self._train(trainer, cache, teacher_alpha, tmp, image_features=image_features)
+            ckpt = Path(tmp) / "out" / "student.pt"
+            alpha, config = student_alpha(cache, ckpt, "cpu", image_features=image_features)
+            self.assertEqual(alpha.shape, (64, 5))
+            with self.assertRaises(ValueError):
+                student_alpha(cache, ckpt, "cpu")  # features required
+            with self.assertRaises(ValueError):
+                student_alpha(cache, ckpt, "cpu", image_features=image_features[:, :8])  # wrong dim
+
+    def test_plain_checkpoint_rejects_image_features(self):
+        trainer = load_trainer()
+        cache, teacher_alpha = synthetic_teacher(num=64)
+        with tempfile.TemporaryDirectory() as tmp:
+            self._train(trainer, cache, teacher_alpha, tmp)
+            ckpt = Path(tmp) / "out" / "student.pt"
+            with self.assertRaises(ValueError):
+                student_alpha(cache, ckpt, "cpu", image_features=np.zeros((64, 16), dtype=np.float32))
+
+    def test_join_image_features_reorders_and_validates(self):
+        from ropetrack.refine.alpha_student import join_image_features
+
+        feature_ids = ["b", "a", "c"]
+        features = np.asarray([[1.0], [2.0], [3.0]], dtype=np.float32)
+        joined = join_image_features(["a", "b"], feature_ids, features)
+        np.testing.assert_allclose(joined, [[2.0], [1.0]])
+        with self.assertRaises(ValueError):
+            join_image_features(["a", "z"], feature_ids, features)
+
+    def test_row_count_mismatch_raises(self):
+        trainer = load_trainer()
+        cache, teacher_alpha, image_features = self.image_dependent_teacher(num=64)
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ValueError):
+                self._train(trainer, cache, teacher_alpha, tmp, image_features=image_features[:-1])
+
+
 class StudentApplyPathTest(unittest.TestCase):
     def load_apply_script(self):
         path = ROOT / "scripts" / "rope_refiner" / "apply_rope_refinement.py"

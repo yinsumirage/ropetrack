@@ -63,11 +63,12 @@ def features_from_cache(cache: dict[str, np.ndarray]) -> np.ndarray:
 
 
 class RopeAlphaStudent(nn.Module):
-    def __init__(self, out_dim: int, hidden_dim: int = 256, max_alpha: float = 0.5) -> None:
+    def __init__(self, out_dim: int, hidden_dim: int = 256, max_alpha: float = 0.5, in_dim: int = STUDENT_FEATURE_DIM) -> None:
         super().__init__()
         self.max_alpha = float(max_alpha)
+        self.in_dim = int(in_dim)
         self.net = nn.Sequential(
-            nn.Linear(STUDENT_FEATURE_DIM, hidden_dim),
+            nn.Linear(self.in_dim, hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
@@ -104,16 +105,58 @@ def load_student(path: Path, device: str) -> tuple[RopeAlphaStudent, dict]:
         out_dim=int(config["out_dim"]),
         hidden_dim=int(config.get("hidden_dim", 256)),
         max_alpha=float(config.get("max_alpha", 0.5)),
+        in_dim=int(config.get("in_dim", STUDENT_FEATURE_DIM)),
     ).to(device)
     model.load_state_dict(ckpt["model_state"])
     model.eval()
     return model, config
 
 
-def student_alpha(cache: dict[str, np.ndarray], checkpoint: Path, device: str) -> tuple[np.ndarray, dict]:
-    """Predict alphas for a refiner eval cache; the gate is applied by the caller."""
+def load_image_feature_cache(path: Path) -> tuple[list[str], np.ndarray]:
+    """P3 feature cache from scripts/rope_head/extract_feature_cache.py."""
+    with np.load(path) as data:
+        ids = [str(sid) for sid in data["sample_id"]]
+        features = np.asarray(data["features"], dtype=np.float32)
+    if len(ids) != len(features):
+        raise ValueError(f"feature cache rows mismatch: ids={len(ids)} features={len(features)}")
+    return ids, features
+
+
+def join_image_features(sample_ids, feature_ids: list[str], features: np.ndarray) -> np.ndarray:
+    """Reorder cached image features to sample_ids; strict on missing rows."""
+    index = {sid: i for i, sid in enumerate(feature_ids)}
+    missing = [str(sid) for sid in sample_ids if str(sid) not in index]
+    if missing:
+        raise ValueError(f"feature cache missing sample_ids: {missing[:5]} (total {len(missing)})")
+    perm = np.asarray([index[str(sid)] for sid in sample_ids])
+    return features[perm]
+
+
+def student_alpha(
+    cache: dict[str, np.ndarray],
+    checkpoint: Path,
+    device: str,
+    image_features: np.ndarray | None = None,
+) -> tuple[np.ndarray, dict]:
+    """Predict alphas for a refiner eval cache; the gate is applied by the caller.
+
+    ``image_features`` (rows aligned to ``cache['sample_id']``) is required
+    iff the checkpoint was trained with them (P3 rope-conditioned head).
+    """
     model, config = load_student(checkpoint, device)
     features = features_from_cache(cache)
+    expected_image_dim = int(config.get("image_feature_dim", 0))
+    if expected_image_dim:
+        if image_features is None:
+            raise ValueError("checkpoint was trained with image features; pass --feature-cache")
+        image_features = np.asarray(image_features, dtype=np.float32)
+        if image_features.shape != (features.shape[0], expected_image_dim):
+            raise ValueError(
+                f"image features must be {(features.shape[0], expected_image_dim)}, got {image_features.shape}"
+            )
+        features = np.concatenate([features, image_features], axis=1)
+    elif image_features is not None:
+        raise ValueError("checkpoint was trained without image features; do not pass --feature-cache")
     mean = np.asarray(config["feature_mean"], dtype=np.float32)
     std = np.asarray(config["feature_std"], dtype=np.float32)
     with torch.no_grad():
