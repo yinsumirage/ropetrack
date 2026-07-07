@@ -104,6 +104,37 @@ def build_inference_cache(dataset: str, rope_labels: Path, pred_dir: Path, run_m
     return output
 
 
+def perturb_rope_cache(cache: dict[str, np.ndarray], noise_std: float, dropout: float, seed: int) -> dict[str, np.ndarray]:
+    """Simulate an imperfect rope sensor on the cache, in place.
+
+    - ``noise_std``: gaussian noise on ``input_rope_norm`` (normalized rope
+      units; with FreiHAND chain lengths ~0.10 m, 0.05 is roughly +/-2.5 mm of
+      distance noise), clamped back to [0, 1] like real labels.
+    - ``dropout``: per-finger probability of marking the reading invalid
+      (``rope_valid`` False), which excludes it from the loss and the gate.
+
+    ``gt_rope_norm`` keeps the clean labels for later analysis. The gate and
+    the optimizer both consume the perturbed reading — a noisy sensor must be
+    noisy everywhere, not only in the loss.
+    """
+    if noise_std <= 0.0 and dropout <= 0.0:
+        return cache
+    rng = np.random.default_rng(seed)
+    rope = np.asarray(cache["input_rope_norm"], dtype=np.float32)
+    valid = np.asarray(cache["rope_valid"], dtype=bool)
+    if noise_std > 0.0:
+        rope = rope + rng.normal(scale=noise_std, size=rope.shape).astype(np.float32)
+        rope = np.clip(rope, 0.0, 1.0)
+        rope[~valid] = 0.0
+    if dropout > 0.0:
+        dropped = rng.uniform(size=valid.shape) < dropout
+        valid = valid & ~dropped
+        rope[~valid] = 0.0
+    cache["input_rope_norm"] = rope
+    cache["rope_valid"] = valid
+    return cache
+
+
 def refined_pose(cache: dict[str, np.ndarray], checkpoint: Path, device: str) -> np.ndarray:
     ckpt = torch.load(checkpoint, map_location=device, weights_only=True)
     rope_key = ckpt.get("config", {}).get("rope_key", "input_rope_norm")
@@ -496,6 +527,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="Optimize-mode per-finger gating: only fingers with base rope residual above this "
                              "threshold (normalized rope units, e.g. 0.1) may move; others keep alpha=0 and are "
                              "excluded from the rope loss.")
+    parser.add_argument("--rope-noise-std", type=float, default=0.0,
+                        help="Simulated sensor noise: gaussian std on input_rope_norm in normalized units "
+                             "(~0.05 is +/-2.5 mm of distance noise on FreiHAND-scale hands).")
+    parser.add_argument("--rope-dropout", type=float, default=0.0,
+                        help="Simulated sensor dropout: per-finger probability of marking the rope reading invalid.")
+    parser.add_argument("--rope-noise-seed", type=int, default=0,
+                        help="Seed for the simulated sensor perturbation (deterministic reruns).")
     parser.add_argument("--gt-xyz", type=Path, default=None,
                         help="GT xyz json ([N, 21, 3] eval-frame meters, same row order as run_meta sample_order). Required for oracle objectives.")
     parser.add_argument("--out-dir", type=Path, required=True)
@@ -521,6 +559,11 @@ def main(argv: list[str] | None = None) -> Path:
     build_inference_cache(args.dataset, args.rope_labels, args.pred_dir, args.run_meta, args.mano_cache, cache_path)
     with np.load(cache_path) as loaded:
         cache = {key: loaded[key] for key in loaded.files}
+    if args.rope_noise_std > 0.0 or args.rope_dropout > 0.0:
+        perturb_rope_cache(cache, args.rope_noise_std, args.rope_dropout, args.rope_noise_seed)
+        # rewrite so downstream analysis (sliced/deadzone) sees the same
+        # sensor readings the optimizer consumed; gt_rope_norm stays clean
+        np.savez(cache_path, **cache)
 
     alpha = None
     if args.mode == "checkpoint":
@@ -569,6 +612,12 @@ def main(argv: list[str] | None = None) -> Path:
         "mode": args.mode,
         "objective": args.objective,
         "action_space": args.action_space,
+        "rope_sensor": {
+            "noise_std": args.rope_noise_std,
+            "dropout": args.rope_dropout,
+            "seed": args.rope_noise_seed,
+            "frac_valid_after": float(np.asarray(cache["rope_valid"], dtype=bool).mean()),
+        },
         "rope_residual": residual_summary,
     }
     if args.mode == "optimize":

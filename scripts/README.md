@@ -67,6 +67,11 @@ Optimize mode supports the P0 probes from
   residual exceeds the threshold (normalized units) may move; ungated
   fingers keep `alpha = 0` and are excluded from the rope loss. Gating
   stats are recorded in `summary.json`.
+- `--rope-noise-std 0.05 --rope-dropout 0.2 --rope-noise-seed 0`: simulated
+  imperfect sensor (H5 ablation) — seeded gaussian noise on the normalized
+  rope reading (0.05 is roughly +/-2.5 mm) and per-finger dropout that marks
+  readings invalid. `gt_rope_norm` in the cache keeps the clean labels; the
+  gate and loss both consume the perturbed reading.
 - Optimizer defaults are now the published working recipe from
   `experience/0027` (`steps=120 lr=2.0 alpha_l2=0.001 max_alpha=0.5`);
   the old conservative defaults provably did nothing.

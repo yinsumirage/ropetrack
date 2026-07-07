@@ -490,6 +490,58 @@ class OptimizeAlphaToyTest(unittest.TestCase):
                 self._run(script, tmp, "mult5", objective="oracle_tip")
 
 
+class PerturbRopeCacheTest(unittest.TestCase):
+    def _cache(self, num=16):
+        return {
+            "input_rope_norm": np.random.default_rng(3).uniform(0.2, 0.8, size=(num, 5)).astype(np.float32),
+            "gt_rope_norm": np.full((num, 5), 0.5, dtype=np.float32),
+            "rope_valid": np.ones((num, 5), dtype=bool),
+        }
+
+    def test_noop_when_disabled(self):
+        script = load_apply_script()
+        cache = self._cache()
+        before = cache["input_rope_norm"].copy()
+        script.perturb_rope_cache(cache, 0.0, 0.0, 7)
+        np.testing.assert_array_equal(cache["input_rope_norm"], before)
+        self.assertTrue(cache["rope_valid"].all())
+
+    def test_noise_is_seeded_and_clamped(self):
+        script = load_apply_script()
+        cache_a, cache_b = self._cache(), self._cache()
+        clean = cache_a["input_rope_norm"].copy()
+        script.perturb_rope_cache(cache_a, 0.3, 0.0, 7)
+        script.perturb_rope_cache(cache_b, 0.3, 0.0, 7)
+        np.testing.assert_array_equal(cache_a["input_rope_norm"], cache_b["input_rope_norm"])
+        self.assertGreater(float(np.abs(cache_a["input_rope_norm"] - clean).mean()), 0.05)
+        self.assertGreaterEqual(float(cache_a["input_rope_norm"].min()), 0.0)
+        self.assertLessEqual(float(cache_a["input_rope_norm"].max()), 1.0)
+        # gt stays clean
+        np.testing.assert_array_equal(cache_a["gt_rope_norm"], np.full((16, 5), 0.5, dtype=np.float32))
+
+    def test_dropout_marks_invalid_and_zeroes_reading(self):
+        script = load_apply_script()
+        cache = self._cache(num=64)
+        script.perturb_rope_cache(cache, 0.0, 0.5, 11)
+        valid = cache["rope_valid"]
+        frac = float(valid.mean())
+        self.assertGreater(frac, 0.3)
+        self.assertLess(frac, 0.7)
+        self.assertTrue(np.all(cache["input_rope_norm"][~valid] == 0.0))
+
+    def test_dropped_fingers_are_never_gated(self):
+        script = load_apply_script()
+        cache = {
+            "base_rope_norm": np.full((8, 5), 0.2, dtype=np.float32),
+            "input_rope_norm": np.full((8, 5), 0.8, dtype=np.float32),
+            "gt_rope_norm": np.full((8, 5), 0.8, dtype=np.float32),
+            "rope_valid": np.ones((8, 5), dtype=bool),
+        }
+        script.perturb_rope_cache(cache, 0.0, 0.6, 13)
+        gate = script.gate_from_cache(cache, 0.1)
+        self.assertFalse(bool(gate[~cache["rope_valid"]].any()))
+
+
 class LoadManoGlobalsTest(unittest.TestCase):
     def test_reorders_by_sample_id(self):
         script = load_apply_script()
