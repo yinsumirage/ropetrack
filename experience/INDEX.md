@@ -60,3 +60,4 @@ ends with the clean baseline report before hard splits or rope labels.
 | 2026-07-07 | [0035_p1_batch_b_strong_jobs.md](0035_p1_batch_b_strong_jobs.md) | Submitted strong-recipe Batch B after P1-0 selected lr32/400-step optimization and Batch A passed the gate threshold sanity check. |
 | 2026-07-07 | [0036_p1_batch_b_strong_results.md](0036_p1_batch_b_strong_results.md) | Batch B results: strong rope optimization plus gating gives large gains, with `flex15+gate010` beating flex5 and mult5. |
 | 2026-07-07 | [0037_p1_guardrails_and_teacher_jobs.md](0037_p1_guardrails_and_teacher_jobs.md) | Submitted guardrail jobs for noise, strong oracle, clean split, HaMeR backend, HO3D winner, and FreiHAND train-teacher generation. |
+| 2026-07-07 | [0038_p1_guardrails_and_teacher_results.md](0038_p1_guardrails_and_teacher_results.md) | Guardrail results: moderate rope noise passes, strong oracle restores the ceiling, HO3D transfers, and the train teacher is ready. |
