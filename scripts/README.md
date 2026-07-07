@@ -121,6 +121,19 @@ optimization at inference); the residual gate stays a hard rule from the
 checkpoint config, and `--rope-loss-weight` optionally adds a differentiable
 rope-consistency term (needs `--mano-cache`).
 
+P3 rope-conditioned head prep (`scripts/rope_head/`):
+
+```bash
+# cache frozen backbone features (same crops as the benchmark export;
+# hook on model.backbone during a normal forward). GPU, gt_bbox only.
+python scripts/rope_head/extract_feature_cache.py --dataset freihand_mask70 --method wilor_original --split evaluation --output /data/wentao/ropetrack/features/freihand_mask70_eval_wilor.npz
+python scripts/rope_head/extract_feature_cache.py --dataset freihand_mask70 --method wilor_original --split training --freihand-root <mask70_train_hard_root> --output /data/wentao/ropetrack/features/freihand_mask70_train_wilor.npz
+```
+
+`--pooling meanmax` doubles the feature dim; `--save-tokens` stores the full
+fp16 token grid for the v1 cross-attention head (~16 GB for a 32.5k split -
+default off).
+
 Report tooling (no hand-copied tables):
 
 ```bash

@@ -121,14 +121,36 @@ finger_end80 and HaMeR headroom, not on a blanket "large gap".
    share the same 32,560 underlying images (different perturbation/backend);
    dataset diversity is 2 corpora, not 4.
 
-## Pending slots (fill when Codex's final batch lands)
+## Act 4b - Multi-teacher student (final model; 0044)
 
-- [ ] Multi-teacher student (4 teachers incl. HO3D v3 s4): same 6-cell eval
-      table as Act 4; key question = does HO3D transfer improve without
-      hurting FreiHAND cells.
-- [ ] Multi-teacher shuffle control.
-- [ ] noaug @ noise0.05 cell -> pick deployment default (main vs noaug).
-- [ ] Qualitative figure: base/teacher/student mesh triptychs, top-3 mask70.
+Four train teachers (FreiHAND mask70 / finger_end80, HaMeR mask70, HO3D v3
+mask70 stride4 = 118,512 samples), same student architecture, augmented:
+
+| Eval cell | Multi student (mm) | Single student (mm) | Verdict |
+|---|---:|---:|---|
+| FreiHAND mask70 | -1.636 | -1.636 | tie - FreiHAND unharmed |
+| FreiHAND finger_end80 | -1.623 | -1.603 | slightly better |
+| HO3D v2 mask70 | **-0.972** | -0.911 | +0.06 mm from HO3D v3 train data (recovery 87% -> 93%) |
+| HaMeR mask70 | **-1.697** | -1.655 | reaches 100% of the HaMeR teacher |
+| mask70 + noise 0.05 | -1.539 | -1.527 | slightly better |
+| Shuffled control | -0.056 | - | still collapses |
+| Clean split | +0.041 mm vs baseline | +0.023 mm | inside the +-0.05 band, closer to its edge - state it |
+
+Deployment-default decision (noaug @ noise0.05 cell): no-aug retains 82% of
+its clean gain under sensor noise (-1.414), the augmented student retains 93%
+(-1.527/-1.539) -> **augmentation trades 0.08 mm clean accuracy for noise
+robustness; the augmented multi student is the release model.**
+
+HO3D v3 s4 train teacher sanity: closure 0.582, gated 0.282, alpha 0.043 -
+same regime as the FreiHAND train teacher (0.504/0.288/0.053).
+
+Qualitative panels (`.local_checks/p2_student_multi_report_panels`): on the
+four most-improved mask70 samples, base PA 28.4-31.5 mm drops to 12.8-18.0 mm
+(halved); the one-pass student matches or slightly beats the 400-step teacher
+on 3 of 4.
+
+## Pending slots
+
+- [ ] Multi-v2 student (5 teachers, adds HO3D v3 finger_end80): 8-cell table
+      incl. the new HO3D v2 finger_end80 eval cell (jobs 170342-170347).
 - [ ] Latency numbers from job logs + timed student forward.
-- [ ] HO3D v3 s4 train teacher sanity row (closure/gated/alpha vs FreiHAND
-      train teacher).
