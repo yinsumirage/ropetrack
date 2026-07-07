@@ -25,6 +25,24 @@ python scripts/make_hard_images.py --dataset ho3d --input-root /data/wentao/rope
 python scripts/eval.py --dataset ho3d_v2_mask70 --method wilor_anyhand --run-eval
 ```
 
+HO3D v3 TRAIN pipeline (multi-dataset P2 teacher; assumptions verified by
+`scripts/audit_ho3d_train_split.py`, experience/0040 — train metas have no
+handBoundingBox, so GT bboxes are projected from `handJoints3D`). Stride is
+baked into the hard root's own `train.txt`, so downstream steps stay aligned
+by construction; both generators are CPU-only:
+
+```bash
+# CPU: strided hard root (stride 4 -> ~20.8k of 83,325 video frames)
+python scripts/make_hard_images.py --dataset ho3d --split training --stride 4 --input-root /data/wentao/ropetrack/HO3D_v3 --output-root /data/wentao/ropetrack/hard/ho3d_v3/mask70_train --effect mask --severity 0.70 --limit 0
+# CPU: matching rope labels (same stride, same source list)
+python scripts/make_rope_labels.py --dataset ho3d --split training --stride 4 --input-root /data/wentao/ropetrack/HO3D_v3 --output /data/wentao/ropetrack/rope_labels/ho3d_v3/training_rope_s4.jsonl
+# GPU: export + winner teacher on the hard train root
+python scripts/eval.py --dataset ho3d_v3_mask70_train --method wilor_original --split training --protocol-check-samples 0 --save-mano-cache
+python scripts/rope_refiner/apply_rope_refinement.py --mode optimize --objective rope --action-space flex15 --gate-residual-threshold 0.1 --dataset ho3d ...
+# then multi-dataset distillation:
+python scripts/rope_refiner/train_alpha_student.py --teacher-dir <freihand_teacher> <ho3d_v3_teacher> --action-space flex15 --out-dir <student_multi>
+```
+
 Rope labels are JSONL so each row keeps sample id, raw distance, chain length,
 normalized value, validity, and normalization metadata:
 

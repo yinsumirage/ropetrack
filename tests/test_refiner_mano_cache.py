@@ -63,10 +63,17 @@ class RefinerManoCacheTest(unittest.TestCase):
         self.assertTrue(sample.image_path.as_posix().endswith("training/rgb/00000000.jpg"))
         self.assertEqual(sample.bbox_xyxy.tolist(), [10.0, 20.0, 40.0, 50.0])
 
-    def test_ho3d_rejects_training_split(self):
+    def test_ho3d_training_split_needs_train_list(self):
+        # training split is supported since the HO3D v3 train pipeline
+        # (experience/0040); without a train.txt the root is unusable
         with tempfile.TemporaryDirectory() as tmp:
-            with self.assertRaisesRegex(ValueError, "HO3D.*evaluation"):
+            with self.assertRaises(FileNotFoundError):
                 list(iter_hand_pose_samples("ho3d", Path(tmp), limit=None, split="training"))
+
+    def test_ho3d_rejects_unknown_split(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(ValueError, "unsupported HO3D split"):
+                list(iter_hand_pose_samples("ho3d", Path(tmp), limit=None, split="nope"))
 
     def test_build_cache_uses_mano_cache_aligned_by_sample_id(self):
         builder = load_script("scripts/rope_refiner/build_freihand_refiner_cache.py")

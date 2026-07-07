@@ -11,7 +11,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from PIL import Image, ImageDraw, ImageFont
 
-from ropetrack.datasets.hand_pose import iter_ho3d_samples, project_points, read_json, resolve_image_path
+from ropetrack.datasets.hand_pose import (
+    iter_ho3d_samples,
+    project_points,
+    read_ho3d_train_ids,
+    read_json,
+    resolve_image_path,
+)
 from ropetrack.io import write_jsonl
 from ropetrack.rope import FINGER_CHAINS, FINGER_ORDER, build_rope_row, canonical_rope_dataset
 
@@ -81,13 +87,35 @@ def camera_matrix_from_meta(meta_path: Path):
     return None
 
 
-def iter_rope_items(dataset: str, root: Path, limit: int | None, sample_order_file: Path | None = None, split: str = "evaluation"):
+def ho3d_train_items(root: Path, limit: int | None, stride: int = 1, split_dir: str = "train"):
+    """Training-split rope items straight from the meta pkls.
+
+    handJoints3D is in the HO3D camera frame; rope distances are invariant to
+    the OpenCV sign flip, and the visualization projection applies the flip
+    itself, so raw meta joints are correct here (audit: experience/0040).
+    """
+    for sample_id in read_ho3d_train_ids(root, stride=stride, limit=limit):
+        seq, frame = sample_id.split("/")
+        meta_path = root / split_dir / seq / "meta" / f"{frame}.pkl"
+        with meta_path.open("rb") as f:
+            meta = pickle.load(f, encoding="latin1")
+        yield {
+            "sample_id": sample_id,
+            "joints": meta["handJoints3D"],
+            "image_path": resolve_image_path(root / split_dir / seq / "rgb", frame),
+            "K": meta.get("camMat"),
+        }
+
+
+def iter_rope_items(dataset: str, root: Path, limit: int | None, sample_order_file: Path | None = None, split: str = "evaluation", stride: int = 1):
     name = canonical_rope_dataset(dataset)
     if name == "freihand":
         return freihand_items(root, limit, split=split)
-    if split != "evaluation":
-        raise ValueError("HO3D rope-label generation only supports --split evaluation")
-    return ho3d_items(root, limit, sample_order_file)
+    if split == "evaluation":
+        return ho3d_items(root, limit, sample_order_file)
+    if split == "training":
+        return ho3d_train_items(root, limit, stride=stride)
+    raise ValueError(f"unsupported HO3D rope-label split: {split}")
 
 
 def write_rope_labels(
@@ -100,9 +128,10 @@ def write_rope_labels(
     viz_dir: Path | None = None,
     viz_count: int = 0,
     split: str = "evaluation",
+    stride: int = 1,
 ) -> list[dict]:
     rows = []
-    for idx, item in enumerate(iter_rope_items(dataset, input_root, limit, sample_order_file, split=split)):
+    for idx, item in enumerate(iter_rope_items(dataset, input_root, limit, sample_order_file, split=split, stride=stride)):
         row = build_rope_row(dataset, item["sample_id"], item["joints"], fist_ratio=fist_ratio)
         rows.append(row)
         if viz_dir is not None and idx < viz_count:
@@ -175,6 +204,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--limit", type=int, default=0, help="Number of samples; <=0 means all.")
     parser.add_argument("--sample-order-file", type=Path, default=None)
     parser.add_argument("--split", choices=["evaluation", "training"], default="evaluation")
+    parser.add_argument("--stride", type=int, default=1,
+                        help="HO3D training only: keep every k-th train.txt frame; must match the hard root stride.")
     parser.add_argument("--fist-ratio", type=float, default=0.5)
     parser.add_argument("--viz-dir", type=Path, default=None)
     parser.add_argument("--viz-count", type=int, default=0)
@@ -184,6 +215,8 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     limit = None if args.limit <= 0 else args.limit
+    if args.stride != 1 and not (args.dataset == "ho3d" and args.split == "training"):
+        raise ValueError("--stride is only supported for --dataset ho3d --split training")
     rows = write_rope_labels(
         args.dataset,
         args.input_root,
@@ -194,6 +227,7 @@ def main() -> None:
         viz_dir=args.viz_dir,
         viz_count=args.viz_count,
         split=args.split,
+        stride=args.stride,
     )
     print(f"Wrote {len(rows)} rope labels: {args.output}")
 

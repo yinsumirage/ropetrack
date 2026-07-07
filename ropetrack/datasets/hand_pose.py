@@ -69,9 +69,11 @@ def iter_hand_pose_samples(adapter: str, root: Path, limit: int | None, split: s
     if adapter == "freihand":
         return iter_freihand_eval_samples(root, limit, split)
     if adapter == "ho3d":
-        if split != "evaluation":
-            raise ValueError("HO3D eval export only supports the evaluation split")
-        return iter_ho3d_samples(root, limit)
+        if split == "evaluation":
+            return iter_ho3d_samples(root, limit)
+        if split in {"training", "train"}:
+            return iter_ho3d_train_samples(root, limit)
+        raise ValueError(f"unsupported HO3D split: {split}")
     raise ValueError(f"unsupported eval adapter: {adapter}")
 
 
@@ -122,6 +124,71 @@ def iter_ho3d_samples(root: Path, limit: int | None) -> Iterable[Ho3dSample]:
             image_path=resolve_image_path(eval_dir / seq / "rgb", frame),
             meta_path=eval_dir / seq / "meta" / f"{frame}.pkl",
         )
+
+
+def read_ho3d_train_ids(root: Path, stride: int = 1, limit: int | None = None, split_file: str = "train.txt") -> list[str]:
+    """Strided ids from train.txt.
+
+    HO3D training sequences are 30 fps video, so adjacent frames are nearly
+    duplicates; stride subsampling keeps the unique-pose content while
+    keeping teacher-generation cost and train/val leakage in check.
+    """
+    list_path = root / split_file
+    if not list_path.exists():
+        raise FileNotFoundError(f"HO3D train split list missing: {list_path}")
+    ids = [line.strip() for line in list_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    if stride < 1:
+        raise ValueError(f"stride must be >= 1, got {stride}")
+    ids = ids[::stride]
+    if limit is not None and limit > 0:
+        ids = ids[:limit]
+    return ids
+
+
+def iter_ho3d_train_samples(root: Path, limit: int | None, stride: int = 1, split_dir: str = "train") -> Iterable[Ho3dSample]:
+    if limit is not None and limit <= 0:
+        limit = None
+    for sample_id in read_ho3d_train_ids(root, stride=stride, limit=limit):
+        seq, frame = sample_id.split("/")
+        yield Ho3dSample(
+            sample_id=sample_id,
+            image_path=resolve_image_path(root / split_dir / seq / "rgb", frame),
+            meta_path=root / split_dir / seq / "meta" / f"{frame}.pkl",
+        )
+
+
+HO3D_TO_OPENCV_CAMERA = np.asarray([1.0, -1.0, -1.0], dtype=np.float32)
+HO3D_IMAGE_SIZE = (640, 480)
+
+
+def ho3d_projected_hand_bbox(
+    meta: dict,
+    image_size: tuple[int, int] = HO3D_IMAGE_SIZE,
+    margin: float = 0.15,
+) -> np.ndarray:
+    """Hand bbox from projected 3D joints, for TRAIN metas without handBoundingBox.
+
+    Joint projections hug the skeleton, so pad by `margin` of the larger bbox
+    side to cover the hand surface (evaluation handBoundingBox boxes carry a
+    similar margin).
+    """
+    joints = np.asarray(meta["handJoints3D"], dtype=np.float32) * HO3D_TO_OPENCV_CAMERA
+    K = np.asarray(meta["camMat"], dtype=np.float32)
+    uv = project_points(joints, K)
+    valid = np.isfinite(uv).all(axis=1)
+    if not valid.any():
+        raise ValueError("no finite projected joints for HO3D train bbox")
+    xy_min = uv[valid].min(axis=0)
+    xy_max = uv[valid].max(axis=0)
+    pad = margin * float(max(xy_max[0] - xy_min[0], xy_max[1] - xy_min[1], 1.0))
+    width, height = image_size
+    bbox = np.asarray([
+        max(0.0, xy_min[0] - pad),
+        max(0.0, xy_min[1] - pad),
+        min(float(width), xy_max[0] + pad),
+        min(float(height), xy_max[1] + pad),
+    ], dtype=np.float32)
+    return bbox.reshape(1, 4)
 
 
 def infer_ho3d_sample_order_from_gt_roots(root: Path) -> list[str]:
@@ -193,7 +260,12 @@ def load_gt_bbox_candidates(adapter: str, samples: list) -> list[BBoxItem]:
         for sample_index, sample in enumerate(samples):
             with sample.meta_path.open("rb") as f:
                 meta = pickle.load(f, encoding="latin1")
-            boxes = hand_bbox_from_meta(meta)
+            if meta.get("handBoundingBox") is not None:
+                boxes = hand_bbox_from_meta(meta)
+            else:
+                # training metas carry no handBoundingBox (audit 0040):
+                # fall back to a bbox projected from the GT 3D joints
+                boxes = ho3d_projected_hand_bbox(meta)
             candidates.extend(bbox_candidates_from_sample(
                 sample_index,
                 sample,

@@ -289,8 +289,6 @@ def run_export(args: argparse.Namespace) -> Path:
 
     root = args.freihand_root if args.adapter == "freihand" else args.ho3d_root
     split = getattr(args, "split", "evaluation")
-    if split != "evaluation" and args.adapter == "ho3d":
-        raise ValueError("HO3D eval export only supports the evaluation split")
     if split != "evaluation" and getattr(args, "run_eval", False):
         raise ValueError("--run-eval only supports the evaluation split")
     samples = list(iter_hand_pose_samples(args.adapter, root, args.limit, split))

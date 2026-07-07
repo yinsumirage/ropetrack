@@ -1,0 +1,20 @@
+name: ho3d_v3_mask70_train
+adapter: ho3d
+remote_root: /data/wentao/ropetrack/hard/ho3d_v3/mask70_train
+local_link: data/raw/ho3d_v3_mask70_train
+train:
+  list: train.txt
+  images: train/*/rgb
+  gt:
+    - training_xyz.json
+protocol:
+  units: m
+  camera: HO3D/OpenGL-style; flip y and z from OpenCV predictions
+  benchmark_mode: gt_bbox
+  joint_source: mano_vertices
+notes: >
+  Strided HO3D v3 training hard root for P2 teacher generation. Training
+  metas have no handBoundingBox (experience/0040), so GT bboxes are
+  projected from handJoints3D. Export with
+  `scripts/eval.py --dataset ho3d_v3_mask70_train --split training
+  --protocol-check-samples 0 --save-mano-cache`.

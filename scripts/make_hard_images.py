@@ -15,8 +15,10 @@ from ropetrack.datasets.hand_pose import (  # noqa: E402
     Ho3dSample,
     bbox_from_projected_points,
     hand_bbox_from_meta,
+    ho3d_projected_hand_bbox,
     iter_ho3d_samples,
     project_points,
+    read_ho3d_train_ids,
     read_json,
     resolve_image_path,
 )
@@ -305,6 +307,65 @@ def build_ho3d_hard_root(
     return output_root
 
 
+def build_ho3d_train_hard_root(
+    input_root: Path,
+    output_root: Path,
+    effect: str,
+    severity: float,
+    limit: int | None,
+    seed: int,
+    stride: int = 1,
+    split_dir: str = "train",
+) -> Path:
+    """Hard-image root for the HO3D TRAIN split (audit: experience/0040).
+
+    Training metas have handJoints3D/camMat but no handBoundingBox, so the
+    bbox comes from projected GT joints. Stride bakes video subsampling into
+    the root itself: the emitted train.txt lists only the strided ids, so
+    downstream exports and rope labels stay aligned by construction.
+    """
+    ids = read_ho3d_train_ids(input_root, stride=stride, limit=limit)
+    rows = []
+    xyz_rows = []
+
+    for idx, sample_id in enumerate(ids):
+        seq, frame = sample_id.split("/")
+        src_image = resolve_image_path(input_root / split_dir / seq / "rgb", frame)
+        meta_path = input_root / split_dir / seq / "meta" / f"{frame}.pkl"
+        dst_image = output_root / split_dir / seq / "rgb" / src_image.name
+        dst_meta = output_root / split_dir / seq / "meta" / f"{frame}.pkl"
+        with meta_path.open("rb") as f:
+            meta = pickle.load(f, encoding="latin1")
+        joints = meta["handJoints3D"]
+        K = camera_matrix_from_meta(meta)
+        bbox = ho3d_projected_hand_bbox(meta)[0].tolist()
+        points_xy = project_ho3d_fingertips_from_joints(joints, K)
+        segments_xy = project_ho3d_finger_end_segments_from_joints(joints, K)
+        sample_seed = seed + idx
+        save_hard_image(src_image, dst_image, bbox, effect, severity, sample_seed, points_xy=points_xy, segments_xy=segments_xy)
+        dst_meta.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(meta_path, dst_meta)
+        xyz_rows.append(np.asarray(joints, dtype=np.float64).tolist())
+        rows.append({
+            "sample_id": sample_id,
+            "dataset": "ho3d",
+            "source_image": str(src_image),
+            "hard_image": str(dst_image),
+            "bbox_xyxy": bbox,
+            "points_xy": points_xy,
+            "segments_xy": segments_xy,
+            "effect": effect,
+            "severity": severity,
+            "seed": sample_seed,
+            "stride": stride,
+        })
+
+    write_json(output_root / "training_xyz.json", xyz_rows)
+    (output_root / "train.txt").write_text("".join(f"{sample_id}\n" for sample_id in ids), encoding="utf-8")
+    write_manifest(output_root / "hard_manifest.jsonl", rows)
+    return output_root
+
+
 def iter_ho3d_samples_from_order(root: Path, sample_order_file: Path, limit: int | None):
     payload = read_json(sample_order_file)
     ids = payload["sample_order"] if isinstance(payload, dict) else payload
@@ -334,6 +395,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--limit", type=int, default=32, help="Number of samples; <=0 means all.")
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--split", choices=["evaluation", "training"], default="evaluation")
+    parser.add_argument("--stride", type=int, default=1,
+                        help="HO3D training only: keep every k-th train.txt frame (video subsampling).")
     parser.add_argument("--sample-order-file", type=Path, default=None,
                         help="Optional HO3D run_meta.json or JSON list with sample_order.")
     return parser.parse_args()
@@ -342,11 +405,21 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     limit = None if args.limit <= 0 else args.limit
+    if args.stride != 1 and not (args.dataset == "ho3d" and args.split == "training"):
+        raise ValueError("--stride is only supported for --dataset ho3d --split training")
     if args.dataset == "freihand":
         build_freihand_hard_root(args.input_root, args.output_root, args.effect, args.severity, limit, args.seed, split=args.split)
+    elif args.split == "training":
+        build_ho3d_train_hard_root(
+            args.input_root,
+            args.output_root,
+            args.effect,
+            args.severity,
+            limit,
+            args.seed,
+            stride=args.stride,
+        )
     else:
-        if args.split != "evaluation":
-            raise ValueError("HO3D hard-image generation only supports --split evaluation")
         build_ho3d_hard_root(
             args.input_root,
             args.output_root,
