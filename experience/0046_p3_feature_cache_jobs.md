@@ -126,3 +126,29 @@ Both jobs were running immediately after submission:
   `/data/wentao/ropetrack/hard/freihand/mask70_wilor_training`.
 - These are data-asset jobs only. They do not block the P2 multi-v2 result
   analysis, and they should not be interpreted as P3 training results.
+
+## Resubmission After Fix
+
+Fix commit synced to HPC:
+
+- `7692785 Fix P3 feature cache backbone output selection`
+
+New run root:
+
+```text
+/data/wentao/ropetrack/runs/rope_p3_feature_cache_20260707_200344
+```
+
+Jobs:
+
+| Job | Split | Output |
+|---:|---|---|
+| 170401 | FreiHAND mask70 evaluation | `/data/wentao/ropetrack/features/freihand_mask70_eval_wilor.npz` |
+| 170402 | FreiHAND mask70 training | `/data/wentao/ropetrack/features/freihand_mask70_train_wilor.npz` |
+
+Both replacement jobs were pending normally at submission:
+
+```text
+170401 p3feat_eval PENDING
+170402 p3feat_train PENDING
+```
