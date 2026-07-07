@@ -69,8 +69,9 @@ Confirmed:
   the selected recipe closes about 40%-51%.
 - Gating matters once optimization is strong. It improves PA for all three
   action spaces and does not cause clean-finger regression on mask70.
-- Rope-only test-time optimization is now close to, and on mask70 slightly
-  better than, the default-recipe oracle_tip/flex15 row from 0032.
+- The default-recipe oracle_tip rows from 0032 are no longer a valid ceiling
+  comparison. Strong-recipe oracle must be re-run before claiming the remaining
+  gap to an oracle target.
 
 Rejected:
 
@@ -87,3 +88,8 @@ rope + flex15 + gate_residual_threshold=0.1 + steps=400/lr=32/alpha_l2=0.001
 One caveat: `flex15` has higher closure than `mult5`, but the best PA comes
 from gated `flex15`, not ungated `flex15`. The gate should stay attached if
 this teacher is exported or distilled.
+
+Mechanism note for reporting: PA alignment is only an evaluation step and does
+not regularize the optimizer. The high-capacity `flex15` search is constrained
+by explicit alpha L2, the tanh/max-alpha bound, zero-initialized gradient
+descent's implicit minimum-norm bias, and residual gating.
