@@ -79,6 +79,40 @@ Optimize mode supports the P0 probes from
   stats and rope residual closure, both computed through the same MANO
   decode path as `base_pred.json`/`pred.json`.
 
+P2 distillation (teacher -> one-pass student):
+
+```bash
+# 1. generate teacher targets on the TRAINING split with the frozen winner recipe
+python scripts/rope_refiner/apply_rope_refinement.py --mode optimize --objective rope \
+  --action-space flex15 --gate-residual-threshold 0.1 \
+  --opt-steps 400 --opt-lr 32 --opt-alpha-l2 0.001 \
+  ... --out-dir <teacher_train_dir>
+# 2. train the student (imitation + noise augmentation + val/early-stop)
+python scripts/rope_refiner/train_alpha_student.py --teacher-dir <teacher_train_dir> \
+  --action-space flex15 --out-dir <student_dir>
+# 2b. mandatory control: gains must vanish with shuffled rope
+python scripts/rope_refiner/train_alpha_student.py --teacher-dir <teacher_train_dir> \
+  --action-space flex15 --out-dir <student_shuffled_dir> --shuffle-rope
+# 3. evaluate the student through the exact same decode/scoring path as the teacher
+python scripts/rope_refiner/apply_rope_refinement.py --mode student \
+  --checkpoint <student_dir>/student.pt ... --out-dir <student_eval_dir>
+```
+
+The student predicts the teacher's alphas in one forward pass (no 400-step
+optimization at inference); the residual gate stays a hard rule from the
+checkpoint config, and `--rope-loss-weight` optionally adds a differentiable
+rope-consistency term (needs `--mano-cache`).
+
+Report tooling (no hand-copied tables):
+
+```bash
+# aggregate every cell (summary.json + sliced + scores) into TSV/Markdown/JSON
+python scripts/rope_refiner/summarize_runs.py <run_root1> <run_root2> --output-dir <tables_dir>
+# figures from the aggregated JSON
+python scripts/rope_refiner/plot_report_figures.py --summary <tables_dir>/runs_summary.json --figure dose_response --cell-filter sweep/ --output <figs>/dose_response.png
+python scripts/rope_refiner/plot_report_figures.py --summary <tables_dir>/runs_summary.json --figure noise --cell-filter noise/ --output <figs>/noise_curve.png
+```
+
 P0 analysis entrypoints (CPU, numpy-only):
 
 ```bash

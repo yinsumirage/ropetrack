@@ -517,7 +517,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--run-meta", type=Path, required=True)
     parser.add_argument("--mano-cache", type=Path, required=True)
     parser.add_argument("--checkpoint", type=Path, default=None)
-    parser.add_argument("--mode", choices=["checkpoint", "optimize"], default="checkpoint")
+    parser.add_argument("--mode", choices=["checkpoint", "optimize", "student"], default="checkpoint",
+                        help="checkpoint = legacy 45-dim pose refiner; optimize = per-sample teacher; "
+                             "student = distilled one-pass alpha predictor (train_alpha_student.py checkpoint).")
     parser.add_argument("--objective", choices=list(OBJECTIVES), default="rope",
                         help="optimize-mode data term: rope label MSE, or GT-joint oracle ceiling probes.")
     parser.add_argument("--action-space", choices=list(ACTION_SPACES), default="mult5",
@@ -550,10 +552,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> Path:
     args = parse_args(argv)
-    if args.mode == "checkpoint" and args.objective != "rope":
+    if args.mode != "optimize" and args.objective != "rope":
         raise ValueError("oracle objectives require --mode optimize")
     if args.objective in ORACLE_OBJECTIVES and args.gt_xyz is None:
         raise ValueError(f"--gt-xyz is required for --objective {args.objective}")
+    if args.mode == "student" and args.checkpoint is None:
+        raise ValueError("--checkpoint is required in student mode")
 
     cache_path = args.out_dir / "refiner_eval_cache.npz"
     build_inference_cache(args.dataset, args.rope_labels, args.pred_dir, args.run_meta, args.mano_cache, cache_path)
@@ -566,10 +570,38 @@ def main(argv: list[str] | None = None) -> Path:
         np.savez(cache_path, **cache)
 
     alpha = None
+    resolved_action_space = args.action_space
+    resolved_gate_threshold = args.gate_residual_threshold
     if args.mode == "checkpoint":
         if args.checkpoint is None:
             raise ValueError("--checkpoint is required in checkpoint mode")
         refined = refined_pose(cache, args.checkpoint, args.device)
+    elif args.mode == "student":
+        from ropetrack.refine.alpha_student import student_alpha
+
+        alpha, student_config = student_alpha(cache, args.checkpoint, args.device)
+        # the checkpoint is authoritative for how its alphas must be applied
+        resolved_action_space = student_config["action_space"]
+        if resolved_gate_threshold is None:
+            resolved_gate_threshold = student_config.get("gate_threshold")
+        directions = None
+        if resolved_action_space in FLEX_ACTION_SPACES:
+            orient_np, betas_np, _ = load_mano_globals(args.mano_cache, cache["sample_id"])
+            directions_t = compute_flex_directions(
+                torch.from_numpy(np.asarray(cache["base_hand_pose"], dtype=np.float32)).to(args.device),
+                torch.from_numpy(orient_np).to(args.device),
+                torch.from_numpy(betas_np).to(args.device),
+                mano_layer(args.device),
+                args.batch_size,
+                per_finger=(resolved_action_space == "flex5"),
+            )
+            directions = directions_t.cpu().numpy().astype(np.float32)
+            np.save(args.out_dir / "flex_directions.npy", directions)
+        if resolved_gate_threshold is not None:
+            gate = gate_from_cache(cache, resolved_gate_threshold)
+            alpha = alpha * expand_gate_to_alpha(gate, resolved_action_space)
+        refined = apply_action_np(cache["base_hand_pose"], alpha, resolved_action_space, directions)
+        np.save(args.out_dir / "alpha.npy", alpha)
     else:
         gt_xyz = None
         j_regressor = None
@@ -611,7 +643,7 @@ def main(argv: list[str] | None = None) -> Path:
         "mean_abs_delta": float(np.mean(np.abs(refined - cache["base_hand_pose"]))),
         "mode": args.mode,
         "objective": args.objective,
-        "action_space": args.action_space,
+        "action_space": resolved_action_space,
         "rope_sensor": {
             "noise_std": args.rope_noise_std,
             "dropout": args.rope_dropout,
@@ -627,22 +659,25 @@ def main(argv: list[str] | None = None) -> Path:
             "alpha_l2": args.opt_alpha_l2,
             "max_alpha": args.opt_max_alpha,
             "batch_size": args.batch_size,
-            "gate_residual_threshold": args.gate_residual_threshold,
+            "gate_residual_threshold": resolved_gate_threshold,
         }
-        summary["alpha"] = alpha_summary(alpha, args.action_space)
-        if args.gate_residual_threshold is not None:
-            gate = gate_from_cache(cache, args.gate_residual_threshold)
+        if args.objective in ORACLE_OBJECTIVES:
+            summary["oracle_joint_ids"] = oracle_joint_ids(args.dataset, args.objective)
+    if args.mode == "student":
+        summary["student_checkpoint"] = str(args.checkpoint)
+    if alpha is not None:
+        summary["alpha"] = alpha_summary(alpha, resolved_action_space)
+        if resolved_gate_threshold is not None:
+            gate = gate_from_cache(cache, resolved_gate_threshold)
             valid = np.asarray(cache["rope_valid"], dtype=bool)
             summary["gating"] = {
-                "threshold": args.gate_residual_threshold,
+                "threshold": resolved_gate_threshold,
                 "frac_fingers_gated": float(gate.sum() / max(valid.sum(), 1)),
                 "frac_samples_any_gated": float(gate.any(axis=1).mean()),
                 "per_finger_frac_gated": {
                     finger: float(gate[:, idx].mean()) for idx, finger in enumerate(FINGER_ORDER)
                 },
             }
-        if args.objective in ORACLE_OBJECTIVES:
-            summary["oracle_joint_ids"] = oracle_joint_ids(args.dataset, args.objective)
     (args.out_dir / "summary.json").write_text(json.dumps(json_sanitize(summary), indent=2), encoding="utf-8")
     return args.out_dir
 
