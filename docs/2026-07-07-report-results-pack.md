@@ -84,12 +84,22 @@ Controls and stability:
 | Shuffled-rope control | gain collapses to -0.05 mm, closure 0.7%, alpha 0.0016 -> the gain provably comes from the rope signal |
 | Seeds 0/1/2 | 8.432 / 8.436 / 8.438 mm PA (+-0.003 mm) |
 | Clean split | student 4.979 vs baseline 4.956 mm = +0.023 mm, inside the +-0.05 mm neutrality band (gated teacher was +0.10 mm) |
-| No-aug variant | -1.72 mm on clean input (slightly beats teacher: amortization smooths per-sample optimization jitter); noise-input cell pending to justify the augmented default |
+| No-aug variant | -1.72 mm on clean input, but worse under noise0.05 than augmented; keep augmented as deployment default |
 | Occluded-tip | student -5.26 mm vs teacher -5.47 mm |
 
-Latency (pending exact numbers from job logs): teacher = 400 MANO
-forward/backward per sample; student = one 65->256->256->15 forward pass
-(sub-ms), decode shared.
+Latency: teacher = 400 MANO forward/backward per sample; student = one
+65->256->256->15 forward pass, with MANO decode shared.
+
+Apply-level timing now available (0049, FreiHAND mask70, 3960 samples):
+
+| Path | Wall time | Per sample |
+|---|---:|---:|
+| 400-step teacher optimize apply | 110.32 s | 27.9 ms |
+| release student apply | 51.66 s | 13.0 ms |
+
+Use this as conservative end-to-end apply-script wall time. It includes cache
+loading, action application, MANO decode, and output writing, so it understates
+the pure alpha-network speedup.
 
 ## Act 5 — Ceilings and remaining headroom (strong-recipe oracle_tip/flex15)
 
@@ -170,9 +180,31 @@ gated fraction 0.499. This says the added teacher produces some transfer to
 the matching HO3D finger-end disturbance, but not enough to justify replacing
 the four-teacher release model.
 
+Report-close release model on the same HO3D v2 finger_end80 axis (0049):
+all-joint gain -0.586 mm, occluded-tip gain -0.952 mm, closure 0.361. This is
+slightly better than multi-v2, reinforcing the release choice.
+
 P3 asset note: frozen WiLoR feature caches are ready for FreiHAND mask70
 eval/train: `(3960, 1280)` and `(32560, 1280)`.
 
-## Pending slots
+## Act 6 - P3 v0 preliminary (pooled WiLoR features; 0049)
 
-- [ ] Latency numbers from job logs + timed student forward.
+This is next-plan material, not part of the P2 headline. Feature cache:
+pooled frozen WiLoR backbone features, 1280 dim, concatenated to the 65-d
+rope/pose student input.
+
+| Cell | Gain (mm) | Occluded-tip gain (mm) | Verdict |
+|---|---:|---:|---|
+| Rope-only release student | -1.636 | -5.25 | P2 release baseline |
+| P3 full: rope + pooled image features | -1.533 | -4.891 | useful but worse than rope-only |
+| P3 image-only (`--shuffle-rope`) | -0.100 | -0.107 | collapses; pooled image features alone do not repair |
+
+Training still behaved: P3 full val L1 fell from 0.05097 to 0.01412, while
+image-only stayed near zero baseline at 0.04709. The failure is therefore not
+"training broken"; it is that this pooled feature representation does not add
+useful held-out repair signal beyond rope. Next P3 step: token/grid or
+localized image features, not another pooled-feature sweep.
+
+## Current Status
+
+No numeric slots remain open for the current P2 report pack.
