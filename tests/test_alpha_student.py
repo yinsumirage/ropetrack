@@ -208,6 +208,75 @@ class TrainStudentTest(unittest.TestCase):
             self.assertIn("best_val_loss", summary)
 
 
+class MultiTeacherTest(unittest.TestCase):
+    def _write_teacher_dir(self, root: Path, name: str, num: int, seed: int) -> Path:
+        cache, teacher_alpha = synthetic_teacher(num=num, seed=seed)
+        teacher_dir = root / name
+        teacher_dir.mkdir(parents=True)
+        np.savez(teacher_dir / "refiner_eval_cache.npz", **cache)
+        np.save(teacher_dir / "alpha.npy", teacher_alpha)
+        return teacher_dir
+
+    def test_merges_multiple_teachers(self):
+        trainer = load_trainer()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dir_a = self._write_teacher_dir(root, "freihand_teacher", 64, seed=5)
+            dir_b = self._write_teacher_dir(root, "ho3d_teacher", 32, seed=6)
+            cache, alpha, sources = trainer.load_teacher_dirs([dir_a, dir_b])
+            self.assertEqual(len(cache["sample_id"]), 96)
+            self.assertEqual(alpha.shape, (96, 5))
+            self.assertEqual([s["num_samples"] for s in sources], [64, 32])
+            ids = [str(sid) for sid in cache["sample_id"]]
+            self.assertTrue(ids[0].startswith("freihand_teacher/"))
+            self.assertTrue(ids[64].startswith("ho3d_teacher/"))
+            # merged set still trains
+            summary = trainer.train_student(
+                cache, alpha, "mult5", root / "out",
+                gate_threshold=0.1, hidden_dim=64, lr=3e-3, batch_size=64,
+                max_epochs=40, patience=10, val_frac=0.2, seed=0,
+                aug_noise_std=0.0, aug_dropout=0.0, device="cpu", sources=sources,
+            )
+            self.assertTrue(summary["beats_zero_baseline"])
+            self.assertEqual([s["num_samples"] for s in summary["config"]["sources"]], [64, 32])
+
+    def test_single_dir_behavior_unchanged(self):
+        trainer = load_trainer()
+        with tempfile.TemporaryDirectory() as tmp:
+            teacher_dir = self._write_teacher_dir(Path(tmp), "only_teacher", 16, seed=7)
+            cache, alpha, sources = trainer.load_teacher_dirs([teacher_dir])
+            self.assertEqual(str(cache["sample_id"][0]), "00000000")  # no prefix for single source
+            self.assertEqual(len(sources), 1)
+
+    def test_alpha_dim_mismatch_across_dirs_raises(self):
+        trainer = load_trainer()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dir_a = self._write_teacher_dir(root, "a", 16, seed=5)
+            cache_b, _ = synthetic_teacher(num=16, seed=6)
+            dir_b = root / "b"
+            dir_b.mkdir()
+            np.savez(dir_b / "refiner_eval_cache.npz", **cache_b)
+            np.save(dir_b / "alpha.npy", np.zeros((16, 15), dtype=np.float32))
+            with self.assertRaises(ValueError):
+                trainer.load_teacher_dirs([dir_a, dir_b])
+
+    def test_rope_loss_with_multiple_dirs_raises_in_main(self):
+        trainer = load_trainer()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dir_a = self._write_teacher_dir(root, "a", 16, seed=5)
+            dir_b = self._write_teacher_dir(root, "b", 16, seed=6)
+            with self.assertRaises(ValueError):
+                trainer.main([
+                    "--teacher-dir", str(dir_a), str(dir_b),
+                    "--action-space", "mult5",
+                    "--out-dir", str(root / "out"),
+                    "--rope-loss-weight", "0.5",
+                    "--device", "cpu",
+                ])
+
+
 class StudentApplyPathTest(unittest.TestCase):
     def load_apply_script(self):
         path = ROOT / "scripts" / "rope_refiner" / "apply_rope_refinement.py"

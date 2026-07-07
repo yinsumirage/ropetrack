@@ -57,6 +57,42 @@ def load_teacher_dir(teacher_dir: Path) -> tuple[dict[str, np.ndarray], np.ndarr
     return cache, alpha
 
 
+MERGE_KEYS = ("base_hand_pose", "base_rope_norm", "input_rope_norm", "rope_valid")
+OPTIONAL_MERGE_KEYS = ("gt_rope_norm", "rope_chain_m", "fist_ratio")
+
+
+def load_teacher_dirs(teacher_dirs: list[Path]) -> tuple[dict[str, np.ndarray], np.ndarray, list[dict]]:
+    """Concatenate several teacher runs into one training set.
+
+    Multi-dataset distillation: e.g. a FreiHAND mask70 train teacher plus an
+    HO3D train teacher. Sample ids are prefixed with the teacher dir name so
+    provenance survives the merge; alpha dims must agree across teachers.
+    """
+    caches, alphas, sources = [], [], []
+    for teacher_dir in teacher_dirs:
+        cache, alpha = load_teacher_dir(teacher_dir)
+        caches.append(cache)
+        alphas.append(alpha)
+        sources.append({"dir": str(teacher_dir), "num_samples": int(len(alpha))})
+    dims = {alpha.shape[1] for alpha in alphas}
+    if len(dims) != 1:
+        raise ValueError(f"teacher alpha dims disagree across dirs: {sorted(dims)}")
+    if len(caches) == 1:
+        return caches[0], alphas[0], sources
+
+    merged: dict[str, np.ndarray] = {}
+    for key in MERGE_KEYS:
+        merged[key] = np.concatenate([np.asarray(cache[key]) for cache in caches], axis=0)
+    for key in OPTIONAL_MERGE_KEYS:
+        if all(key in cache for cache in caches):
+            merged[key] = np.concatenate([np.asarray(cache[key]) for cache in caches], axis=0)
+    merged["sample_id"] = np.concatenate([
+        np.asarray([f"{teacher_dir.name}/{sid}" for sid in cache["sample_id"]])
+        for teacher_dir, cache in zip(teacher_dirs, caches, strict=True)
+    ])
+    return merged, np.concatenate(alphas, axis=0).astype(np.float32), sources
+
+
 def shuffle_rope_rows(cache: dict[str, np.ndarray], seed: int) -> None:
     """Control experiment: destroy per-sample rope information in place."""
     rng = np.random.default_rng(seed)
@@ -145,6 +181,7 @@ def train_student(
     directions: np.ndarray | None = None,
     device: str = "cpu",
     mano_module=None,
+    sources: list[dict] | None = None,
 ) -> dict:
     if action_space not in ACTION_SPACES:
         raise ValueError(f"unsupported action space: {action_space}")
@@ -245,6 +282,7 @@ def train_student(
         "seed": seed,
         "num_train": int(len(train_idx)),
         "num_val": int(len(val_idx)),
+        "sources": sources or [],
     }
     out_dir.mkdir(parents=True, exist_ok=True)
     save_student_checkpoint(out_dir / "student.pt", model, config)
@@ -262,8 +300,10 @@ def train_student(
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Distill the rope test-time optimizer into a one-pass alpha student.")
-    parser.add_argument("--teacher-dir", type=Path, required=True,
-                        help="apply_rope_refinement.py optimize out-dir on the TRAINING split (refiner_eval_cache.npz + alpha.npy).")
+    parser.add_argument("--teacher-dir", type=Path, required=True, nargs="+",
+                        help="One or more apply_rope_refinement.py optimize out-dirs on TRAINING splits "
+                             "(each with refiner_eval_cache.npz + alpha.npy); multiple dirs are concatenated "
+                             "for multi-dataset distillation.")
     parser.add_argument("--action-space", choices=list(ACTION_SPACES), required=True)
     parser.add_argument("--out-dir", type=Path, required=True)
     parser.add_argument("--gate-threshold", type=float, default=0.1,
@@ -289,11 +329,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> dict:
     args = parse_args(argv)
-    cache, teacher_alpha = load_teacher_dir(args.teacher_dir)
+    if args.rope_loss_weight > 0.0 and len(args.teacher_dir) > 1:
+        raise ValueError("--rope-loss-weight > 0 currently supports a single --teacher-dir "
+                         "(per-dataset MANO caches are not merged)")
+    cache, teacher_alpha, sources = load_teacher_dirs(args.teacher_dir)
     directions = None
-    directions_path = args.teacher_dir / "flex_directions.npy"
-    if args.action_space in FLEX_ACTION_SPACES and directions_path.exists():
-        directions = np.load(directions_path)
+    if len(args.teacher_dir) == 1:
+        directions_path = args.teacher_dir[0] / "flex_directions.npy"
+        if args.action_space in FLEX_ACTION_SPACES and directions_path.exists():
+            directions = np.load(directions_path)
     summary = train_student(
         cache,
         teacher_alpha,
@@ -316,6 +360,7 @@ def main(argv: list[str] | None = None) -> dict:
         mano_cache=args.mano_cache,
         directions=directions,
         device=args.device,
+        sources=sources,
     )
     print(json.dumps(json_sanitize(summary), indent=2))
     return summary
