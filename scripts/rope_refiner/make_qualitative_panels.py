@@ -28,23 +28,16 @@ import numpy as np  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from ropetrack.datasets.hand_pose import resolve_image_path  # noqa: E402
-from ropetrack.rope import FINGER_CHAINS, canonical_rope_dataset  # noqa: E402
+from ropetrack.datasets.hand_pose import project_points, resolve_image_path  # noqa: E402
+from ropetrack.io import load_pred_json, read_json  # noqa: E402
+from ropetrack.rope import FINGER_CHAINS, FINGER_COLORS, canonical_rope_dataset  # noqa: E402
 
 from scripts.score_predictions import align_w_scale  # noqa: E402
 
-FINGER_COLORS = ("#d14b45", "#2f7ed8", "#20845a", "#b77716", "#7b4bd1")
-
-
-def read_json(path: Path):
-    return json.loads(Path(path).read_text(encoding="utf-8"))
-
 
 def load_pred_xyz(path: Path) -> np.ndarray:
-    payload = read_json(path)
-    if not isinstance(payload, list) or len(payload) != 2:
-        raise ValueError(f"Expected [xyz_predictions, vertex_predictions] in {path}")
-    return np.asarray(payload[0], dtype=np.float64)
+    xyz, _ = load_pred_json(path)
+    return np.asarray(xyz, dtype=np.float64)
 
 
 def pa_errors_mm(gt_xyz: np.ndarray, pred_xyz: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -62,11 +55,6 @@ def draw_skeleton_3d(ax, joints: np.ndarray, dataset: str, color, label: str, li
         pts = joints[list(chain)]
         ax.plot(pts[:, 0], pts[:, 1], pts[:, 2], color=color or finger_color, linewidth=linewidth, label=None)
     ax.scatter(joints[:, 0], joints[:, 1], joints[:, 2], color=color or "#333333", s=6, label=label)
-
-
-def project_to_image(joints: np.ndarray, K: np.ndarray) -> np.ndarray:
-    uvw = (np.asarray(K, dtype=np.float64) @ joints.T).T
-    return uvw[:, :2] / uvw[:, 2:3]
 
 
 def render_sample(
@@ -90,7 +78,7 @@ def render_sample(
 
         ax.imshow(np.asarray(Image.open(image_path).convert("RGB")))
         if K is not None:
-            uv = project_to_image(gt, K)
+            uv = project_points(gt, K)
             for chain, color in zip(FINGER_CHAINS[canonical_rope_dataset(dataset)], FINGER_COLORS):
                 pts = uv[list(chain)]
                 ax.plot(pts[:, 0], pts[:, 1], color=color, linewidth=1.5)

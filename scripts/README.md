@@ -3,10 +3,18 @@
 Current benchmark entrypoints:
 
 - `eval.py`: config-driven benchmark export and eval entrypoint.
-- `eval_parallel.py`: local evaluator used by benchmark exports.
+- `score_predictions.py`: PA/mesh/F-score evaluator invoked by `eval.py --run-eval`.
+- `score_sliced_predictions.py`: occlusion/rope-residual sliced scorer (details below).
 - `make_hard_images.py`: hard-image split generator.
 - `make_rope_labels.py`: GT fingertip-to-wrist rope label generator.
+- `audit_ho3d_train_split.py`: format audit before touching an HO3D train split.
+- `rope_refiner/apply_rope_refinement.py`: teacher optimization / student apply.
+- `rope_refiner/train_alpha_student.py`: P2 alpha-student distillation trainer.
+- `rope_refiner/summarize_runs.py` + `plot_report_figures.py` + `make_qualitative_panels.py`: report tables/figures/panels.
+- `rope_refiner/analyze_alpha_deadzone.py`: curl-vs-closure diagnostic.
+- `rope_head/extract_feature_cache.py`: P3 frozen backbone feature caching.
 - `rope_diagnostics/score_rope_predictions.py`: rope diagnostic scorer for exported `pred.json`.
+- `rope_diagnostics/analyze_rope_errors.py`: rope reliability analysis tables/figures.
 - `rope_diagnostics/visualize_mesh_comparison.py`: mesh/prediction visual check helper.
 
 Typical usage:
@@ -52,22 +60,22 @@ python scripts/rope_diagnostics/score_rope_predictions.py /data/wentao/ropetrack
 python scripts/rope_diagnostics/analyze_rope_errors.py /data/wentao/ropetrack/runs/rope_phase12_20260705_031056/scores /data/wentao/ropetrack/runs/rope_phase12_20260705_031056/diagnostics
 ```
 
-First cached FreiHAND rope-refiner scaffold:
+FreiHAND train roots for teacher generation (see RELEASE.md for the full
+provenance chain):
 
 ```bash
-python scripts/make_hard_images.py --dataset freihand --split training --input-root /data/wentao/ropetrack/FreiHAND --output-root /data/wentao/ropetrack/hard/freihand_train/mask45 --effect mask --severity 0.45 --limit 0
+python scripts/make_hard_images.py --dataset freihand --split training --input-root /data/wentao/ropetrack/FreiHAND --output-root /data/wentao/ropetrack/hard/freihand/mask70_wilor_training --effect mask --severity 0.70 --limit 0
 python scripts/make_rope_labels.py --dataset freihand --split training --input-root /data/wentao/ropetrack/FreiHAND --output /data/wentao/ropetrack/rope/freihand_training_rope.jsonl
-python scripts/rope_refiner/build_freihand_refiner_cache.py --input-root /data/wentao/ropetrack/FreiHAND --rope-labels /data/wentao/ropetrack/rope/freihand_training_rope.jsonl --pred-dir /data/wentao/ropetrack/runs/freihand_train_baseline/eval_input --run-meta /data/wentao/ropetrack/runs/freihand_train_baseline/run_meta.json --output /data/wentao/ropetrack/runs/refiner_cache/freihand_training.npz
 ```
-
-`build_freihand_refiner_cache.py` currently defaults `--base-hand-pose-source target`,
-so `base_hand_pose` is copied from GT MANO pose. Replace that path when baseline
-MANO pose export exists.
 
 `rope_refiner/apply_rope_refinement.py` has two modes:
 
-- `--mode checkpoint`: apply the exploratory MLP refiner checkpoint.
-- `--mode optimize`: run per-sample optimization without training.
+- `--mode optimize` (default): per-sample teacher optimization, no training.
+- `--mode student`: apply a distilled alpha-student checkpoint.
+
+(The exploratory 45-dim MLP refiner and its `--mode checkpoint` path were
+removed in the consolidation pass; the negative result stays documented in
+experience/0026.)
 
 Optimize mode supports the P0 probes from
 `docs/2026-07-06-rope-refinement-next-plan.md`:

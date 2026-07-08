@@ -5,6 +5,10 @@ from typing import Any
 
 FINGER_ORDER = ["thumb", "index", "middle", "ring", "pinky"]
 
+# shared per-finger palette (thumb..pinky), kept next to FINGER_ORDER so the
+# color<->finger pairing cannot drift between visualization scripts
+FINGER_COLORS = ("#d14b45", "#2f7ed8", "#20845a", "#b77716", "#7b4bd1")
+
 FINGER_CHAINS = {
     "freihand": (
         (0, 1, 2, 3, 4),
@@ -65,6 +69,19 @@ def normalize_rope_distance(
     denom = max(chain_m - lmin, 1e-9)
     value = (distance - lmin) / denom
     return max(0.0, min(1.0, value)) if clamp else value
+
+
+def pred_rope_norm_for_dataset(dataset: str, joints, chain_m, valid, fist_ratio: float, clamp: bool = True) -> list[float]:
+    """Normalized rope values for predicted joints against label chain lengths.
+
+    Invalid or chain-less fingers become 0.0 (dense output, mirrors the label
+    convention); ``clamp=False`` matches the optimizer's unclamped objective.
+    """
+    distances = rope_distances_for_joints(dataset, joints)
+    return [
+        float(normalize_rope_distance(distance, chain, fist_ratio=fist_ratio, clamp=clamp)) if is_valid and chain is not None else 0.0
+        for distance, chain, is_valid in zip(distances, chain_m, valid, strict=True)
+    ]
 
 
 def rope_values_for_joints(dataset: str, joints, fist_ratio: float = 0.5) -> dict[str, list[Any]]:

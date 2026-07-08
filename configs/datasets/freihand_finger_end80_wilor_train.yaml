@@ -1,0 +1,19 @@
+name: freihand_finger_end80_wilor_train
+adapter: freihand
+remote_root: /data/wentao/ropetrack/hard/freihand/finger_end80_wilor_training
+local_link: data/raw/freihand_finger_end80_wilor_train
+train:
+  images: training/rgb
+  gt:
+    - training_xyz.json
+    - training_K.json
+protocol:
+  units: m
+  camera: OpenCV-style, no HO3D y/z flip
+  benchmark_mode: gt_bbox
+  joint_source: model_keypoints
+notes: >
+  FreiHAND finger_end80 hard TRAIN root (WiLoR teacher source, see
+  RELEASE.md). Export with `scripts/eval.py --dataset
+  freihand_finger_end80_wilor_train --split training --method wilor_original
+  --save-mano-cache`.

@@ -28,7 +28,8 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from ropetrack.io import read_jsonl  # noqa: E402
+from ropetrack.datasets.hand_pose import clamp_bbox, centered_rect  # noqa: E402
+from ropetrack.io import load_pred_json, read_json, read_jsonl  # noqa: E402
 from ropetrack.refine.analysis import (  # noqa: E402
     bucket_indices,
     json_sanitize,
@@ -43,30 +44,6 @@ from scripts.score_predictions import align_w_scale  # noqa: E402
 # Effects where every finger is directly targeted, so occlusion = all fingers.
 ALL_FINGER_EFFECTS = {"tip_circle", "tip_square", "tip_blur", "tip_mixed", "finger_end", "blur"}
 DEFAULT_IMAGE_SIZE = {"freihand": (224, 224), "ho3d": (640, 480)}
-
-
-def read_json(path: Path):
-    return json.loads(Path(path).read_text(encoding="utf-8"))
-
-
-def clamp_bbox(bbox, width: int, height: int) -> tuple[int, int, int, int]:
-    # Mirror of scripts/make_hard_images.py clamp_bbox (kept PIL-free here).
-    x1, y1, x2, y2 = [float(v) for v in bbox]
-    x1 = max(0, min(width - 1, int(round(x1))))
-    y1 = max(0, min(height - 1, int(round(y1))))
-    x2 = max(x1 + 1, min(width, int(round(x2))))
-    y2 = max(y1 + 1, min(height, int(round(y2))))
-    return x1, y1, x2, y2
-
-
-def centered_rect(x1: int, y1: int, x2: int, y2: int, severity: float) -> tuple[int, int, int, int]:
-    # Mirror of scripts/make_hard_images.py centered_rect.
-    severity = max(0.05, min(0.95, float(severity)))
-    w = max(1, int(round((x2 - x1) * severity)))
-    h = max(1, int(round((y2 - y1) * severity)))
-    cx = (x1 + x2) // 2
-    cy = (y1 + y2) // 2
-    return cx - w // 2, cy - h // 2, cx - w // 2 + w, cy - h // 2 + h
 
 
 def occluded_fingers_for_row(row: dict, image_size: tuple[int, int]) -> list[bool] | None:
@@ -87,10 +64,8 @@ def occluded_fingers_for_row(row: dict, image_size: tuple[int, int]) -> list[boo
 
 
 def load_pred_xyz(path: Path) -> np.ndarray:
-    payload = read_json(path)
-    if not isinstance(payload, list) or len(payload) != 2:
-        raise ValueError(f"Expected [xyz_predictions, vertex_predictions] in {path}")
-    return np.asarray(payload[0], dtype=np.float64)
+    xyz, _ = load_pred_json(path)
+    return np.asarray(xyz, dtype=np.float64)
 
 
 def per_joint_pa_distances(gt_xyz: np.ndarray, pred_xyz: np.ndarray) -> np.ndarray:

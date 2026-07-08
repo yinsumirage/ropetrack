@@ -8,6 +8,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from ropetrack.datasets.hand_pose import resolve_image_path  # noqa: E402
 from ropetrack.visualize.mesh_compare import (  # noqa: E402
     load_mano_faces,
     load_triplets,
@@ -22,11 +23,7 @@ def resolve_sample_image(root: Path, sample_id: str) -> Path:
     else:
         frame = sample_id
         rgb_dir = root / "evaluation" / "rgb"
-    for suffix in (".png", ".jpg", ".jpeg"):
-        path = rgb_dir / f"{frame}{suffix}"
-        if path.exists():
-            return path
-    return rgb_dir / f"{frame}.png"
+    return resolve_image_path(rgb_dir, frame)
 
 
 def set_equal_axes(ax, points: np.ndarray) -> None:

@@ -1,33 +1,26 @@
-from __future__ import annotations
+"""Cache IO and sample-id alignment helpers for the refine pipeline.
 
-from pathlib import Path
+Everything joins by sample_id with loud failure (CLAUDE.md rule 7);
+positional joins are forbidden in alignment-critical paths.
+"""
+
+from __future__ import annotations
 
 import numpy as np
 
-
-def load_npz_cache(path: str | Path) -> dict[str, np.ndarray]:
-    with np.load(path, allow_pickle=False) as data:
-        return {key: data[key] for key in data.files}
+from ropetrack.io import load_pred_json, read_json
 
 
-def validate_cache(cache: dict[str, np.ndarray], require_target_hand_pose: bool = True) -> None:
+def validate_cache(cache: dict[str, np.ndarray]) -> None:
+    """Shape/key contract of a refiner eval cache (built by apply_rope_refinement)."""
     missing = [key for key in ("sample_id", "base_hand_pose", "base_rope_norm", "rope_valid") if key not in cache]
     if "input_rope_norm" not in cache and "gt_rope_norm" not in cache:
         missing.append("input_rope_norm or gt_rope_norm")
-    if require_target_hand_pose and "target_hand_pose" not in cache:
-        missing.append("target_hand_pose")
     if missing:
         raise ValueError(f"cache missing required keys: {', '.join(missing)}")
 
     expected = len(cache["sample_id"])
-    sample_keys = [
-        "base_hand_pose",
-        "base_rope_norm",
-        "rope_valid",
-        "input_rope_norm",
-        "gt_rope_norm",
-        "target_hand_pose",
-    ]
+    sample_keys = ["base_hand_pose", "base_rope_norm", "rope_valid", "input_rope_norm", "gt_rope_norm"]
     bad = {key: len(cache[key]) for key in sample_keys if key in cache and len(cache[key]) != expected}
     if bad:
         raise ValueError(f"cache first dimension mismatch: expected {expected}, got {bad}")
@@ -41,30 +34,50 @@ def validate_cache(cache: dict[str, np.ndarray], require_target_hand_pose: bool 
         shapes["input_rope_norm"] = (expected, 5)
     if "gt_rope_norm" in cache:
         shapes["gt_rope_norm"] = (expected, 5)
-    if require_target_hand_pose or "target_hand_pose" in cache:
-        shapes["target_hand_pose"] = (expected, 45)
     for key, shape in shapes.items():
         actual = tuple(np.shape(cache[key]))
         if actual != shape:
             raise ValueError(f"{key} shape must be {shape}, got {actual}")
 
 
-def make_refiner_features(cache: dict[str, np.ndarray], rope_key: str = "input_rope_norm") -> dict[str, np.ndarray]:
-    if rope_key not in cache:
-        raise ValueError(f"cache missing rope key: {rope_key}")
-    features = {
-        "base_hand_pose": np.asarray(cache["base_hand_pose"], dtype=np.float32),
-        "base_rope_norm": np.asarray(cache["base_rope_norm"], dtype=np.float32),
-        "input_rope_norm": np.asarray(cache[rope_key], dtype=np.float32),
-        "rope_valid": np.asarray(cache["rope_valid"], dtype=np.float32),
-    }
-    if "target_hand_pose" in cache:
-        features["target_hand_pose"] = np.asarray(cache["target_hand_pose"], dtype=np.float32)
-    valid = features["rope_valid"] > 0
-    for key in ("base_rope_norm", "input_rope_norm"):
-        rope = features[key].copy()
-        if not np.isfinite(rope[valid]).all():
-            raise ValueError(f"{key} has non-finite valid rope values")
-        rope[~valid] = 0.0
-        features[key] = rope
-    return features
+def dense_rope(values, valid) -> list[float]:
+    """None-free per-finger values (invalid slots become 0.0)."""
+    return [float(value) if is_valid and value is not None else 0.0 for value, is_valid in zip(values, valid, strict=True)]
+
+
+def load_sample_order(run_meta, fallback_ids: list[str]) -> list[str]:
+    """Sample order from a run_meta.json, loud on any inconsistency.
+
+    - run_meta is None -> the documented fallback order is returned;
+    - run_meta points at a missing file -> FileNotFoundError (a typo must not
+      silently change the join order);
+    - the file lacks 'sample_order' -> ValueError.
+    """
+    if run_meta is None:
+        return fallback_ids
+    from pathlib import Path
+
+    meta_path = Path(run_meta)
+    if not meta_path.exists():
+        raise FileNotFoundError(f"run_meta does not exist: {meta_path}")
+    meta = read_json(meta_path)
+    if "sample_order" not in meta:
+        raise ValueError(f"run_meta missing sample_order: {meta_path}")
+    return list(meta["sample_order"])
+
+
+def load_prediction_joints(pred_dir) -> list:
+    """xyz rows from a benchmark export's pred.json."""
+    from pathlib import Path
+
+    xyz, _ = load_pred_json(Path(pred_dir) / "pred.json")
+    return xyz
+
+
+def align_rows_by_sample_id(wanted_ids, have_ids) -> np.ndarray:
+    """Permutation mapping have_ids rows onto wanted_ids order; loud on gaps."""
+    index = {str(sid): i for i, sid in enumerate(have_ids)}
+    missing = [str(sid) for sid in wanted_ids if str(sid) not in index]
+    if missing:
+        raise ValueError(f"rows missing sample_ids: {missing[:5]} (total {len(missing)})")
+    return np.asarray([index[str(sid)] for sid in wanted_ids])

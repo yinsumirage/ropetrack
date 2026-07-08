@@ -5,7 +5,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import numpy as np
 from PIL import Image
 
 
@@ -72,45 +71,6 @@ class RefinerDataScriptsTest(unittest.TestCase):
             self.assertEqual(rows[0]["sample_id"], "00000000")
             self.assertEqual(rows[0]["dataset"], "freihand")
             self.assertAlmostEqual(rows[0]["rope_norm"][0], 1.0)
-
-    def test_build_freihand_refiner_cache_writes_expected_arrays(self):
-        builder = load_script("scripts/rope_refiner/build_freihand_refiner_cache.py")
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp) / "freihand"
-            pred_dir = Path(tmp) / "pred"
-            rope_labels = Path(tmp) / "rope.jsonl"
-            run_meta = Path(tmp) / "run_meta.json"
-            output = Path(tmp) / "cache.npz"
-            pred_dir.mkdir()
-            mano = [float(i) for i in range(61)]
-            write_json(root / "training_mano.json", [[mano]])
-            gt_row = {
-                "sample_id": "00000000",
-                "dataset": "freihand",
-                "rope_norm": [1.0, None, None, None, None],
-                "gt_rope_norm": [9.0, 9.0, 9.0, 9.0, 9.0],
-                "rope_chain_m": [4.0, None, None, None, None],
-                "rope_valid": [True, False, False, False, False],
-                "normalization": {"fist_ratio": 0.5},
-            }
-            rope_labels.write_text(json.dumps(gt_row) + "\n", encoding="utf-8")
-            pred_joints = freihand_joints(tip_x=3.0)
-            write_json(pred_dir / "pred.json", [[pred_joints], [[[0.0, 0.0, 0.0]]]])
-            write_json(run_meta, {"sample_order": ["00000000"]})
-
-            builder.build_cache(root, rope_labels, pred_dir, run_meta, output, split="training")
-
-            with np.load(output) as data:
-                self.assertEqual(data["sample_id"].tolist(), ["00000000"])
-                self.assertEqual(data["base_hand_pose"].shape, (1, 45))
-                self.assertEqual(data["target_hand_pose"].shape, (1, 45))
-                np.testing.assert_array_equal(data["base_hand_pose"], data["target_hand_pose"])
-                self.assertAlmostEqual(float(data["target_hand_pose"][0, 0]), 3.0)
-                self.assertAlmostEqual(float(data["input_rope_norm"][0, 0]), 1.0)
-                self.assertAlmostEqual(float(data["gt_rope_norm"][0, 0]), 1.0)
-                self.assertAlmostEqual(float(data["base_rope_norm"][0, 0]), 0.5)
-                self.assertEqual(data["rope_valid"].tolist(), [[True, False, False, False, False]])
-
 
 if __name__ == "__main__":
     unittest.main()

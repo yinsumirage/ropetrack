@@ -1,10 +1,11 @@
 # ropetrack
 
-Bench-first code repo for wrist RGB + fingertip-to-wrist rope distance hand tracking.
+Bench-first code repo for wrist RGB + fingertip-to-wrist rope distance hand
+tracking: 5 rope scalars repair occlusion errors of RGB hand-pose backends.
 
-The current goal is not a new training framework. This repo owns data manifests,
-evaluation, visualization, experiment records, and thin wrappers around external
-backends:
+This repo owns data protocols, hard-occlusion splits, rope labels, teacher
+optimization, student distillation, evaluation, and experiment records, with
+thin wrappers around external backends:
 
 - HaMeR original
 - WiLoR original
@@ -13,13 +14,13 @@ backends:
 ## Layout
 
 ```text
-configs/          Dataset and experiment config entry points.
-data/             Local dataset links and generated manifests. No real data in git.
-docs/knowledge/   Short local copy of the hand4D/now decisions.
-experience/       Experiment notes, failures, and an index to avoid repeating work.
-scripts/          CLI entry points once loaders/runners exist.
-ropetrack/        Core schemas, IO, metrics, backend wrappers, eval, viz, rope code.
-tests/            Small smoke checks.
+configs/          Dataset and experiment yaml entry points.
+data/             Local dataset links. No real data in git.
+docs/             Dated result packs, plans, and knowledge notes.
+experience/       Numbered experiment notes + INDEX.md (read before running anything).
+scripts/          CLI entry points (see scripts/README.md for the catalog).
+ropetrack/        Core package: io, rope geometry, dataset adapters, eval, refine, viz.
+tests/            Unit + toy-integration suite (the all-green invariant).
 third_party/      Git submodules for HaMeR and WiLoR.
 ```
 
@@ -39,14 +40,17 @@ New-Item -ItemType Junction -Path data\raw\freihand -Target D:\datasets\FreiHAND
 New-Item -ItemType Junction -Path data\raw\ho3d_v2 -Target D:\datasets\HO3D_v2
 ```
 
-## First Milestone
+## Current State
 
-1. Audit FreiHAND and HO3D v2 raw data.
-2. Export small unified manifests.
-3. Run HaMeR/WiLoR checkpoints through `HandPredictor` on 20 + 20 samples.
-4. Save predictions in one schema.
-5. Compute MPJPE and fingertip error.
-6. Write findings under `experience/` before scaling up.
+Phases P0-P2 are closed: clean baselines reproduced, hard splits quantified,
+rope test-time optimization diagnosed and frozen, and the release
+alpha-student distilled and verified (train split -> held-out eval).
+
+- Release model identity and provenance: `RELEASE.md`.
+- Report-ready numbers: `docs/2026-07-07-report-results-pack.md`.
+- Cross-conversation working rules: `CLAUDE.md` (Claude) / `AGENTS.md` (Codex).
+- The bootstrap milestone (tiny manifests, first 20+20 smoke) completed in
+  week one; see `experience/0000`-`0013`.
 
 Generated predictions, metrics, and figures stay out of git. Current full-run
 outputs live under the HPC data root, usually `/data/wentao/ropetrack/runs`.

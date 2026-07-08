@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from ropetrack.eval.pipeline import load_mano_j_regressor
 from ropetrack.eval.protocols import eval_points_from_model, joints_from_vertices
-from ropetrack.io import read_jsonl
+from ropetrack.io import read_json, read_jsonl
 from ropetrack.refine.actions import (
     ACTION_SPACES,
     FINGER_POSE_GROUPS,
@@ -23,8 +23,19 @@ from ropetrack.refine.actions import (
     apply_action_torch,
     per_finger_alpha_abs,
 )
-from ropetrack.refine.analysis import json_sanitize, rope_abs_residual, summarize_rope_residuals
-from ropetrack.refine.cache import make_refiner_features, validate_cache
+from ropetrack.refine.analysis import (
+    json_sanitize,
+    perturb_rope_reading,
+    rope_abs_residual,
+    summarize_rope_residuals,
+)
+from ropetrack.refine.cache import (
+    align_rows_by_sample_id,
+    dense_rope,
+    load_prediction_joints,
+    load_sample_order,
+    validate_cache,
+)
 from ropetrack.refine.oracle import (
     ORACLE_OBJECTIVES,
     oracle_joint_ids,
@@ -32,32 +43,11 @@ from ropetrack.refine.oracle import (
     torch_eval_joints_from_vertices,
     torch_eval_points_from_model,
 )
-from ropetrack.refine.rope_refiner import RopePoseRefiner
-from ropetrack.rope import FINGER_CHAINS, FINGER_ORDER
-
-from scripts.rope_refiner.build_freihand_refiner_cache import (
-    dense_rope,
-    load_prediction_joints,
-    load_sample_order,
-)
+from ropetrack.rope import FINGER_CHAINS, FINGER_ORDER, pred_rope_norm_for_dataset
 
 
 REPO = Path(__file__).resolve().parents[2]
 OBJECTIVES = ("rope",) + ORACLE_OBJECTIVES
-
-
-def read_json(path: Path):
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def pred_rope_norm_for_dataset(dataset: str, joints, chain_m, valid, fist_ratio: float, clamp: bool = True) -> list[float]:
-    from ropetrack.rope import normalize_rope_distance, rope_distances_for_joints
-
-    distances = rope_distances_for_joints(dataset, joints)
-    return [
-        float(normalize_rope_distance(distance, chain, fist_ratio=fist_ratio, clamp=clamp)) if is_valid and chain is not None else 0.0
-        for distance, chain, is_valid in zip(distances, chain_m, valid, strict=True)
-    ]
 
 
 def build_inference_cache(dataset: str, rope_labels: Path, pred_dir: Path, run_meta: Path, mano_cache: Path, output: Path) -> Path:
@@ -120,37 +110,10 @@ def perturb_rope_cache(cache: dict[str, np.ndarray], noise_std: float, dropout: 
     if noise_std <= 0.0 and dropout <= 0.0:
         return cache
     rng = np.random.default_rng(seed)
-    rope = np.asarray(cache["input_rope_norm"], dtype=np.float32)
-    valid = np.asarray(cache["rope_valid"], dtype=bool)
-    if noise_std > 0.0:
-        rope = rope + rng.normal(scale=noise_std, size=rope.shape).astype(np.float32)
-        rope = np.clip(rope, 0.0, 1.0)
-        rope[~valid] = 0.0
-    if dropout > 0.0:
-        dropped = rng.uniform(size=valid.shape) < dropout
-        valid = valid & ~dropped
-        rope[~valid] = 0.0
+    rope, valid = perturb_rope_reading(cache["input_rope_norm"], cache["rope_valid"], noise_std, dropout, rng)
     cache["input_rope_norm"] = rope
     cache["rope_valid"] = valid
     return cache
-
-
-def refined_pose(cache: dict[str, np.ndarray], checkpoint: Path, device: str) -> np.ndarray:
-    ckpt = torch.load(checkpoint, map_location=device, weights_only=True)
-    rope_key = ckpt.get("config", {}).get("rope_key", "input_rope_norm")
-    validate_cache(cache, require_target_hand_pose=False)
-    arrays = make_refiner_features(cache, rope_key)
-    model = RopePoseRefiner(hidden_dim=ckpt.get("config", {}).get("hidden_dim", 128)).to(device)
-    model.load_state_dict(ckpt["model_state"])
-    model.eval()
-    with torch.no_grad():
-        refined, _ = model(
-            torch.from_numpy(arrays["base_hand_pose"]).to(device),
-            torch.from_numpy(arrays["base_rope_norm"]).to(device),
-            torch.from_numpy(arrays["input_rope_norm"]).to(device),
-            torch.from_numpy(arrays["rope_valid"]).to(device),
-        )
-    return refined.cpu().numpy().astype(np.float32)
 
 
 def mano_layer(device: str):
@@ -212,11 +175,7 @@ def load_mano_globals(mano_cache: Path, sample_ids) -> tuple[np.ndarray, np.ndar
     reordered poses with the wrong camera/orientation.
     """
     with np.load(mano_cache) as loaded:
-        index = {str(sid): i for i, sid in enumerate(loaded["sample_id"])}
-        missing = [str(sid) for sid in sample_ids if str(sid) not in index]
-        if missing:
-            raise ValueError(f"MANO cache missing sample_ids: {missing[:5]}")
-        perm = np.asarray([index[str(sid)] for sid in sample_ids])
+        perm = align_rows_by_sample_id(sample_ids, loaded["sample_id"])
         return (
             np.asarray(loaded["base_global_orient"], dtype=np.float32)[perm],
             np.asarray(loaded["base_betas"], dtype=np.float32)[perm],
@@ -349,7 +308,7 @@ def optimize_alpha(
         raise ValueError(f"unsupported action space: {action_space}")
     if objective not in OBJECTIVES:
         raise ValueError(f"unsupported objective: {objective}")
-    validate_cache(cache, require_target_hand_pose=False)
+    validate_cache(cache)
     orient_np, betas_np, cam_t_np = load_mano_globals(mano_cache, cache["sample_id"])
     global_orient = torch.from_numpy(orient_np).to(device)
     betas = torch.from_numpy(betas_np).to(device)
@@ -516,10 +475,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--pred-dir", type=Path, required=True)
     parser.add_argument("--run-meta", type=Path, required=True)
     parser.add_argument("--mano-cache", type=Path, required=True)
-    parser.add_argument("--checkpoint", type=Path, default=None)
-    parser.add_argument("--mode", choices=["checkpoint", "optimize", "student"], default="checkpoint",
-                        help="checkpoint = legacy 45-dim pose refiner; optimize = per-sample teacher; "
-                             "student = distilled one-pass alpha predictor (train_alpha_student.py checkpoint).")
+    parser.add_argument("--checkpoint", type=Path, default=None,
+                        help="Student checkpoint from train_alpha_student.py (student mode only).")
+    parser.add_argument("--mode", choices=["optimize", "student"], default="optimize",
+                        help="optimize = per-sample teacher (frozen winner recipe defaults); "
+                             "student = distilled one-pass alpha predictor.")
     parser.add_argument("--objective", choices=list(OBJECTIVES), default="rope",
                         help="optimize-mode data term: rope label MSE, or GT-joint oracle ceiling probes.")
     parser.add_argument("--action-space", choices=list(ACTION_SPACES), default="mult5",
@@ -575,11 +535,7 @@ def main(argv: list[str] | None = None) -> Path:
     alpha = None
     resolved_action_space = args.action_space
     resolved_gate_threshold = args.gate_residual_threshold
-    if args.mode == "checkpoint":
-        if args.checkpoint is None:
-            raise ValueError("--checkpoint is required in checkpoint mode")
-        refined = refined_pose(cache, args.checkpoint, args.device)
-    elif args.mode == "student":
+    if args.mode == "student":
         from ropetrack.refine.alpha_student import (
             join_image_features,
             load_image_feature_cache,

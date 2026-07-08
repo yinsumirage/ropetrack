@@ -1,0 +1,104 @@
+# CLAUDE.md
+
+Claude Code's cross-conversation memory for `ropetrack`. Read together with
+`AGENTS.md` (Codex's file: HPC rules, submodule policy, repo boundaries — all
+of it applies here too and is not repeated).
+
+## Division Of Labor
+
+- **Claude (this file's reader)**: reads/writes code, designs experiments,
+  makes research decisions, runs local tests, interprets pulled results,
+  maintains report material. Local machine = light checks only.
+- **Codex**: adversarial code review, HPC job submission/monitoring, pulling
+  remote results into `.local_checks/`, writing `experience/` notes, commits.
+- **User (guo.wentao)** relays between the two and owns GitHub credentials,
+  advisor communication, and scope decisions.
+
+## Project State (as of 2026-07-08)
+
+Wrist-RGB + 5 fingertip-to-wrist rope distances for occlusion-robust hand
+pose. Phases P0-P2 are **closed**; a teacher-facing progress report is being
+drafted from `docs/2026-07-07-report-results-pack.md` (the ONLY number
+source — never hand-copy metrics; regenerate via
+`scripts/rope_refiner/summarize_runs.py`).
+
+- **Release model**: the 0044 four-teacher augmented multi student
+  (65-d input -> 15 alphas, flex15 + gate010). Checkpoint provenance is in
+  `experience/0042-0047`. mask70 gain -1.64 mm all-joint / -5.3 mm
+  occluded-tip; recovery 87-100% of the teacher across eval axes.
+- **Teacher (frozen winner)**: test-time optimization
+  `rope + flex15 + --gate-residual-threshold 0.1 + steps=400 lr=32
+  alpha_l2=0.001`. The optimize loss is a batch mean, so effective lr couples
+  to batch size (512 in all published runs).
+- **P3 v0 negative** (0049): pooled 1280-d features add nothing
+  (image-only control ~0) and cost a junk-feature tax (-0.10 mm). Next P3
+  attempt must use token/grid or fingertip-localized features
+  (`--save-tokens` exists in `scripts/rope_head/extract_feature_cache.py`).
+- Five-teacher multi-v2 (0047) is a **negative ablation**: the HO3D v3
+  finger_end80 teacher was under-converged (closure 0.34) — a biased teacher
+  in an overlapping input region is targeted label noise. Teacher-quality
+  parity is a precondition for diversity gains.
+
+## Hard-Won Technical Rules (violations have burned us)
+
+1. **Joint-order duality**: the WiLoR MANO wrapper's `out.joints` is ALWAYS
+   OpenPose/FreiHAND-ordered — index it with `FINGER_CHAINS["freihand"]`.
+   Dataset-specific chains (`FINGER_CHAINS["ho3d"]`) apply ONLY to GT/eval-
+   decoded 21-joint arrays. Getting this wrong invalidated the first HO3D
+   optimization results (0028 -> fixed in 0029).
+2. **Same-decoder deltas only**: base and refined predictions must go through
+   the same MANO decode. Never splice these tables with the 0020 hard
+   baselines at joint level (~0.3-0.5 mm protocol offset); cross-table
+   comparisons use mesh/F metrics.
+3. **PA alignment absorbs translation** — synthetic test fixtures need
+   non-rigid per-joint noise, not constant offsets (bit us twice).
+4. **Observability principle**: learned modules output only what rope can
+   determine (5/15 alphas, tanh-bounded, zero-init final layer). The 45-dim
+   pose-delta MLP failure (0026) is the canonical counterexample. The
+   residual gate is a hard rule, never learned.
+5. **Mandatory controls for any learned variant**: shuffled-rope control
+   (gain must collapse), validation split + early stopping, sensor-noise
+   augmentation, seed check. `train_log.json` must show
+   `beats_zero_baseline=True`.
+6. **Rope is a simulated sensor** derived from GT joints; the noise ablation
+   (sigma 0.05 keeps ~82-93%) is the realism bound. State this in anything
+   advisor-facing; the strong-oracle gap proves no trivial leakage.
+7. **Alignment by sample_id with loud failure** everywhere (caches, labels,
+   features); positional joins are forbidden (`load_mano_globals` exists for
+   this reason). `json_sanitize` before every json.dump that can carry NaN.
+8. **HO3D train split**: video data — stride subsampling is baked into the
+   hard root's own `train.txt` (stride lives in exactly one place). Train
+   metas have no `handBoundingBox`; bboxes are projected from joints.
+9. Local machine has no MANO files: optimization/decode tests use the
+   injectable `FakeMano` pattern (`tests/test_apply_rope_refinement.py`).
+
+## Working Conventions
+
+- Run `python -m unittest discover -s tests` before any handoff (214+ tests,
+  all green is the invariant).
+- Substantial new code gets an adversarial multi-reviewer pass before Codex
+  submits it to HPC (this caught the HO3D chain bug and the NaN-JSON bug).
+- Before proposing experiments, read `experience/INDEX.md`; after results
+  land, Codex writes the note — don't duplicate.
+- Decision style: falsifiable predictions with numeric gates, decided before
+  the run (e.g. "gated flex15 will not beat mult5" — refuted, and the refutal
+  was itself informative). Negative results are recorded, not discarded.
+- Report figures/tables are generated by `summarize_runs.py` +
+  `plot_report_figures.py` + `make_qualitative_panels.py`, never hand-edited.
+
+## Open Threads
+
+- Consolidation pass DONE (2026-07-08, this repo): legacy 45-dim MLP refiner
+  stack fully removed (`--mode checkpoint`, RopePoseRefiner,
+  build/train/eval_cached_refiner — the GT-leak default died with it; the
+  0026 negative result remains documented), sample-order loaders unified
+  loud, pipeline dumps go through `json_sanitize`, 15 duplication clusters
+  merged into `ropetrack/io.py` / `hand_pose.py` / `analysis.py` /
+  `cache.py`, RELEASE.md created, docs/configs/INDEX refreshed, FreiHAND
+  train yamls added. `apply_rope_refinement.py --mode` now defaults to
+  `optimize`.
+- Still open: user's GitHub push credential (bundle-sync to HPC is the
+  interim backup path); `.local_checks` launchers remain the archived
+  per-run recipes (canonical per-step commands now live in RELEASE.md).
+- Next-phase decision (advisor-steered, after report): P3 v1 token features
+  vs DexYCB data expansion vs physical rope sensor hardware.

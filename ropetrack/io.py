@@ -6,6 +6,18 @@ from pathlib import Path
 from typing import Any
 
 
+def read_json(path: str | Path) -> Any:
+    return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def load_pred_json(path: str | Path) -> tuple[list, list]:
+    """(xyz_rows, verts_rows) from a benchmark export's pred.json."""
+    payload = read_json(path)
+    if not isinstance(payload, list) or len(payload) != 2:
+        raise ValueError(f"Expected pred.json to contain [xyz_predictions, vertex_predictions]: {path}")
+    return payload[0], payload[1]
+
+
 def read_jsonl(path: str | Path) -> Iterator[dict[str, Any]]:
     with Path(path).open("r", encoding="utf-8") as handle:
         for line in handle:

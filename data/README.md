@@ -17,7 +17,7 @@ needs that layout.
 ```text
 data/raw/<dataset>          -> symlink/junction to the real dataset root
 data/manifests/<dataset>_*  optional small JSONL/CSV indexes when needed
-data/rope/<dataset>_*.json  optional rope-distance labels when needed
+data/rope/<dataset>_*.jsonl optional rope-distance labels when needed
 ```
 
 Windows junction example:

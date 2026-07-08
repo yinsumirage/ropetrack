@@ -3,7 +3,9 @@ name = "ropetrack"
 version = "0.1.0"
 description = "Bench-first wrist hand tracking repo with rope-distance experiments."
 requires-python = ">=3.10"
-dependencies = []
+# core package imports; torch/scipy/matplotlib/Pillow/opencv come from the
+# backend conda envs on HPC (see AGENTS.md), not from this metadata
+dependencies = ["numpy", "pyyaml"]
 
 [tool.setuptools.packages.find]
 where = ["."]

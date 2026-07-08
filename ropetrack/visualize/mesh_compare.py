@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-import json
 import pickle
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+
+from ropetrack.io import load_pred_json, read_json
+from ropetrack.refine.cache import load_sample_order
 
 
 @dataclass(frozen=True)
@@ -23,26 +25,16 @@ class MeshTriplet:
         return self.hard_error - self.clean_error
 
 
-def read_json(path: Path):
-    with path.open("r", encoding="utf-8") as f:
-        return json.load(f)
-
-
 def read_predictions(run_dir: Path) -> tuple[list, list]:
-    pred = read_json(run_dir / "eval_input" / "pred.json")
-    if len(pred) != 2:
-        raise ValueError(f"Expected [xyz, verts] in {run_dir / 'eval_input' / 'pred.json'}")
-    return pred[0], pred[1]
+    return load_pred_json(run_dir / "eval_input" / "pred.json")
 
 
 def read_sample_order(run_dir: Path, count: int) -> list[str]:
     meta_path = run_dir / "run_meta.json"
-    if meta_path.exists():
-        meta = read_json(meta_path)
-        order = meta.get("sample_order")
-        if order:
-            return list(order)
-    return [str(i) for i in range(count)]
+    fallback = [str(i) for i in range(count)]
+    if not meta_path.exists():
+        return fallback
+    return load_sample_order(meta_path, fallback)
 
 
 def align_mesh_to_gt(gt, pred) -> np.ndarray:

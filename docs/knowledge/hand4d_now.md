@@ -29,7 +29,8 @@ raw dataset
 
 Important protocol decisions:
 
-- Internal 3D units are millimeters.
+- Internal 3D units are meters (metrics reported in mm); the original
+  hand4D-era "millimeters" decision was superseded by the implementation.
 - Bboxes are original-image pixel `xyxy`.
 - Every sample needs a stable `sample_id`.
 - Distinguish camera-space and root-relative coordinates.
@@ -43,10 +44,13 @@ Important protocol decisions:
 4. HaMeR/WiLoR checkpoints running through one local predictor path.
 5. Minimal MPJPE and fingertip error evaluator.
 
-## Do Not Do Yet
+## Do Not Do Yet (status as of 2026-07-08)
 
-- Do not build one large unified training framework.
-- Do not start with HO3D v3, DexYCB, HOT3D, EgoExo4D, or custom wrist data.
-- Do not train rope models before coordinates, units, root, and joint order are
-  audited.
+- Do not build one large unified training framework. (still holds)
+- Do not start with DexYCB, HOT3D, EgoExo4D, or custom wrist data.
+  (HO3D v3 has since become a first-class dataset — baselines + P2 teacher
+  source; DexYCB is a next-phase candidate, advisor-steered)
+- Do not train rope models before coordinates/units/root/joint order are
+  audited. (done: audits passed, rope models trained and released — RELEASE.md)
 - Do not start temporal models before single-frame rope value is shown.
+  (single-frame value is now shown; temporal remains future work)

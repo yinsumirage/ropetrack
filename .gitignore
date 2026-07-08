@@ -16,6 +16,8 @@ data/rope/*
 !data/rope/.gitkeep
 
 logs/
+outputs/
+runs/
 
 checkpoints/
 mano_data/

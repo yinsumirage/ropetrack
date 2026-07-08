@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import pickle
 import sys
 from pathlib import Path
@@ -12,27 +11,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from PIL import Image, ImageDraw, ImageFont
 
 from ropetrack.datasets.hand_pose import (
+    HO3D_TO_OPENCV_CAMERA,
+    camera_matrix_from_meta,
     iter_ho3d_samples,
+    iter_ho3d_samples_from_order,
     project_points,
     read_ho3d_train_ids,
     read_json,
     resolve_image_path,
 )
 from ropetrack.io import write_jsonl
-from ropetrack.rope import FINGER_CHAINS, FINGER_ORDER, build_rope_row, canonical_rope_dataset
-
-HO3D_TO_OPENCV_CAMERA = (1.0, -1.0, -1.0)
-
-
-def iter_ho3d_samples_from_order(root: Path, sample_order_file: Path, limit: int | None):
-    payload = read_json(sample_order_file)
-    ids = payload["sample_order"] if isinstance(payload, dict) else payload
-    if limit is not None and limit > 0:
-        ids = ids[:limit]
-    eval_dir = root / "evaluation"
-    for sample_id in ids:
-        seq, frame = sample_id.split("/")
-        yield sample_id, resolve_image_path(eval_dir / seq / "rgb", frame), eval_dir / seq / "meta" / f"{frame}.pkl"
+from ropetrack.rope import FINGER_CHAINS, FINGER_COLORS, FINGER_ORDER, build_rope_row, canonical_rope_dataset
 
 
 def freihand_items(root: Path, limit: int | None, split: str = "evaluation"):
@@ -55,14 +44,14 @@ def ho3d_items(root: Path, limit: int | None, sample_order_file: Path | None = N
     if sample_order_file:
         canonical_ids = [sample.sample_id for sample in iter_ho3d_samples(root, None)]
         id_to_gt_idx = {sample_id: idx for idx, sample_id in enumerate(canonical_ids)}
-        for sample_id, image_path, meta_path in iter_ho3d_samples_from_order(root, sample_order_file, limit):
-            if sample_id not in id_to_gt_idx:
-                raise ValueError(f"sample_order id not found in HO3D root: {sample_id}")
+        for sample in iter_ho3d_samples_from_order(root, sample_order_file, limit):
+            if sample.sample_id not in id_to_gt_idx:
+                raise ValueError(f"sample_order id not found in HO3D root: {sample.sample_id}")
             yield {
-                "sample_id": sample_id,
-                "joints": xyz[id_to_gt_idx[sample_id]],
-                "image_path": image_path,
-                "K": camera_matrix_from_meta(meta_path),
+                "sample_id": sample.sample_id,
+                "joints": xyz[id_to_gt_idx[sample.sample_id]],
+                "image_path": sample.image_path,
+                "K": camera_matrix_from_meta_path(sample.meta_path),
             }
         return
 
@@ -72,19 +61,16 @@ def ho3d_items(root: Path, limit: int | None, sample_order_file: Path | None = N
             "sample_id": sample.sample_id,
             "joints": xyz[idx],
             "image_path": sample.image_path,
-            "K": camera_matrix_from_meta(sample.meta_path),
+            "K": camera_matrix_from_meta_path(sample.meta_path),
         }
 
 
-def camera_matrix_from_meta(meta_path: Path):
+def camera_matrix_from_meta_path(meta_path: Path):
     if not meta_path.exists():
         return None
     with meta_path.open("rb") as f:
         meta = pickle.load(f, encoding="latin1")
-    for key in ("camMat", "K", "camera_matrix", "intrinsics"):
-        if key in meta:
-            return meta[key]
-    return None
+    return camera_matrix_from_meta(meta)
 
 
 def ho3d_train_items(root: Path, limit: int | None, stride: int = 1, split_dir: str = "train"):
@@ -172,9 +158,8 @@ def write_visualization(path: Path, dataset: str, item: dict, row: dict) -> None
     canvas = Image.new("RGB", (image.width + panel_w, max(image.height, 224)), (255, 255, 255))
     canvas.paste(image, (0, 0))
     draw = ImageDraw.Draw(canvas)
-    colors = ["#d14b45", "#2f7ed8", "#20845a", "#b77716", "#7b4bd1"]
 
-    for color, finger in zip(colors, FINGER_ORDER, strict=True):
+    for color, finger in zip(FINGER_COLORS, FINGER_ORDER, strict=True):
         pts = project_rope_chains(dataset, item["joints"], item["K"]).get(finger, [])
         for a, b in zip(pts, pts[1:], strict=False):
             draw.line([a, b], fill=color, width=3)
@@ -189,7 +174,7 @@ def write_visualization(path: Path, dataset: str, item: dict, row: dict) -> None
         draw.text((x0, y), finger, fill=(0, 0, 0), font=ImageFont.load_default())
         draw.rectangle((x0 + 70, y + 2, x0 + 220, y + 14), outline=(120, 120, 120))
         if norm is not None:
-            draw.rectangle((x0 + 70, y + 2, x0 + 70 + int(150 * norm), y + 14), fill=colors[idx])
+            draw.rectangle((x0 + 70, y + 2, x0 + 70 + int(150 * norm), y + 14), fill=FINGER_COLORS[idx])
             draw.text((x0 + 70, y + 18), f"{norm:.3f}", fill=(0, 0, 0), font=ImageFont.load_default())
         else:
             draw.text((x0 + 70, y + 18), "invalid", fill=(150, 0, 0), font=ImageFont.load_default())

@@ -24,6 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from ropetrack.io import read_json  # noqa: E402
 from ropetrack.refine.analysis import json_sanitize  # noqa: E402
 
 COLUMNS = (
@@ -46,10 +47,6 @@ COLUMNS = (
     "frac_fingers_gated",
     "num_samples",
 )
-
-
-def read_json(path: Path):
-    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def read_scores(path: Path) -> dict:

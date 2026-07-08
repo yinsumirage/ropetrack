@@ -45,7 +45,7 @@ from ropetrack.refine.alpha_student import (
     normalize_features,
     save_student_checkpoint,
 )
-from ropetrack.refine.analysis import json_sanitize
+from ropetrack.refine.analysis import json_sanitize, perturb_rope_reading
 from ropetrack.rope import FINGER_CHAINS
 
 
@@ -102,23 +102,6 @@ def shuffle_rope_rows(cache: dict[str, np.ndarray], seed: int) -> None:
     perm = rng.permutation(len(cache["sample_id"]))
     for key in ("base_rope_norm", "input_rope_norm", "rope_valid"):
         cache[key] = np.asarray(cache[key])[perm]
-
-
-def perturb_rope_reading(
-    input_rope: np.ndarray,
-    valid: np.ndarray,
-    noise_std: float,
-    dropout: float,
-    rng: np.random.Generator,
-) -> tuple[np.ndarray, np.ndarray]:
-    rope = np.asarray(input_rope, dtype=np.float32).copy()
-    keep = np.asarray(valid, dtype=bool).copy()
-    if noise_std > 0.0:
-        rope = np.clip(rope + rng.normal(scale=noise_std, size=rope.shape).astype(np.float32), 0.0, 1.0)
-    if dropout > 0.0:
-        keep = keep & ~(rng.uniform(size=keep.shape) < dropout)
-    rope[~keep] = 0.0
-    return rope, keep
 
 
 class RopeConsistency:

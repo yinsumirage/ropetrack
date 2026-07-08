@@ -28,6 +28,28 @@ def json_sanitize(obj):
     return obj
 
 
+def perturb_rope_reading(
+    input_rope: np.ndarray,
+    valid: np.ndarray,
+    noise_std: float,
+    dropout: float,
+    rng: np.random.Generator,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Simulated imperfect rope sensor: seeded gaussian noise (clamped back to
+    [0, 1] like real labels) plus per-finger dropout that marks readings
+    invalid. Shared by the apply-time H5 ablation and student training
+    augmentation — one RNG draw order (normal, then uniform) everywhere.
+    """
+    rope = np.asarray(input_rope, dtype=np.float32).copy()
+    keep = np.asarray(valid, dtype=bool).copy()
+    if noise_std > 0.0:
+        rope = np.clip(rope + rng.normal(scale=noise_std, size=rope.shape).astype(np.float32), 0.0, 1.0)
+    if dropout > 0.0:
+        keep = keep & ~(rng.uniform(size=keep.shape) < dropout)
+    rope[~keep] = 0.0
+    return rope, keep
+
+
 def rope_abs_residual(pred_rope_norm: np.ndarray, target_rope_norm: np.ndarray, valid: np.ndarray) -> np.ndarray:
     """Masked |pred - target| in normalized rope units; invalid entries are NaN."""
     pred = np.asarray(pred_rope_norm, dtype=np.float64)

@@ -153,6 +153,16 @@ class ApplyRopeRefinementTest(unittest.TestCase):
         expected = np.asarray([36, 37, 38, 39, 40, 41, 42, 43, 44])
         np.testing.assert_array_equal(changed, expected)
 
+    def test_scipy_and_torch_rodrigues_agree(self):
+        # the scipy version feeds the final decode, the torch version feeds
+        # the optimizer; the same poses pass through both — pin their parity
+        script = load_apply_script()
+        rng = np.random.default_rng(29)
+        aa = rng.normal(scale=1.2, size=(16, 15, 3)).astype(np.float32)
+        expected = script.aa_to_rotmat(aa)
+        actual = script.torch_aa_to_rotmat(torch.from_numpy(aa)).numpy()
+        np.testing.assert_allclose(actual, expected, atol=1e-5)
+
     def test_aa_to_rotmat_shapes_global_and_hand_pose(self):
         script = load_apply_script()
 
@@ -259,7 +269,7 @@ class ParseArgsTest(unittest.TestCase):
     def test_defaults_are_published_working_recipe(self):
         script = load_apply_script()
         args = script.parse_args(self.REQUIRED)
-        self.assertEqual(args.mode, "checkpoint")
+        self.assertEqual(args.mode, "optimize")
         self.assertEqual(args.objective, "rope")
         self.assertEqual(args.action_space, "mult5")
         self.assertEqual(args.opt_steps, 120)
@@ -271,7 +281,7 @@ class ParseArgsTest(unittest.TestCase):
     def test_oracle_requires_optimize_mode(self):
         script = load_apply_script()
         with self.assertRaises(ValueError):
-            script.main(self.REQUIRED + ["--objective", "oracle_tip"])
+            script.main(self.REQUIRED + ["--mode", "student", "--objective", "oracle_tip"])
 
     def test_oracle_requires_gt_xyz(self):
         script = load_apply_script()

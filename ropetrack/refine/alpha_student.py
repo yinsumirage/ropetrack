@@ -124,12 +124,9 @@ def load_image_feature_cache(path: Path) -> tuple[list[str], np.ndarray]:
 
 def join_image_features(sample_ids, feature_ids: list[str], features: np.ndarray) -> np.ndarray:
     """Reorder cached image features to sample_ids; strict on missing rows."""
-    index = {sid: i for i, sid in enumerate(feature_ids)}
-    missing = [str(sid) for sid in sample_ids if str(sid) not in index]
-    if missing:
-        raise ValueError(f"feature cache missing sample_ids: {missing[:5]} (total {len(missing)})")
-    perm = np.asarray([index[str(sid)] for sid in sample_ids])
-    return features[perm]
+    from ropetrack.refine.cache import align_rows_by_sample_id
+
+    return features[align_rows_by_sample_id(sample_ids, feature_ids)]
 
 
 def student_alpha(

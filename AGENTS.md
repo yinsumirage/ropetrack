@@ -36,12 +36,14 @@ work. Treat `E:\Desktop\hand4D\now` as the external knowledge base and
 
 ## Current Research Line
 
-Stage 1 is clean baseline reproduction: FreiHAND, HO3D v2, and now HO3D v3
-clean GT-bbox baselines for HaMeR/WiLoR and AnyHand fine-tuned checkpoints, followed by a stable
-report. The Stage 1 report is `docs/2026-07-03-clean-baseline-summary.md`.
-Stage 2 is hard mask/blur/crop/appearance splits. Only after clean and hard
-benchmarks are credible, test fingertip-to-wrist rope distance as post-opt, then
-as model input/loss.
+Phases P0-P2 are closed (see CLAUDE.md Project State and RELEASE.md): clean
+baselines (`docs/2026-07-03-clean-baseline-summary.md`), hard splits, the
+frozen rope test-time optimization teacher, and the released four-teacher
+alpha student are done and recorded in `experience/` 0000-0049. A
+teacher-facing progress report is drafted from
+`docs/2026-07-07-report-results-pack.md`. Next phase (advisor-steered):
+P3 token/localized image features vs dataset expansion (DexYCB) vs physical
+rope sensor hardware.
 
 ## HPC Rules
 

@@ -8,29 +8,27 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from ropetrack.io import read_jsonl, write_jsonl
+from ropetrack.io import load_pred_json, read_jsonl, write_jsonl
+from ropetrack.refine.cache import load_sample_order as load_run_meta_order
 from ropetrack.rope import FINGER_ORDER, canonical_rope_dataset, normalize_rope_distance, rope_distances_for_joints
 
 
-def read_json(path: Path):
-    with path.open("r", encoding="utf-8") as f:
-        return json.load(f)
-
-
 def load_prediction_joints(pred_dir: Path, pred_file_name: str = "pred.json"):
-    pred = read_json(pred_dir / pred_file_name)
-    if len(pred) != 2:
-        raise ValueError("Expected pred.json to contain [xyz_predictions, vertex_predictions].")
-    return pred[0]
+    xyz, _ = load_pred_json(pred_dir / pred_file_name)
+    return xyz
 
 
 def load_sample_order(pred_dir: Path, run_meta: Path | None, rope_rows: list[dict]) -> list[str]:
-    meta_path = run_meta or pred_dir.parent / "run_meta.json"
-    if meta_path.exists():
-        meta = read_json(meta_path)
-        if "sample_order" in meta:
-            return list(meta["sample_order"])
-    return [row["sample_id"] for row in rope_rows]
+    """Loud order resolution (rule 7): an explicit --run-meta must exist and
+    carry sample_order; without one, the conventional sibling run_meta.json is
+    used if present, else the rope-label row order (documented fallback)."""
+    fallback = [row["sample_id"] for row in rope_rows]
+    if run_meta is not None:
+        return load_run_meta_order(run_meta, fallback)
+    sibling = pred_dir.parent / "run_meta.json"
+    if sibling.exists():
+        return load_run_meta_order(sibling, fallback)
+    return fallback
 
 
 def abs_or_none(left, right):

@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import argparse
-import contextlib
 import json
-import os
 import pickle
 import subprocess
 import sys
@@ -21,6 +19,7 @@ from ropetrack.datasets.hand_pose import (
     validate_eval_protocol,
     write_eval_gt_subset,
 )
+from ropetrack.refine.analysis import json_sanitize
 from .protocols import eval_points_from_model, joints_from_vertices
 
 
@@ -37,16 +36,6 @@ class BatchHandPrediction:
     @property
     def score(self) -> float:
         return self.candidate.score
-
-
-@contextlib.contextmanager
-def pushd(path: Path):
-    old = Path.cwd()
-    os.chdir(path)
-    try:
-        yield
-    finally:
-        os.chdir(old)
 
 
 def dense_regressor(regressor) -> np.ndarray:
@@ -330,8 +319,8 @@ def run_export(args: argparse.Namespace) -> Path:
     if args.limit is not None and args.limit > 0:
         write_eval_gt_subset(args.adapter, root, eval_input, len(samples), split)
         gt_dir = eval_input
-    (out_dir / "failures.json").write_text(json.dumps(failures, indent=2))
-    (out_dir / "run_meta.json").write_text(json.dumps({
+    (out_dir / "failures.json").write_text(json.dumps(json_sanitize(failures), indent=2))
+    (out_dir / "run_meta.json").write_text(json.dumps(json_sanitize({
         "dataset": args.dataset,
         "adapter": args.adapter,
         "method": args.method,
@@ -352,7 +341,7 @@ def run_export(args: argparse.Namespace) -> Path:
         "wilor_cfg": optional_path_str(args.wilor_cfg),
         "hamer_ckpt": optional_path_str(args.hamer_ckpt),
         "sample_order": [sample.sample_id for sample in samples],
-    }, indent=2))
+    }), indent=2))
 
     if args.run_eval:
         subprocess.run([

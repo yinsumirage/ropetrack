@@ -8,6 +8,8 @@ from typing import Iterable
 
 import numpy as np
 
+from ropetrack.io import read_json
+
 
 @dataclass(frozen=True)
 class Ho3dSample:
@@ -32,11 +34,6 @@ class BBoxItem:
     is_right: bool
     score: float
     source: str
-
-
-def read_json(path: Path):
-    with path.open("r", encoding="utf-8") as f:
-        return json.load(f)
 
 
 def resolve_image_path(rgb_dir: Path, frame: str) -> Path:
@@ -75,9 +72,6 @@ def iter_hand_pose_samples(adapter: str, root: Path, limit: int | None, split: s
             return iter_ho3d_train_samples(root, limit)
         raise ValueError(f"unsupported HO3D split: {split}")
     raise ValueError(f"unsupported eval adapter: {adapter}")
-
-
-iter_eval_samples = iter_hand_pose_samples
 
 
 def iter_freihand_eval_samples(root: Path, limit: int | None, split: str = "evaluation") -> Iterable[FreiHandSample]:
@@ -159,6 +153,52 @@ def iter_ho3d_train_samples(root: Path, limit: int | None, stride: int = 1, spli
 
 HO3D_TO_OPENCV_CAMERA = np.asarray([1.0, -1.0, -1.0], dtype=np.float32)
 HO3D_IMAGE_SIZE = (640, 480)
+
+
+def camera_matrix_from_meta(meta: dict):
+    """Camera intrinsics from an HO3D meta dict (first key that exists)."""
+    for key in ("camMat", "K", "camera_matrix", "intrinsics"):
+        if key in meta:
+            return meta[key]
+    return None
+
+
+def iter_ho3d_samples_from_order(root: Path, sample_order_file: Path, limit: int | None = None) -> Iterable[Ho3dSample]:
+    """Evaluation-split samples in the order pinned by a run_meta.json (or a
+    plain JSON list) so hard roots and labels stay aligned with an export."""
+    payload = read_json(sample_order_file)
+    ids = payload["sample_order"] if isinstance(payload, dict) else payload
+    if limit is not None and limit > 0:
+        ids = ids[:limit]
+    eval_dir = root / "evaluation"
+    for sample_id in ids:
+        seq, frame = sample_id.split("/")
+        yield Ho3dSample(
+            sample_id=sample_id,
+            image_path=resolve_image_path(eval_dir / seq / "rgb", frame),
+            meta_path=eval_dir / seq / "meta" / f"{frame}.pkl",
+        )
+
+
+def clamp_bbox(bbox, width: int, height: int) -> tuple[int, int, int, int]:
+    """Integer pixel bbox clamped to the image, as painted by the hard-image
+    generator; the sliced scorer reuses it so occlusion tests match pixels."""
+    x1, y1, x2, y2 = [float(v) for v in bbox]
+    x1 = max(0, min(width - 1, int(round(x1))))
+    y1 = max(0, min(height - 1, int(round(y1))))
+    x2 = max(x1 + 1, min(width, int(round(x2))))
+    y2 = max(y1 + 1, min(height, int(round(y2))))
+    return x1, y1, x2, y2
+
+
+def centered_rect(x1: int, y1: int, x2: int, y2: int, severity: float) -> tuple[int, int, int, int]:
+    """Centered mask rectangle of the 'mask' hard effect (severity = side fraction)."""
+    severity = max(0.05, min(0.95, float(severity)))
+    w = max(1, int(round((x2 - x1) * severity)))
+    h = max(1, int(round((y2 - y1) * severity)))
+    cx = (x1 + x2) // 2
+    cy = (y1 + y2) // 2
+    return cx - w // 2, cy - h // 2, cx - w // 2 + w, cy - h // 2 + h
 
 
 def ho3d_projected_hand_bbox(

@@ -12,46 +12,35 @@ from PIL import Image, ImageDraw, ImageFilter
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ropetrack.datasets.hand_pose import (  # noqa: E402
-    Ho3dSample,
+    HO3D_TO_OPENCV_CAMERA,
     bbox_from_projected_points,
+    camera_matrix_from_meta,
+    clamp_bbox,
+    centered_rect,
     hand_bbox_from_meta,
     ho3d_projected_hand_bbox,
     iter_ho3d_samples,
+    iter_ho3d_samples_from_order,
     project_points,
     read_ho3d_train_ids,
     read_json,
     resolve_image_path,
 )
+from ropetrack.io import write_jsonl  # noqa: E402
+from ropetrack.rope import FINGER_CHAINS  # noqa: E402
 
-FREIHAND_FINGERTIP_JOINT_IDS = np.asarray([4, 8, 12, 16, 20], dtype=np.int64)
+# fingertip ids derive from the canonical chains so they cannot drift
+FREIHAND_FINGERTIP_JOINT_IDS = np.asarray([chain[-1] for chain in FINGER_CHAINS["freihand"]], dtype=np.int64)
+HO3D_FINGERTIP_JOINT_IDS = np.asarray([chain[-1] for chain in FINGER_CHAINS["ho3d"]], dtype=np.int64)
+# last-two-bone segments per finger (tip->dip, dip->pip), dataset joint order
 FREIHAND_FINGER_END_SEGMENT_JOINT_IDS = np.asarray(
     [[4, 1], [8, 6], [6, 5], [12, 10], [10, 9], [16, 14], [14, 13], [20, 18], [18, 17]],
     dtype=np.int64,
 )
-HO3D_FINGERTIP_JOINT_IDS = np.asarray([16, 17, 18, 19, 20], dtype=np.int64)
 HO3D_FINGER_END_SEGMENT_JOINT_IDS = np.asarray(
     [[16, 13], [17, 2], [2, 1], [18, 5], [5, 4], [19, 11], [11, 10], [20, 8], [8, 7]],
     dtype=np.int64,
 )
-HO3D_TO_OPENCV_CAMERA = np.asarray([1.0, -1.0, -1.0], dtype=np.float32)
-
-
-def clamp_bbox(bbox, width: int, height: int) -> tuple[int, int, int, int]:
-    x1, y1, x2, y2 = [float(v) for v in bbox]
-    x1 = max(0, min(width - 1, int(round(x1))))
-    y1 = max(0, min(height - 1, int(round(y1))))
-    x2 = max(x1 + 1, min(width, int(round(x2))))
-    y2 = max(y1 + 1, min(height, int(round(y2))))
-    return x1, y1, x2, y2
-
-
-def centered_rect(x1: int, y1: int, x2: int, y2: int, severity: float) -> tuple[int, int, int, int]:
-    severity = max(0.05, min(0.95, float(severity)))
-    w = max(1, int(round((x2 - x1) * severity)))
-    h = max(1, int(round((y2 - y1) * severity)))
-    cx = (x1 + x2) // 2
-    cy = (y1 + y2) // 2
-    return cx - w // 2, cy - h // 2, cx - w // 2 + w, cy - h // 2 + h
 
 
 def fingertip_radius(bbox_xyxy, severity: float) -> int:
@@ -90,13 +79,6 @@ def project_ho3d_fingertips_from_joints(joints3d, K) -> list[tuple[float, float]
 def project_ho3d_finger_end_segments_from_joints(joints3d, K):
     joints = np.asarray(joints3d, dtype=np.float32) * HO3D_TO_OPENCV_CAMERA
     return project_finger_end_segments_from_joints(joints, K, segment_ids=HO3D_FINGER_END_SEGMENT_JOINT_IDS)
-
-
-def camera_matrix_from_meta(meta: dict):
-    for key in ("camMat", "K", "camera_matrix", "intrinsics"):
-        if key in meta:
-            return meta[key]
-    return None
 
 
 def fingertip_points_from_meta(meta: dict) -> list[tuple[float, float]]:
@@ -201,13 +183,6 @@ def write_json(path: Path, value) -> None:
     path.write_text(json.dumps(value), encoding="utf-8")
 
 
-def write_manifest(path: Path, rows: list[dict]) -> None:
-    with path.open("w", encoding="utf-8", newline="\n") as f:
-        for row in rows:
-            f.write(json.dumps(row, sort_keys=True))
-            f.write("\n")
-
-
 def save_hard_image(src_image: Path, dst_image: Path, bbox, effect: str, severity: float, seed: int, points_xy=None, segments_xy=None) -> None:
     dst_image.parent.mkdir(parents=True, exist_ok=True)
     hard = apply_hard_effect(Image.open(src_image), bbox, effect, severity, seed, points_xy=points_xy, segments_xy=segments_xy)
@@ -254,7 +229,7 @@ def build_freihand_hard_root(
     write_json(output_root / f"{split}_K.json", Ks[:count])
     write_json(output_root / f"{split}_verts.json", verts[:count])
     write_json(output_root / f"{split}_xyz.json", xyz[:count])
-    write_manifest(output_root / "hard_manifest.jsonl", rows)
+    write_jsonl(output_root / "hard_manifest.jsonl", rows)
     return output_root
 
 
@@ -303,7 +278,7 @@ def build_ho3d_hard_root(
     write_json(output_root / "evaluation_xyz.json", xyz[:len(samples)])
     write_json(output_root / "evaluation_verts.json", verts[:len(samples)])
     (output_root / "evaluation.txt").write_text("".join(f"{sample.sample_id}\n" for sample in samples), encoding="utf-8")
-    write_manifest(output_root / "hard_manifest.jsonl", rows)
+    write_jsonl(output_root / "hard_manifest.jsonl", rows)
     return output_root
 
 
@@ -362,23 +337,8 @@ def build_ho3d_train_hard_root(
 
     write_json(output_root / "training_xyz.json", xyz_rows)
     (output_root / "train.txt").write_text("".join(f"{sample_id}\n" for sample_id in ids), encoding="utf-8")
-    write_manifest(output_root / "hard_manifest.jsonl", rows)
+    write_jsonl(output_root / "hard_manifest.jsonl", rows)
     return output_root
-
-
-def iter_ho3d_samples_from_order(root: Path, sample_order_file: Path, limit: int | None):
-    payload = read_json(sample_order_file)
-    ids = payload["sample_order"] if isinstance(payload, dict) else payload
-    if limit is not None and limit > 0:
-        ids = ids[:limit]
-    eval_dir = root / "evaluation"
-    for sample_id in ids:
-        seq, frame = sample_id.split("/")
-        yield Ho3dSample(
-            sample_id=sample_id,
-            image_path=resolve_image_path(eval_dir / seq / "rgb", frame),
-            meta_path=eval_dir / seq / "meta" / f"{frame}.pkl",
-        )
 
 
 def parse_args() -> argparse.Namespace:
