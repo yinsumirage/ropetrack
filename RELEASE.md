@@ -82,6 +82,21 @@ per-stage Slurm launchers are archived in untracked `.local_checks/`
 (submit_p2_student_multi.sh and run_* scripts) — the tracked per-step
 commands above are canonical.
 
+## Golden Regression Check (verified by the 0051 real-data smoke)
+
+Re-applying the release checkpoint on the FreiHAND mask70 eval export
+(`--mode student`, same inputs as the 0044 release row) must reproduce:
+
+```
+scores.json  xyz_procrustes_al_mean3d = 0.843216059176498   (cm)
+summary.json rope_residual.closure_frac = 0.43981700010308744
+```
+
+Any refactor that changes these numbers has touched a numerical path and
+must be investigated before merging. (Do NOT confuse these with the 0042
+single-teacher student numbers 0.843164 / 0.437833 — that mix-up failed the
+first smoke job 171715 exactly as a golden check should.)
+
 ## Must-Ship Caveats
 
 The five report-pack caveats (simulated GT-derived sensor with the noise

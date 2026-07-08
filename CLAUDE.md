@@ -108,5 +108,12 @@ source — never hand-copy metrics; regenerate via
   roots may keep local aligned `rope_labels.jsonl`. `.local_checks` launchers
   remain the archived per-run recipes (canonical per-step commands live in
   RELEASE.md).
+- Consolidation SEALED by the 0051 real-data smoke (S1-S6 passed on HPC,
+  job 171797). Golden regression constants live in RELEASE.md — they are
+  the 0044 release numbers (PA 0.843216... / closure 0.439817...), NOT the
+  0042 single-student numbers; mixing them up fails the check by design.
+- Open decision: whether to commit the sub-MB release `student.pt` into git
+  with a `.gitignore` exception (currently HPC releases/ + .local_checks
+  mirror only).
 - Next-phase decision (advisor-steered, after report): P3 v1 token features
   vs DexYCB data expansion vs physical rope sensor hardware.
