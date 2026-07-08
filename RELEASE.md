@@ -8,7 +8,9 @@ source); details cite `experience/` notes.
 
 **The 0044 four-teacher augmented multi alpha-student.**
 
-- Checkpoint (remote):
+- Checkpoint (remote release copy):
+  `/data/wentao/ropetrack/releases/p2_four_teacher_student/student.pt`
+- Original checkpoint:
   `/data/wentao/ropetrack/runs/rope_p2_student_multi_20260707_174104/students/student_multi/student.pt`
 - Architecture: `RopeAlphaStudent` MLP 65 -> 256 -> 256 -> 15
   (`ropetrack/refine/alpha_student.py`); input = base MANO hand_pose (45) |
@@ -63,6 +65,8 @@ parity is a precondition: the under-converged HO3D v3 finger_end80 teacher
 1. Hard train root + rope labels: `scripts/make_hard_images.py` +
    `scripts/make_rope_labels.py` (`--split training`, HO3D adds `--stride 4`;
    exact commands in 0037/0039/0041).
+   New standalone labels go under `/data/wentao/ropetrack/rope_labels/<dataset>/`;
+   training hard roots may also carry an aligned local `rope_labels.jsonl`.
 2. Export with MANO cache: `scripts/eval.py --split training
    --save-mano-cache` (HO3D train root: `--dataset ho3d_v3_mask70_train
    --protocol-check-samples 0`).

@@ -97,8 +97,16 @@ source — never hand-copy metrics; regenerate via
   `cache.py`, RELEASE.md created, docs/configs/INDEX refreshed, FreiHAND
   train yamls added. `apply_rope_refinement.py --mode` now defaults to
   `optimize`.
-- Still open: user's GitHub push credential (bundle-sync to HPC is the
-  interim backup path); `.local_checks` launchers remain the archived
-  per-run recipes (canonical per-step commands now live in RELEASE.md).
+- GitHub push credential FIXED (2026-07-08); backup tiers: code/docs/small
+  figures -> git; small results -> `.local_checks/` + HPC; large artifacts ->
+  HPC only, pinned by RELEASE.md (its named run roots are the do-not-delete
+  list; no run GC before the advisor signs off the report). The sub-MB P2
+  release checkpoint is copied to
+  `/data/wentao/ropetrack/releases/p2_four_teacher_student/`, mirrored in
+  `.local_checks/releases/`, and the data root has a README.txt signpost.
+  New standalone rope labels go under `rope_labels/<dataset>/`; hard train
+  roots may keep local aligned `rope_labels.jsonl`. `.local_checks` launchers
+  remain the archived per-run recipes (canonical per-step commands live in
+  RELEASE.md).
 - Next-phase decision (advisor-steered, after report): P3 v1 token features
   vs DexYCB data expansion vs physical rope sensor hardware.

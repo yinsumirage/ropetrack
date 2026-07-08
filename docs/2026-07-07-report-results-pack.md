@@ -154,7 +154,7 @@ robustness; the augmented multi student is the release model.**
 HO3D v3 s4 train teacher sanity: closure 0.582, gated 0.282, alpha 0.043 -
 same regime as the FreiHAND train teacher (0.504/0.288/0.053).
 
-Qualitative panels (`.local_checks/p2_student_multi_report_panels`): on the
+Qualitative panels (`docs/assets/rope_report/panel_*.png`): on the
 four most-improved mask70 samples, base PA 28.4-31.5 mm drops to 12.8-18.0 mm
 (halved); the one-pass student matches or slightly beats the 400-step teacher
 on 3 of 4.
