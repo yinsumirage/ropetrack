@@ -1,10 +1,16 @@
+import copy
 import hashlib
+import tempfile
 import unittest
 from dataclasses import FrozenInstanceError
+from pathlib import Path
 
 import numpy as np
+import torch
+from torch import nn
 
-from ropetrack.refine.alpha_student import features_from_cache
+from ropetrack.refine import alpha_student, temporal
+from ropetrack.refine.alpha_student import RopeAlphaStudent, features_from_cache
 from ropetrack.refine.temporal import (
     SequenceSplit,
     build_causal_windows,
@@ -166,6 +172,292 @@ class TemporalProtocolTest(unittest.TestCase):
         duplicate["sample_id"] = np.asarray(["A/0000", "A/0000"])
         with self.assertRaises(ValueError):
             temporal_features(duplicate, raw_frame_step=4)
+
+
+def framewise_payload():
+    model = RopeAlphaStudent(out_dim=2, hidden_dim=5, max_alpha=0.5, in_dim=65)
+    with torch.no_grad():
+        model.net[-1].bias.copy_(torch.tensor([0.1, -0.2]))
+    config = {
+        "in_dim": 65,
+        "out_dim": 2,
+        "hidden_dim": 5,
+        "max_alpha": 0.5,
+        "tag": "framewise",
+    }
+    return model, {
+        "model_state": model.state_dict(),
+        "config": config,
+        "ignored": "not nested in temporal checkpoints",
+    }
+
+
+def temporal_checkpoint_config(in_dim=4, out_dim=2, hidden_dim=6, max_alpha=0.5):
+    return {
+        "in_dim": in_dim,
+        "out_dim": out_dim,
+        "hidden_dim": hidden_dim,
+        "max_alpha": max_alpha,
+        "temporal_feature_mean": [0.0] * in_dim,
+        "temporal_feature_std": [1.0] * in_dim,
+    }
+
+
+class TemporalModelTest(unittest.TestCase):
+    def test_temporal_model_has_single_layer_architecture_and_dimension_attrs(self):
+        model = temporal.TemporalRopeAlphaStudent(70, 15, hidden_dim=16, max_alpha=0.5)
+
+        self.assertEqual((model.in_dim, model.out_dim, model.hidden_dim), (70, 15, 16))
+        self.assertEqual(model.max_alpha, 0.5)
+        self.assertEqual([type(layer) for layer in model.encoder], [nn.Linear, nn.ReLU, nn.LayerNorm])
+        self.assertTrue(model.gru.batch_first)
+        self.assertEqual(model.gru.num_layers, 1)
+        self.assertEqual(model.gru.input_size, 16)
+        self.assertEqual(model.gru.hidden_size, 16)
+        torch.testing.assert_close(model.head.weight, torch.zeros_like(model.head.weight))
+        torch.testing.assert_close(model.head.bias, torch.zeros_like(model.head.bias))
+
+    def test_temporal_zero_head_equals_framewise_alpha(self):
+        model = temporal.TemporalRopeAlphaStudent(
+            in_dim=70, out_dim=15, hidden_dim=16, max_alpha=0.5
+        )
+        windows = torch.randn(3, 4, 70)
+        lengths = torch.tensor([4, 2, 1])
+        base = torch.tensor([[0.1] * 15, [-0.2] * 15, [0.0] * 15])
+
+        torch.testing.assert_close(model(windows, lengths, base), base)
+
+    def test_temporal_output_is_bounded_and_finite(self):
+        model = temporal.TemporalRopeAlphaStudent(70, 15, 8, 0.5)
+        with torch.no_grad():
+            model.head.bias.fill_(100)
+        out = model(
+            torch.zeros(2, 1, 70),
+            torch.ones(2, dtype=torch.long),
+            torch.tensor([[0.5] * 15, [-0.5] * 15]),
+        )
+
+        self.assertEqual(out.shape, (2, 15))
+        self.assertTrue(torch.isfinite(out).all())
+        self.assertLessEqual(float(out.abs().max()), 0.5)
+
+    def test_bounded_transform_promotes_low_precision_base_alpha(self):
+        model = temporal.TemporalRopeAlphaStudent(4, 1, hidden_dim=6, max_alpha=0.5)
+        with torch.no_grad():
+            model.head.bias.fill_(-100)
+        for dtype in (torch.float16, torch.bfloat16):
+            with self.subTest(dtype=dtype):
+                out = model(
+                    torch.zeros(1, 1, 4),
+                    torch.ones(1, dtype=torch.long),
+                    torch.tensor([[0.5]], dtype=dtype),
+                )
+                self.assertEqual(out.dtype, torch.float32)
+                self.assertTrue(torch.isfinite(out).all())
+                self.assertLess(float(out.item()), 0.0)
+
+    def test_packed_lengths_make_padded_slots_irrelevant(self):
+        torch.manual_seed(3)
+        model = temporal.TemporalRopeAlphaStudent(4, 2, hidden_dim=6, max_alpha=0.5)
+        with torch.no_grad():
+            model.head.weight.normal_()
+        windows = torch.randn(2, 4, 4)
+        lengths = torch.tensor([2, 4])
+        base = torch.zeros(2, 2)
+        expected = model(windows, lengths, base)
+
+        changed_padding = windows.clone()
+        changed_padding[0, 2:] = 1_000_000
+        actual = model(changed_padding, lengths, base)
+
+        torch.testing.assert_close(actual[0], expected[0])
+
+    def test_temporal_model_rejects_invalid_dimensions_and_lengths(self):
+        for max_alpha in (0.0, -0.5):
+            with self.subTest(max_alpha=max_alpha), self.assertRaises(ValueError):
+                temporal.TemporalRopeAlphaStudent(4, 2, 6, max_alpha)
+
+        model = temporal.TemporalRopeAlphaStudent(4, 2, 6, 0.5)
+        windows = torch.zeros(2, 3, 4)
+        base = torch.zeros(2, 2)
+        for lengths in (torch.tensor([0, 1]), torch.tensor([4, 1])):
+            with self.subTest(lengths=lengths.tolist()), self.assertRaises(ValueError):
+                model(windows, lengths, base)
+        with self.assertRaisesRegex(ValueError, "integer"):
+            model(windows, torch.tensor([2.5, 1.0]), base)
+        with self.assertRaisesRegex(ValueError, "floating"):
+            model(windows, torch.tensor([3, 1]), base.to(torch.int64))
+        with self.assertRaises(ValueError):
+            model(windows[:, :, :3], torch.tensor([3, 1]), base)
+        with self.assertRaises(ValueError):
+            model(windows, torch.tensor([3, 1]), base[:, :1])
+
+    def test_student_from_payload_reconstructs_eval_model(self):
+        original, payload = framewise_payload()
+        loaded, config = alpha_student.student_from_payload(payload, "cpu")
+
+        self.assertEqual(config["tag"], "framewise")
+        self.assertFalse(loaded.training)
+        features = torch.randn(3, 65)
+        torch.testing.assert_close(loaded(features), original(features))
+
+    def test_temporal_checkpoint_roundtrip_is_self_contained(self):
+        torch.manual_seed(5)
+        model = temporal.TemporalRopeAlphaStudent(70, 2, hidden_dim=6, max_alpha=0.5)
+        with torch.no_grad():
+            model.head.weight.normal_()
+            model.head.bias.copy_(torch.tensor([0.2, -0.1]))
+        config = dict(temporal_checkpoint_config(70, 2, 6), tag="temporal")
+        _, payload = framewise_payload()
+        framewise_state = {key: value.clone() for key, value in payload["model_state"].items()}
+        framewise_config = copy.deepcopy(payload["config"])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "nested" / "temporal.pt"
+            temporal.save_temporal_checkpoint(path, model, config, payload)
+
+            self.assertTrue(path.exists())
+            self.assertEqual(payload["config"], framewise_config)
+            for key, value in framewise_state.items():
+                torch.testing.assert_close(payload["model_state"][key], value)
+
+            payload["config"]["tag"] = "mutated-after-save"
+            with torch.no_grad():
+                next(iter(payload["model_state"].values())).add_(100)
+
+            raw = torch.load(path, map_location="cpu", weights_only=True)
+            self.assertEqual(set(raw), {"model_state", "config", "framewise"})
+            self.assertEqual(set(raw["framewise"]), {"model_state", "config"})
+            self.assertEqual(raw["framewise"]["config"], framewise_config)
+            for key, value in framewise_state.items():
+                torch.testing.assert_close(raw["framewise"]["model_state"][key], value)
+
+            loaded, loaded_config, framewise, loaded_framewise_config = (
+                temporal.load_temporal_checkpoint(path, "cpu")
+            )
+
+        self.assertEqual(loaded_config, config)
+        self.assertEqual(loaded_framewise_config, framewise_config)
+        self.assertFalse(loaded.training)
+        self.assertFalse(framewise.training)
+        self.assertTrue(all(not parameter.requires_grad for parameter in framewise.parameters()))
+        windows = torch.randn(3, 4, 70)
+        lengths = torch.tensor([4, 2, 1])
+        base = torch.zeros(3, 2)
+        torch.testing.assert_close(loaded(windows, lengths, base), model(windows, lengths, base))
+        for key, value in framewise_state.items():
+            torch.testing.assert_close(framewise.state_dict()[key], value)
+
+    def test_temporal_checkpoint_save_requires_every_schema_key(self):
+        model = temporal.TemporalRopeAlphaStudent(4, 2, hidden_dim=6, max_alpha=0.5)
+        config = temporal_checkpoint_config()
+        _, payload = framewise_payload()
+        required = (
+            "in_dim",
+            "out_dim",
+            "hidden_dim",
+            "max_alpha",
+            "temporal_feature_mean",
+            "temporal_feature_std",
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            for key in required:
+                bad_config = {name: value for name, value in config.items() if name != key}
+                path = Path(tmp) / f"missing-{key}.pt"
+                with self.subTest(key=key), self.assertRaisesRegex(ValueError, key):
+                    temporal.save_temporal_checkpoint(path, model, bad_config, payload)
+                self.assertFalse(path.exists())
+
+    def test_temporal_checkpoint_save_rejects_invalid_schema_values(self):
+        model = temporal.TemporalRopeAlphaStudent(4, 2, hidden_dim=6, max_alpha=0.5)
+        config = temporal_checkpoint_config()
+        _, payload = framewise_payload()
+        cases = (
+            (dict(config, in_dim=4.0), "in_dim"),
+            (dict(config, out_dim=0), "out_dim"),
+            (dict(config, hidden_dim=-1), "hidden_dim"),
+            (dict(config, max_alpha=float("nan")), "max_alpha"),
+            (temporal_checkpoint_config(in_dim=5), "in_dim"),
+            (temporal_checkpoint_config(out_dim=3), "out_dim"),
+            (temporal_checkpoint_config(hidden_dim=7), "hidden_dim"),
+            (temporal_checkpoint_config(max_alpha=0.4), "max_alpha"),
+            (dict(config, temporal_feature_mean=[0.0] * 3), "temporal_feature_mean"),
+            (dict(config, temporal_feature_mean=[0.0, 0.0, float("nan"), 0.0]), "temporal_feature_mean"),
+            (dict(config, temporal_feature_std=[1.0, 1.0, 0.0, 1.0]), "temporal_feature_std"),
+            (dict(config, temporal_feature_std=[1.0, 1.0, float("inf"), 1.0]), "temporal_feature_std"),
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            for index, (config, message) in enumerate(cases):
+                path = Path(tmp) / f"invalid-{index}.pt"
+                with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                    temporal.save_temporal_checkpoint(path, model, config, payload)
+                self.assertFalse(path.exists())
+
+    def test_temporal_checkpoint_rejects_incompatible_framewise_on_save(self):
+        model = temporal.TemporalRopeAlphaStudent(4, 2, hidden_dim=6, max_alpha=0.5)
+        config = temporal_checkpoint_config()
+        _, payload = framewise_payload()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            for key, value in (("out_dim", 3), ("max_alpha", 0.4)):
+                bad_payload = dict(payload, config=dict(payload["config"], **{key: value}))
+                path = Path(tmp) / f"bad-framewise-{key}.pt"
+                with self.subTest(key=key), self.assertRaisesRegex(ValueError, key):
+                    temporal.save_temporal_checkpoint(path, model, config, bad_payload)
+                self.assertFalse(path.exists())
+
+            legacy_payload = dict(payload, config=dict(payload["config"]))
+            legacy_payload["config"].pop("max_alpha")
+            path = Path(tmp) / "legacy-framewise.pt"
+            temporal.save_temporal_checkpoint(path, model, config, legacy_payload)
+            _, _, framewise, framewise_config = temporal.load_temporal_checkpoint(path, "cpu")
+            self.assertNotIn("max_alpha", framewise_config)
+            self.assertEqual(framewise.max_alpha, 0.5)
+
+    def test_temporal_checkpoint_revalidates_full_schema_on_load(self):
+        model = temporal.TemporalRopeAlphaStudent(4, 2, hidden_dim=6, max_alpha=0.5)
+        config = temporal_checkpoint_config()
+        _, framewise = framewise_payload()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "temporal.pt"
+            temporal.save_temporal_checkpoint(path, model, config, framewise)
+            payload = torch.load(path, map_location="cpu", weights_only=True)
+            cases = (
+                (dict(payload, config={key: value for key, value in config.items() if key != "in_dim"}), "in_dim"),
+                (dict(payload, config=dict(config, in_dim=4.0)), "in_dim"),
+                (dict(payload, config=dict(config, out_dim=3)), "out_dim"),
+                (dict(payload, config=dict(config, max_alpha=float("nan"))), "max_alpha"),
+                (dict(payload, config=dict(config, temporal_feature_mean=[0.0] * 3)), "temporal_feature_mean"),
+                (dict(payload, config=dict(config, temporal_feature_mean=[0.0, 0.0, float("nan"), 0.0])), "temporal_feature_mean"),
+                (dict(payload, config=dict(config, temporal_feature_std=[1.0, 0.0, 1.0, 1.0])), "temporal_feature_std"),
+                (
+                    dict(
+                        payload,
+                        framewise=dict(
+                            payload["framewise"],
+                            config=dict(payload["framewise"]["config"], out_dim=3),
+                        ),
+                    ),
+                    "out_dim",
+                ),
+                (
+                    dict(
+                        payload,
+                        framewise=dict(
+                            payload["framewise"],
+                            config=dict(payload["framewise"]["config"], max_alpha=0.4),
+                        ),
+                    ),
+                    "max_alpha",
+                ),
+            )
+            for bad_payload, message in cases:
+                torch.save(bad_payload, path)
+                with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                    temporal.load_temporal_checkpoint(path, "cpu")
 
 
 if __name__ == "__main__":

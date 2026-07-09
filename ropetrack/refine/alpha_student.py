@@ -98,18 +98,22 @@ def save_student_checkpoint(path: Path, model: RopeAlphaStudent, config: dict) -
     torch.save({"model_state": model.state_dict(), "config": config}, path)
 
 
-def load_student(path: Path, device: str) -> tuple[RopeAlphaStudent, dict]:
-    ckpt = torch.load(path, map_location=device, weights_only=True)
-    config = ckpt["config"]
+def student_from_payload(payload: dict, device: str) -> tuple[RopeAlphaStudent, dict]:
+    config = payload["config"]
     model = RopeAlphaStudent(
         out_dim=int(config["out_dim"]),
         hidden_dim=int(config.get("hidden_dim", 256)),
         max_alpha=float(config.get("max_alpha", 0.5)),
         in_dim=int(config.get("in_dim", STUDENT_FEATURE_DIM)),
     ).to(device)
-    model.load_state_dict(ckpt["model_state"])
+    model.load_state_dict(payload["model_state"])
     model.eval()
     return model, config
+
+
+def load_student(path: Path, device: str) -> tuple[RopeAlphaStudent, dict]:
+    payload = torch.load(path, map_location=device, weights_only=True)
+    return student_from_payload(payload, device)
 
 
 def load_image_feature_cache(path: Path) -> tuple[list[str], np.ndarray]:
