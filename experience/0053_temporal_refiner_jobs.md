@@ -5,9 +5,10 @@ Date: 2026-07-10
 ## Scope
 
 Launch the reusable HO3D v3 assets needed by the causal temporal-refiner plan,
-while starting the expensive oracle teacher jobs in parallel. This record is a
-submission record only: the jobs below were submitted, but no result is being
-claimed complete here.
+while starting the expensive oracle teacher jobs in parallel. The first half
+of this note preserves the submission state; later sections record completed
+teacher upper bounds and the pinned retry of the evaluation export. Final
+official/sliced retry scores are not claimed here.
 
 The remote repo was fast-forwarded on branch
 `codex/temporal-ho3d-refiner` from `9361c33` to plan commit
@@ -224,11 +225,125 @@ Updated run evidence is archived in `manifest.tsv`, `jobs.tsv`,
 `submissions.txt`, `review_hardening_evidence.md`, and
 `scripts/validate_eval_assets.sbatch` under the same run root.
 
+## Completed Pose45 Oracle Teachers
+
+Both independent GPU teachers completed successfully against the aligned
+20,832-row HO3D v3 stride-4 training export:
+
+| Teacher | Job | State / elapsed | Mean abs pose delta | Rope mean abs, base -> refined |
+|---|---:|---|---:|---:|
+| gated `oracle_chain/pose45/gate010` | 174311 | `COMPLETED 0:0`, `00:06:45` | 0.042826 | 0.087543 -> 0.047090 |
+| ungated `oracle_chain/pose45` | 174312 | `COMPLETED 0:0`, `00:07:05` | 0.120744 | 0.087543 -> 0.048523 |
+
+The complete optimizer summaries remain under
+`teacher/oracle_chain_pose45_gate010/summary.json` and
+`teacher/oracle_chain_pose45_ungated/summary.json`. The gated summary reports
+`frac_samples_any_gated=0.6634`; the ungated result is deliberately a less
+constrained ceiling, not a deployment policy.
+
+CPU validation job `174436` independently decoded the generated MANO poses and
+completed `0:0` in 22 seconds with exact output prefix
+`teacher-joint-diagnostics-ok 20832`. Its archived
+`teacher_joint_diagnostics.json` reports:
+
+| Metric (mm; lower is better) | Base | Gated | Gated delta | Ungated | Ungated delta |
+|---|---:|---:|---:|---:|---:|
+| PA-MPJPE, all 21 joints | 7.4616 | 6.8944 | -0.5672 | 6.1705 | -1.2911 |
+| PA tip MPJPE | 11.3916 | 9.5990 | -1.7926 | 6.9428 | -4.4487 |
+| root-relative MPJPE, non-wrist 20 | 19.1429 | 15.6549 | -3.4880 | 8.7778 | -10.3651 |
+
+These are GT-driven `oracle_chain` upper bounds on the training export. They
+establish useful target headroom for temporal distillation but are not held-out
+causal model scores.
+
+## Evaluation Export Protocol Failure
+
+GPU export/apply job `174314` failed `1:0` after 63 seconds, before model
+initialization or inference. The generated hard root itself was not corrupt:
+raw and hard `evaluation.txt` both had the same 20,137 IDs, and their
+`evaluation_xyz.json` plus the first copied meta were identical.
+
+The exact first sample was `SM1/0000`. Its evaluation meta stores
+`handJoints3D` as a flat `(3,)` root vector:
+
+```text
+[0.025131747, -0.043128736, -0.527298212]
+```
+
+That is exactly `evaluation_xyz[0][0]`, so the correct root distance is zero.
+The old check used `np.asarray(meta["handJoints3D"])[0]`, producing the scalar
+`0.025131747`; NumPy broadcast that scalar against the three-coordinate GT and
+created the false `0.556631m` mismatch printed by `174314`. A y/z axis flip
+instead gives `1.058118m`, confirming this was a shape bug rather than a unit,
+axis, root-selection, or sample-order error.
+
+Commit `a62219bb79b8a470b3a64c4b1d45760b25bd5204` fixes only the root extraction
+with `.reshape(-1, 3)[0]` and adds a real flat-meta regression. TDD captured the
+old false failure at `1.414214m`; after the fix, 8 dataset-adapter tests and 24
+related eval/config/hard-image tests passed, with `py_compile` and diff checks
+clean. Both specification and code-quality reviews approved the two-file
+change. The protocol check remains enabled.
+
+## Pinned Evaluation Retry
+
+The retry is isolated from both live repo worktrees at:
+
+```text
+/data/wentao/ropetrack/runs/temporal_assets_20260710/source_eval_retry_a62219b
+```
+
+It is a detached worktree at full commit
+`a62219bb79b8a470b3a64c4b1d45760b25bd5204`. WiLoR was cloned from the pinned
+primary runtime copy and checked out at gitlink
+`fcb911312a38fa8badd30d9656a167485d61b8f9`; `mano_data` and
+`pretrained_models` are symlinked from the primary runtime. Both newly
+submitted retry jobs source `scripts/assert_source_eval_retry_a62219b.sh`,
+which asserts both SHAs before doing work. Neither the detached primary
+`4aeb3eb` nor the development worktree HEAD was moved to create this source.
+
+The original targets `eval_export` and `eval/release` were absent before
+submission, and the GPU script rechecks both at runtime before writing. The
+exact archived retry scripts are:
+
+```text
+scripts/assert_source_eval_retry_a62219b.sh
+scripts/eval_protocol_preflight_a62219b.sbatch
+scripts/eval_export_apply_retry_a62219b.sbatch
+scripts/submit_eval_protocol_retry_a62219b.sh
+```
+
+CPU preflight `174447` used 4 CPUs and 32G on `cpu`, imported from the pinned
+source, built the real `ho3d_v3_mask70` adapter, and ran the active protocol
+check on the first 32 samples. It completed `0:0` in 30 seconds with:
+
+```text
+ho3d-protocol-ok 32
+```
+
+GPU retry `174448` requests one GPU, 16 CPUs, 128G, and one day. It runs the
+same original export and release-student apply commands as `174314`, without
+`--protocol-check-samples 0`, under `afterok:174447`. Existing score job
+`174315` was preserved and atomically changed from failed dependency
+`afterok:174314(failed)` to `afterok:174448(unfulfilled)`; `scontrol show job`
+confirmed it remained pending and cannot run before the retry succeeds.
+
+| Job | Dependency | State at latest capture |
+|---:|---|---|
+| 174447 protocol preflight | - | `COMPLETED 0:0`, `00:00:30` |
+| 174448 export + release apply retry | `afterok:174447` satisfied | `PENDING (Priority)` |
+| 174315 official + sliced score | `afterok:174448` | `PENDING (Dependency)` |
+
+Submission outputs, exact dependencies, source SHAs, before/after score-job
+state, and initial job descriptions are archived as
+`eval_retry_a62219b_{submissions.txt,jobs.tsv,manifest.tsv,score_before.txt,score_after.txt,state_initial.txt}`.
+The completed CPU output and the post-preflight Slurm snapshot are additionally
+archived in `eval_retry_a62219b_preflight_result.txt` and
+`eval_retry_a62219b_state_after_preflight.txt`.
+
 ## Next
 
-After the dependency chain and teachers finish, verify `sacct` exit codes and
-row alignment in the generated eval export before using any asset. Record
-teacher health, official/sliced scores, and any failed dependency in a separate
-results note; do not reinterpret this submission note as outcome evidence.
-Keep the primary HPC worktree detached at `4aeb3eb` and use the temporal-dev
-worktree for development until every recorded job is terminal.
+After `174448` and dependent score job `174315` finish, verify `sacct` exit
+codes, exact 20,137-row export order, official/sliced scores, and output
+provenance before using the eval products. Keep the primary HPC worktree
+detached at `4aeb3eb`; use the temporal development worktree only for branch
+sync and the detached retry source for this run.
