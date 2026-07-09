@@ -340,6 +340,42 @@ The completed CPU output and the post-preflight Slurm snapshot are additionally
 archived in `eval_retry_a62219b_preflight_result.txt` and
 `eval_retry_a62219b_state_after_preflight.txt`.
 
+### Post-review retry hardening
+
+Before GPU job `174448` started, an operations review found two provenance and
+rollback gaps in the retry launcher. Exact-HEAD checks alone would not reject a
+tracked or staged edit at the detached main checkout or inside WiLoR. The live
+`assert_source_eval_retry_a62219b.sh` and all launcher copies now run
+`git diff --quiet HEAD --` in both repositories after checking their expected
+SHAs, with explicit errors on a dirty tree. This deliberately ignores the
+required untracked/ignored asset symlinks. The live check passed for main
+`a62219bb79b8a470b3a64c4b1d45760b25bd5204` and WiLoR
+`fcb911312a38fa8badd30d9656a167485d61b8f9` while `174448` was still
+`PENDING (Priority)`.
+
+The original rollback could cancel only jobs submitted by that launcher, but
+after changing score job `174315` it did not restore the old score dependency
+if a later metadata step failed. The hardened launcher captures the original
+`afterok:174314` dependency, sets `score_dependency_updated=true` immediately
+after a successful `scontrol update`, and on a later error first restores that
+dependency if `174315` is still pending, then cancels only the newly submitted
+IDs. The launcher was not rerun; no live dependency or source HEAD was changed
+by this review fix.
+
+The local ignored launcher, HPC development copy, and archived launcher are
+byte-identical with SHA-256
+`f113ed65251e2ef70458a60d5413185041c0e0c30c8e1d8ed067453a8b74551f`.
+The live assert script SHA-256 is
+`ebd75236bac6a825b3a5477fef4c81879eeb94c9cd7e19aa272fc710d17a36b1`.
+All copies passed `bash -n`. At the same verification snapshot, `174448`
+remained `PENDING (Priority)` and `174315` remained pending with
+`Dependency=afterok:174448(unfulfilled)`.
+
+Automatic cleanup of a partially created pre-submission retry worktree remains
+deferred: the launcher still fails closed on existing retry-owned paths so
+partial setup is preserved for inspection. No current run path was deleted or
+rewritten to address this minor review item.
+
 ## Next
 
 After `174448` and dependent score job `174315` finish, verify `sacct` exit
