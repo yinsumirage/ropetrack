@@ -105,14 +105,17 @@ translation, backbone code, and `third_party/` remain frozen.
 1. Parse every sample id as `sequence/frame` (teacher prefixes are allowed).
 2. Sort internally by sequence and numeric frame, but restore original row
    order on output.
-3. Split at sequence boundaries and every unexpected frame gap.
+3. Split at sequence boundaries and every unexpected raw-frame gap.
 4. Build only backward-looking windows; missing history is zero padded with a
    false context mask.
 5. Split train/validation by underlying sequence before feature statistics,
    augmentation, or window construction. Related hard effects from one source
    sequence must stay in the same split.
-6. The stride-4 fast track uses exact frame step 4. Dense evaluation may emit
-   every frame while selecting history at `t-4, t-8, ...`.
+6. Store two distinct steps. `raw_frame_step` defines contiguous segments;
+   `history_step` selects causal context inside a segment. Stride-4 training
+   uses `(raw=4, history=4)`. Dense evaluation uses `(raw=1, history=4)`, emits
+   every frame, and selects history at `t-4, t-8, ...`. A missing raw frame
+   resets the segment even if an older `t-4` row exists.
 7. A later dense/episode track will generate deterministic clean -> mask70 ->
    recovery phases and record phase/boundary metadata only for scoring. Episode
    phase is never a model input.
