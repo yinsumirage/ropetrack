@@ -160,6 +160,9 @@ def train_student(
     seed: int = 0,
     aug_noise_std: float = 0.05,
     aug_dropout: float = 0.1,
+    aug_bias_std: float = 0.0,
+    aug_bias_fixed: float = 0.0,
+    aug_scale_range: float = 0.0,
     alpha_l2: float = 1e-4,
     rope_loss_weight: float = 0.0,
     shuffle_rope: bool = False,
@@ -242,7 +245,16 @@ def train_student(
         train_loss_sum, train_batches = 0.0, 0
         for start in range(0, len(order), batch_size):
             batch = order[start : start + batch_size]
-            rope_batch, valid_batch = perturb_rope_reading(input_rope[batch], valid[batch], aug_noise_std, aug_dropout, rng)
+            rope_batch, valid_batch = perturb_rope_reading(
+                input_rope[batch],
+                valid[batch],
+                aug_noise_std,
+                aug_dropout,
+                rng,
+                bias_std=aug_bias_std,
+                bias_fixed=aug_bias_fixed,
+                scale_range=aug_scale_range,
+            )
             features = full_features(batch, rope_batch, valid_batch)
             features_t = torch.from_numpy(normalize_features(features, mean, std)).to(device)
             index_t = torch.from_numpy(batch).to(device)
@@ -280,6 +292,9 @@ def train_student(
         "feature_std": std.tolist(),
         "aug_noise_std": aug_noise_std,
         "aug_dropout": aug_dropout,
+        "aug_bias_std": aug_bias_std,
+        "aug_bias_fixed": aug_bias_fixed,
+        "aug_scale_range": aug_scale_range,
         "alpha_l2": alpha_l2,
         "rope_loss_weight": rope_loss_weight,
         "shuffle_rope": shuffle_rope,
@@ -322,6 +337,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--aug-noise-std", type=float, default=0.05)
     parser.add_argument("--aug-dropout", type=float, default=0.1)
+    parser.add_argument("--aug-bias-std", type=float, default=0.0)
+    parser.add_argument("--aug-bias-fixed", type=float, default=0.0)
+    parser.add_argument("--aug-scale-range", type=float, default=0.0)
     parser.add_argument("--alpha-l2", type=float, default=1e-4)
     parser.add_argument("--rope-loss-weight", type=float, default=0.0)
     parser.add_argument("--mano-cache", type=Path, default=None)
@@ -369,6 +387,9 @@ def main(argv: list[str] | None = None) -> dict:
         seed=args.seed,
         aug_noise_std=args.aug_noise_std,
         aug_dropout=args.aug_dropout,
+        aug_bias_std=args.aug_bias_std,
+        aug_bias_fixed=args.aug_bias_fixed,
+        aug_scale_range=args.aug_scale_range,
         alpha_l2=args.alpha_l2,
         rope_loss_weight=args.rope_loss_weight,
         shuffle_rope=args.shuffle_rope,

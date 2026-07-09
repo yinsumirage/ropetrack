@@ -26,7 +26,15 @@ def make_cell(root: Path, name: str, pa: float = 0.85, closure: float = 0.48, wi
         "mode": "optimize",
         "objective": "rope",
         "action_space": "flex15",
-        "rope_sensor": {"noise_std": 0.05, "dropout": 0.0, "seed": 0, "frac_valid_after": 1.0},
+        "rope_sensor": {
+            "noise_std": 0.05,
+            "bias_std": 0.025,
+            "bias_fixed": -0.05,
+            "scale_range": 0.1,
+            "dropout": 0.0,
+            "seed": 0,
+            "frac_valid_after": 1.0,
+        },
         "rope_residual": {"closure_frac": closure},
         "optimization": {"steps": 400, "lr": 32.0, "alpha_l2": 0.001, "max_alpha": 0.5, "gate_residual_threshold": 0.1},
         "alpha": {"mean_abs": 0.05, "max_abs": 0.4},
@@ -73,6 +81,9 @@ class SummarizeRunsTest(unittest.TestCase):
             self.assertAlmostEqual(winner["occluded_tip_delta_cm"], -0.5, places=6)
             self.assertAlmostEqual(winner["gate_threshold"], 0.1, places=6)
             self.assertAlmostEqual(winner["noise_std"], 0.05, places=6)
+            self.assertAlmostEqual(winner["bias_std"], 0.025, places=6)
+            self.assertAlmostEqual(winner["bias_fixed"], -0.05, places=6)
+            self.assertAlmostEqual(winner["scale_range"], 0.1, places=6)
 
             tsv = (out / "runs_summary.tsv").read_text(encoding="utf-8")
             self.assertEqual(len(tsv.strip().splitlines()), 3)  # header + 2 rows

@@ -34,16 +34,29 @@ def perturb_rope_reading(
     noise_std: float,
     dropout: float,
     rng: np.random.Generator,
+    *,
+    bias_std: float = 0.0,
+    bias_fixed: float = 0.0,
+    scale_range: float = 0.0,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Simulated imperfect rope sensor: seeded gaussian noise (clamped back to
-    [0, 1] like real labels) plus per-finger dropout that marks readings
-    invalid. Shared by the apply-time H5 ablation and student training
-    augmentation — one RNG draw order (normal, then uniform) everywhere.
+    """Simulated imperfect rope sensor, clamped back to [0, 1].
+
+    Perturbation order: scale * rope + per-finger bias + fixed bias +
+    gaussian noise, then dropout. Shared by apply-time ablations and student
+    training so both paths use one RNG order.
     """
     rope = np.asarray(input_rope, dtype=np.float32).copy()
     keep = np.asarray(valid, dtype=bool).copy()
+    if scale_range > 0.0:
+        scale = rng.uniform(1.0 - scale_range, 1.0 + scale_range, size=(rope.shape[0], 1)).astype(np.float32)
+        rope = rope * scale
+    if bias_std > 0.0:
+        rope = rope + rng.normal(scale=bias_std, size=rope.shape).astype(np.float32)
+    if bias_fixed != 0.0:
+        rope = rope + np.float32(bias_fixed)
     if noise_std > 0.0:
-        rope = np.clip(rope + rng.normal(scale=noise_std, size=rope.shape).astype(np.float32), 0.0, 1.0)
+        rope = rope + rng.normal(scale=noise_std, size=rope.shape).astype(np.float32)
+    rope = np.clip(rope, 0.0, 1.0)
     if dropout > 0.0:
         keep = keep & ~(rng.uniform(size=keep.shape) < dropout)
     rope[~keep] = 0.0

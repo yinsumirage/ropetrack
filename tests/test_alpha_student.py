@@ -147,8 +147,36 @@ class TrainStudentTest(unittest.TestCase):
         trainer = load_trainer()
         cache, teacher_alpha = synthetic_teacher()
         with tempfile.TemporaryDirectory() as tmp:
-            summary = self._train(trainer, cache, teacher_alpha, tmp, aug_noise_std=0.05, aug_dropout=0.1)
+            summary = self._train(
+                trainer,
+                cache,
+                teacher_alpha,
+                tmp,
+                aug_noise_std=0.05,
+                aug_dropout=0.1,
+                aug_bias_std=0.02,
+                aug_bias_fixed=0.01,
+                aug_scale_range=0.05,
+            )
             self.assertTrue(summary["beats_zero_baseline"])
+            config = summary["config"]
+            self.assertAlmostEqual(config["aug_bias_std"], 0.02)
+            self.assertAlmostEqual(config["aug_bias_fixed"], 0.01)
+            self.assertAlmostEqual(config["aug_scale_range"], 0.05)
+
+    def test_bias_scale_cli_parse(self):
+        trainer = load_trainer()
+        args = trainer.parse_args([
+            "--teacher-dir", "teacher",
+            "--action-space", "mult5",
+            "--out-dir", "out",
+            "--aug-bias-std", "0.05",
+            "--aug-bias-fixed", "-0.05",
+            "--aug-scale-range", "0.1",
+        ])
+        self.assertAlmostEqual(args.aug_bias_std, 0.05)
+        self.assertAlmostEqual(args.aug_bias_fixed, -0.05)
+        self.assertAlmostEqual(args.aug_scale_range, 0.1)
 
     def test_shuffled_rope_control_destroys_learning(self):
         trainer = load_trainer()

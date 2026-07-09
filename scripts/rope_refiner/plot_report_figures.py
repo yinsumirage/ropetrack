@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
-"""Report figures from the aggregated runs table (summarize_runs.py output).
+"""Report figures from aggregated or compact summary JSON rows.
 
-Two figures, both consuming runs_summary.json rows:
+Figures consume JSON rows:
 
 - ``dose_response``: rope residual closure (x) vs all-joint PA gain in mm (y).
   The P1 story in one picture: the default recipe sits near the origin, the
   strong recipes climb monotonically.
 - ``noise``: sensor noise std (x) vs all-joint PA gain in mm (y), one line
   per dropout level. Shows where the sensor-realism claim holds.
+- ``e1_calibration``: calibration perturbation magnitude (x) vs retained
+  all-joint gain (y), teacher vs student.
+- ``e2_scissors``: action-space dimension (x) vs gain (y), rope vs oracle
+  objectives.
 
 Rows are selected with a substring filter on the cell name so the same
 summary file can feed multiple figures.
@@ -34,6 +38,8 @@ def read_rows(summary_path: Path, cell_filter: str) -> list[dict]:
 
 
 def gain_mm(row: dict) -> float | None:
+    if row.get("gain_mm") is not None:
+        return float(row["gain_mm"])
     delta = row.get("all_joints_delta_cm")
     if delta is None:
         return None
@@ -87,10 +93,72 @@ def plot_noise(rows: list[dict], output: Path, title: str) -> None:
     plt.close(fig)
 
 
+def plot_e1_calibration(rows: list[dict], output: Path, title: str) -> None:
+    by_mode: dict[str, list[tuple[float, float]]] = {}
+    for row in rows:
+        if not str(row.get("cell") or "").startswith("bias_std_"):
+            continue
+        retention = row.get("retention_vs_clean")
+        bias_std = row.get("bias_std")
+        mode = row.get("mode")
+        if retention is None or bias_std in (None, "-") or mode not in {"optimize", "student"}:
+            continue
+        by_mode.setdefault(str(mode), []).append((float(bias_std), 100.0 * float(retention)))
+    if not by_mode:
+        raise ValueError("no bias_std rows with retention_vs_clean")
+    labels = {"optimize": "teacher", "student": "student"}
+    colors = {"optimize": "#d62728", "student": "#1f77b4"}
+    fig, ax = plt.subplots(figsize=(6, 4))
+    for mode in ("optimize", "student"):
+        points = sorted(by_mode.get(mode, []))
+        if points:
+            ax.plot([p[0] for p in points], [p[1] for p in points], "o-", label=labels[mode], color=colors[mode])
+    ax.axhline(60.0, color="gray", linewidth=0.8, linestyle="--", label="retrain gate")
+    ax.set_xlabel("per-finger bias std (normalized units)")
+    ax.set_ylabel("retained all-joint gain (%)")
+    ax.set_title(title)
+    ax.set_ylim(bottom=0.0)
+    ax.legend()
+    ax.grid(alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(output, dpi=200)
+    plt.close(fig)
+
+
+def plot_e2_scissors(rows: list[dict], output: Path, title: str) -> None:
+    by_objective: dict[str, list[tuple[int, float]]] = {}
+    for row in rows:
+        if row.get("cell") == "oracle_chain_pose45_l2_0p004":
+            continue
+        objective = row.get("objective")
+        dim = row.get("dim")
+        gain = gain_mm(row)
+        if objective not in {"rope", "oracle_tip", "oracle_chain"} or dim is None or gain is None:
+            continue
+        by_objective.setdefault(str(objective), []).append((int(dim), gain))
+    if not by_objective:
+        raise ValueError("no objective/dim/gain rows")
+    colors = {"rope": "#1f77b4", "oracle_tip": "#ff7f0e", "oracle_chain": "#2ca02c"}
+    fig, ax = plt.subplots(figsize=(6, 4))
+    for objective in ("rope", "oracle_tip", "oracle_chain"):
+        points = sorted(by_objective.get(objective, []))
+        if points:
+            ax.plot([p[0] for p in points], [p[1] for p in points], "o-", label=objective, color=colors[objective])
+    ax.set_xlabel("action-space dimension")
+    ax.set_ylabel("all-joint PA improvement (mm)")
+    ax.set_title(title)
+    ax.set_xticks([5, 15, 45])
+    ax.legend()
+    ax.grid(alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(output, dpi=200)
+    plt.close(fig)
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Report figures from runs_summary.json.")
-    parser.add_argument("--summary", type=Path, required=True, help="runs_summary.json from summarize_runs.py.")
-    parser.add_argument("--figure", choices=["dose_response", "noise"], required=True)
+    parser = argparse.ArgumentParser(description="Report figures from summary JSON rows.")
+    parser.add_argument("--summary", type=Path, required=True, help="Summary JSON rows.")
+    parser.add_argument("--figure", choices=["dose_response", "noise", "e1_calibration", "e2_scissors"], required=True)
     parser.add_argument("--cell-filter", default="", help="Substring filter on cell names (empty = all rows).")
     parser.add_argument("--title", default=None)
     parser.add_argument("--output", type=Path, required=True, help="Output image path (.png).")
@@ -104,8 +172,12 @@ def main(argv: list[str] | None = None) -> Path:
     title = args.title or args.figure.replace("_", " ")
     if args.figure == "dose_response":
         plot_dose_response(rows, args.output, title)
-    else:
+    elif args.figure == "noise":
         plot_noise(rows, args.output, title)
+    elif args.figure == "e1_calibration":
+        plot_e1_calibration(rows, args.output, title)
+    else:
+        plot_e2_scissors(rows, args.output, title)
     print(f"Wrote figure: {args.output}")
     return args.output
 

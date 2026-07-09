@@ -18,6 +18,7 @@ An action space maps a low-dimensional alpha vector to a MANO hand_pose
   per joint). Matched capacity: the rope gives one constraint per finger,
   so one dof per finger leaves no within-finger null space, while the
   additive form still fixes the multiplicative dead zone.
+- ``pose45``: direct additive 45-dim axis-angle delta on ``hand_pose``.
 
 Alpha column conventions:
 
@@ -25,6 +26,7 @@ Alpha column conventions:
   middle, ring, pinky).
 - ``mult15`` / ``flex15``: column ``j`` corresponds to MANO hand joint ``j``
   (pose dims ``3j..3j+2``). Use ``JOINT_TO_FINGER`` to aggregate per finger.
+- ``pose45``: columns are raw hand_pose dims ``0..44``.
 
 Only numpy is imported at module level so numpy-only analysis scripts can
 use the constants; torch is imported lazily inside torch functions.
@@ -44,7 +46,7 @@ FINGER_POSE_GROUPS = (
     (6, 7, 8),     # pinky
 )
 
-ACTION_SPACES = ("mult5", "mult15", "flex15", "flex5")
+ACTION_SPACES = ("mult5", "mult15", "flex15", "flex5", "pose45")
 FLEX_ACTION_SPACES = ("flex15", "flex5")
 
 # MANO hand joint id (0..14) -> finger index (0..4) in FINGER_ORDER.
@@ -59,6 +61,8 @@ def alpha_dim(action_space: str) -> int:
         return 5
     if action_space in {"mult15", "flex15"}:
         return 15
+    if action_space == "pose45":
+        return 45
     raise ValueError(f"unsupported action space: {action_space}")
 
 
@@ -84,6 +88,8 @@ def apply_action_np(
         per_joint = alpha[:, JOINT_TO_FINGER] if action_space == "mult5" else alpha
         scale = np.repeat(per_joint, 3, axis=1)
         return base + scale * base
+    if action_space == "pose45":
+        return base + alpha
 
     if directions is None:
         raise ValueError(f"{action_space} requires per-sample directions [N, 15, 3]")
@@ -108,6 +114,8 @@ def apply_action_torch(base_hand_pose, alpha, action_space: str, directions=None
             per_joint = alpha
         scale = per_joint.repeat_interleave(3, dim=1)
         return base_hand_pose + scale * base_hand_pose
+    if action_space == "pose45":
+        return base_hand_pose + alpha
 
     if directions is None:
         raise ValueError(f"{action_space} requires per-sample directions [N, 15, 3]")
@@ -126,6 +134,12 @@ def per_finger_alpha_abs(alpha: np.ndarray, action_space: str) -> np.ndarray:
     _check_alpha(alpha.shape, action_space)
     if action_space in {"mult5", "flex5"}:
         return alpha
+    if action_space == "pose45":
+        out = np.zeros((alpha.shape[0], 5), dtype=np.float32)
+        for finger_idx, joints in enumerate(FINGER_POSE_GROUPS):
+            dims = [3 * joint + axis for joint in joints for axis in range(3)]
+            out[:, finger_idx] = alpha[:, dims].mean(axis=1)
+        return out
     out = np.zeros((alpha.shape[0], 5), dtype=np.float32)
     for finger_idx, joints in enumerate(FINGER_POSE_GROUPS):
         out[:, finger_idx] = alpha[:, list(joints)].mean(axis=1)

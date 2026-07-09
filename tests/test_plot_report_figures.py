@@ -26,6 +26,19 @@ def summary_rows():
         {"cell": "noise/n005_d0", "closure": 0.42, "all_joints_delta_cm": -0.1384, "noise_std": 0.05, "dropout": 0.0},
         {"cell": "noise/n010_d0", "closure": 0.49, "all_joints_delta_cm": -0.0778, "noise_std": 0.10, "dropout": 0.0},
         {"cell": "noise/n005_d02", "closure": 0.42, "all_joints_delta_cm": -0.1008, "noise_std": 0.05, "dropout": 0.2},
+        {"cell": "bias_std_0p05", "mode": "optimize", "bias_std": "0.050000", "retention_vs_clean": 0.82},
+        {"cell": "bias_std_0p05", "mode": "student", "bias_std": "0.050000", "retention_vs_clean": 0.94},
+        {"cell": "bias_std_0p10", "mode": "optimize", "bias_std": "0.100000", "retention_vs_clean": 0.46},
+        {"cell": "bias_std_0p10", "mode": "student", "bias_std": "0.100000", "retention_vs_clean": 0.75},
+        {"cell": "rope_mult5_gate010", "objective": "rope", "dim": 5, "gain_mm": 1.55},
+        {"cell": "rope_flex15_gate010", "objective": "rope", "dim": 15, "gain_mm": 1.68},
+        {"cell": "rope_pose45_gate010", "objective": "rope", "dim": 45, "gain_mm": 1.77},
+        {"cell": "oracle_tip_mult5", "objective": "oracle_tip", "dim": 5, "gain_mm": 1.83},
+        {"cell": "oracle_tip_flex15", "objective": "oracle_tip", "dim": 15, "gain_mm": 1.97},
+        {"cell": "oracle_tip_pose45", "objective": "oracle_tip", "dim": 45, "gain_mm": 3.15},
+        {"cell": "oracle_chain_mult5", "objective": "oracle_chain", "dim": 5, "gain_mm": 1.59},
+        {"cell": "oracle_chain_flex15", "objective": "oracle_chain", "dim": 15, "gain_mm": 1.83},
+        {"cell": "oracle_chain_pose45", "objective": "oracle_chain", "dim": 45, "gain_mm": 3.39},
     ]
 
 
@@ -85,6 +98,28 @@ class PlotReportFiguresTest(unittest.TestCase):
                     "--summary", str(summary), "--figure", "noise",
                     "--cell-filter", "sweep/", "--output", str(Path(tmp) / "x.png"),
                 ])
+
+    def test_e1_calibration_figure(self):
+        script = load_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            summary = self._write_summary(Path(tmp))
+            out = Path(tmp) / "e1.png"
+            script.main([
+                "--summary", str(summary), "--figure", "e1_calibration",
+                "--cell-filter", "bias_std_", "--output", str(out),
+            ])
+            self.assertTrue(out.exists())
+
+    def test_e2_scissors_figure(self):
+        script = load_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            summary = self._write_summary(Path(tmp))
+            out = Path(tmp) / "e2.png"
+            script.main([
+                "--summary", str(summary), "--figure", "e2_scissors",
+                "--output", str(out),
+            ])
+            self.assertTrue(out.exists())
 
 
 if __name__ == "__main__":

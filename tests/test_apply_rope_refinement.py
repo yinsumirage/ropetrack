@@ -278,6 +278,19 @@ class ParseArgsTest(unittest.TestCase):
         self.assertAlmostEqual(args.opt_max_alpha, 0.5)
         self.assertIsNone(args.gate_residual_threshold)
 
+    def test_pose45_and_bias_scale_cli_parse(self):
+        script = load_apply_script()
+        args = script.parse_args(self.REQUIRED + [
+            "--action-space", "pose45",
+            "--rope-noise-bias-std", "0.05",
+            "--rope-noise-bias-fixed", "-0.05",
+            "--rope-noise-scale-range", "0.1",
+        ])
+        self.assertEqual(args.action_space, "pose45")
+        self.assertAlmostEqual(args.rope_noise_bias_std, 0.05)
+        self.assertAlmostEqual(args.rope_noise_bias_fixed, -0.05)
+        self.assertAlmostEqual(args.rope_noise_scale_range, 0.1)
+
     def test_oracle_requires_optimize_mode(self):
         script = load_apply_script()
         with self.assertRaises(ValueError):
@@ -357,6 +370,17 @@ class OptimizeAlphaToyTest(unittest.TestCase):
             refined_res = rope_residual_for_pose(script, refined, target)
             self.assertLess(refined_res, 0.5 * base_res)
 
+    def test_pose45_rope_objective_reduces_residual(self):
+        script = load_apply_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            (refined, alpha, directions), cache = self._run(script, tmp, "pose45", lr=20.0, steps=80)
+            self.assertEqual(alpha.shape, (self.NUM, 45))
+            self.assertIsNone(directions)
+            target = cache["input_rope_norm"]
+            base_res = rope_residual_for_pose(script, cache["base_hand_pose"], target)
+            refined_res = rope_residual_for_pose(script, refined, target)
+            self.assertLess(refined_res, 0.7 * base_res)
+
     def test_per_finger_direction_normalization(self):
         # With two active joints per finger, flex5 normalizes the finger's
         # concatenated 9-dim gradient to unit length, so individual joint
@@ -408,6 +432,20 @@ class OptimizeAlphaToyTest(unittest.TestCase):
             self.assertTrue(np.all(alpha[:, other_joints] == 0.0))
             self.assertGreater(float(np.abs(alpha[:, thumb_joints]).max()), 1e-5)
 
+    def test_gating_masks_pose45_finger_dims(self):
+        script = load_apply_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = toy_cache(self.NUM, self.BASE_THETA, self.TARGET_THETA)
+            base_val = toy_rope_norm(self.BASE_THETA)
+            target_row = np.asarray([toy_rope_norm(self.TARGET_THETA)] + [base_val] * 4, dtype=np.float32)
+            cache["input_rope_norm"] = np.tile(target_row, (self.NUM, 1))
+            (refined, alpha, _), cache = self._run(script, tmp, "pose45", gate_threshold=0.05, cache=cache, lr=20.0, steps=80)
+
+            thumb_dims = [3 * joint + axis for joint in FINGER_POSE_GROUPS[0] for axis in range(3)]
+            other_dims = [d for d in range(45) if d not in thumb_dims]
+            self.assertTrue(np.all(alpha[:, other_dims] == 0.0))
+            self.assertGreater(float(np.abs(alpha[:, thumb_dims]).max()), 1e-5)
+
     def test_gate_from_cache_and_expand(self):
         script = load_apply_script()
         cache = {
@@ -427,6 +465,9 @@ class OptimizeAlphaToyTest(unittest.TestCase):
         for joint in FINGER_POSE_GROUPS[0]:
             self.assertEqual(expanded[0, joint], 1.0)
         self.assertAlmostEqual(float(expanded.sum()), 3.0)
+        expanded45 = script.expand_gate_to_alpha(gate, "pose45")
+        self.assertEqual(expanded45.shape, (1, 45))
+        self.assertAlmostEqual(float(expanded45.sum()), 9.0)
         np.testing.assert_array_equal(script.expand_gate_to_alpha(gate, "mult5"), gate.astype(np.float32))
 
     def test_ho3d_dataset_uses_openpose_wrapper_chains(self):
@@ -528,6 +569,15 @@ class PerturbRopeCacheTest(unittest.TestCase):
         self.assertLessEqual(float(cache_a["input_rope_norm"].max()), 1.0)
         # gt stays clean
         np.testing.assert_array_equal(cache_a["gt_rope_norm"], np.full((16, 5), 0.5, dtype=np.float32))
+
+    def test_bias_scale_are_applied_to_cache(self):
+        script = load_apply_script()
+        cache = self._cache()
+        clean = cache["input_rope_norm"].copy()
+        script.perturb_rope_cache(
+            cache, 0.0, 0.0, 7, bias_std=0.0, bias_fixed=0.05, scale_range=0.0
+        )
+        np.testing.assert_allclose(cache["input_rope_norm"], np.clip(clean + 0.05, 0.0, 1.0), atol=1e-7)
 
     def test_dropout_marks_invalid_and_zeroes_reading(self):
         script = load_apply_script()

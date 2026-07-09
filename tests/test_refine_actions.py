@@ -34,6 +34,7 @@ class ActionSpaceTest(unittest.TestCase):
         self.assertEqual(alpha_dim("mult15"), 15)
         self.assertEqual(alpha_dim("flex15"), 15)
         self.assertEqual(alpha_dim("flex5"), 5)
+        self.assertEqual(alpha_dim("pose45"), 45)
         with self.assertRaises(ValueError):
             alpha_dim("free45")
 
@@ -95,6 +96,14 @@ class ActionSpaceTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             apply_action_np(self.base, alpha, "flex5")
 
+    def test_pose45_adds_raw_pose_delta(self):
+        alpha = np.zeros((4, 45), dtype=np.float32)
+        alpha[:, 36:45] = 0.2
+        refined = apply_action_np(self.base, alpha, "pose45")
+        expected = self.base.copy()
+        expected[:, 36:45] += 0.2
+        np.testing.assert_allclose(refined, expected, atol=1e-6)
+
     def test_alpha_shape_validation(self):
         with self.assertRaises(ValueError):
             apply_action_np(self.base, np.zeros((4, 15), dtype=np.float32), "mult5")
@@ -109,6 +118,7 @@ class ActionSpaceTest(unittest.TestCase):
             ("mult15", rng.uniform(-0.4, 0.4, size=(4, 15)).astype(np.float32), None),
             ("flex15", rng.uniform(-0.4, 0.4, size=(4, 15)).astype(np.float32), directions),
             ("flex5", rng.uniform(-0.4, 0.4, size=(4, 5)).astype(np.float32), directions),
+            ("pose45", rng.uniform(-0.4, 0.4, size=(4, 45)).astype(np.float32), None),
         ]
         for action_space, alpha, dirs in cases:
             with self.subTest(action_space=action_space):
@@ -140,6 +150,13 @@ class ActionSpaceTest(unittest.TestCase):
         out = per_finger_alpha_abs(alpha15, "flex15")
         self.assertAlmostEqual(float(out[0, 0]), 0.3, places=6)
         self.assertAlmostEqual(float(out[0, 1]), 0.0, places=6)
+
+        alpha45 = np.zeros((1, 45), dtype=np.float32)
+        thumb_dims = [3 * joint + axis for joint in FINGER_POSE_GROUPS[0] for axis in range(3)]
+        alpha45[0, thumb_dims] = np.arange(1, 10, dtype=np.float32)
+        out45 = per_finger_alpha_abs(alpha45, "pose45")
+        self.assertAlmostEqual(float(out45[0, 0]), 5.0, places=6)
+        self.assertAlmostEqual(float(out45[0, 1]), 0.0, places=6)
 
     def test_per_finger_pose_magnitude(self):
         base = np.zeros((1, 45), dtype=np.float32)

@@ -6,6 +6,7 @@ from ropetrack.refine.analysis import (
     bucket_indices,
     json_sanitize,
     pearson,
+    perturb_rope_reading,
     quantile_bucket_edges,
     rope_abs_residual,
     spearman,
@@ -69,6 +70,47 @@ class RopeResidualTest(unittest.TestCase):
         self.assertAlmostEqual(summary["base"]["mean_abs"], 0.5, places=6)
         self.assertAlmostEqual(summary["closure_frac"], 0.5, places=6)
         self.assertEqual(summary["num_valid_fingers"], 1)
+
+
+class PerturbRopeReadingTest(unittest.TestCase):
+    def test_bias_and_scale_are_seeded_and_clipped(self):
+        rope = np.full((8, 5), 0.5, dtype=np.float32)
+        valid = np.ones((8, 5), dtype=bool)
+        rng_a = np.random.default_rng(13)
+        rng_b = np.random.default_rng(13)
+
+        out_a, keep_a = perturb_rope_reading(
+            rope, valid, 0.2, 0.0, rng_a, bias_std=0.1, bias_fixed=0.05, scale_range=0.2
+        )
+        out_b, keep_b = perturb_rope_reading(
+            rope, valid, 0.2, 0.0, rng_b, bias_std=0.1, bias_fixed=0.05, scale_range=0.2
+        )
+
+        np.testing.assert_array_equal(out_a, out_b)
+        np.testing.assert_array_equal(keep_a, keep_b)
+        self.assertGreaterEqual(float(out_a.min()), 0.0)
+        self.assertLessEqual(float(out_a.max()), 1.0)
+        self.assertGreater(float(np.abs(out_a - rope).mean()), 0.02)
+
+    def test_scale_is_common_mode_per_sample(self):
+        rope = np.full((32, 5), 0.5, dtype=np.float32)
+        valid = np.ones((32, 5), dtype=bool)
+        out, keep = perturb_rope_reading(
+            rope, valid, 0.0, 0.0, np.random.default_rng(17), scale_range=0.2
+        )
+
+        np.testing.assert_array_equal(keep, valid)
+        np.testing.assert_allclose(out - out[:, :1], 0.0, atol=1e-7)
+        self.assertGreater(float(out[:, 0].max() - out[:, 0].min()), 0.05)
+
+    def test_bias_std_is_per_finger(self):
+        rope = np.full((32, 5), 0.5, dtype=np.float32)
+        valid = np.ones((32, 5), dtype=bool)
+        out, _ = perturb_rope_reading(
+            rope, valid, 0.0, 0.0, np.random.default_rng(19), bias_std=0.05
+        )
+
+        self.assertGreater(float(np.abs(out[:, 0] - out[:, 1]).mean()), 0.01)
 
 
 class CorrelationTest(unittest.TestCase):

@@ -34,6 +34,9 @@ COLUMNS = (
     "action_space",
     "gate_threshold",
     "noise_std",
+    "bias_std",
+    "bias_fixed",
+    "scale_range",
     "dropout",
     "closure",
     "alpha_mean_abs",
@@ -90,6 +93,9 @@ def collect_cell(cell_dir: Path, root: Path) -> dict:
     row["frac_fingers_gated"] = summary.get("gating", {}).get("frac_fingers_gated")
     sensor = summary.get("rope_sensor", {})
     row["noise_std"] = sensor.get("noise_std")
+    row["bias_std"] = sensor.get("bias_std")
+    row["bias_fixed"] = sensor.get("bias_fixed")
+    row["scale_range"] = sensor.get("scale_range")
     row["dropout"] = sensor.get("dropout")
 
     sliced_path = find_first(cell_dir, ("sliced/sliced_scores.json", "sliced_scores.json"))
