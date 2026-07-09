@@ -288,6 +288,124 @@ def _contiguous_segments(sample_ids, raw_frame_step: int):
     return ids, segments
 
 
+def temporal_feature_stats(
+    features70: np.ndarray, train_idx: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    features = np.asarray(features70, dtype=np.float32)
+    if features.ndim != 2 or features.shape[1] != 70:
+        raise ValueError(f"features70 must be [N, 70], got {features.shape}")
+    if not np.isfinite(features).all():
+        raise ValueError("features70 must contain only finite values")
+    rows = np.asarray(train_idx)
+    if rows.ndim != 1 or rows.size == 0:
+        raise ValueError("train_idx must be a non-empty one-dimensional index")
+    if not np.issubdtype(rows.dtype, np.integer) or np.issubdtype(rows.dtype, np.bool_):
+        raise ValueError("train_idx must contain integers")
+    rows = rows.astype(np.int64, copy=False)
+    if np.any(rows < 0) or np.any(rows >= len(features)):
+        raise ValueError("train_idx contains an out-of-range row")
+    if len(np.unique(rows)) != len(rows):
+        raise ValueError("train_idx contains duplicate rows")
+    train = features[rows]
+    return (
+        train.mean(axis=0).astype(np.float32),
+        np.maximum(train.std(axis=0), 1e-4).astype(np.float32),
+    )
+
+
+def prepare_temporal_cache(
+    cache: dict[str, np.ndarray],
+    sensor_mode: str,
+    seed: int,
+    raw_frame_step: int = 1,
+    aug_noise_std: float = 0.0,
+    aug_dropout: float = 0.0,
+    aug_bias_std: float = 0.0,
+    aug_scale_range: float = 0.0,
+) -> dict[str, np.ndarray]:
+    if sensor_mode not in {"normal", "zero"}:
+        raise ValueError(f"unsupported sensor_mode: {sensor_mode}")
+    raw_frame_step = _positive_int("raw_frame_step", raw_frame_step)
+    values = {
+        "aug_noise_std": float(aug_noise_std),
+        "aug_dropout": float(aug_dropout),
+        "aug_bias_std": float(aug_bias_std),
+        "aug_scale_range": float(aug_scale_range),
+    }
+    if any(not math.isfinite(value) for value in values.values()):
+        raise ValueError("augmentation controls must be finite")
+    if values["aug_noise_std"] < 0.0 or values["aug_bias_std"] < 0.0:
+        raise ValueError("augmentation standard deviations must be non-negative")
+    if not 0.0 <= values["aug_dropout"] <= 1.0:
+        raise ValueError("aug_dropout must be in [0, 1]")
+    if not 0.0 <= values["aug_scale_range"] <= 1.0:
+        raise ValueError("aug_scale_range must be in [0, 1]")
+
+    out = copy.deepcopy(cache)
+    ids, segments = _contiguous_segments(out["sample_id"], raw_frame_step)
+    rope = np.asarray(out["input_rope_norm"], dtype=np.float32).copy()
+    valid = np.asarray(out["rope_valid"], dtype=bool).copy()
+    if rope.shape != (len(ids), 5) or valid.shape != rope.shape:
+        raise ValueError(
+            f"input_rope_norm and rope_valid must be {(len(ids), 5)}, "
+            f"got {rope.shape} and {valid.shape}"
+        )
+    if not np.isfinite(rope).all():
+        raise ValueError("input_rope_norm must contain only finite values")
+
+    if sensor_mode == "zero":
+        rope.fill(0.0)
+        valid.fill(False)
+        out["input_rope_norm"] = rope
+        out["rope_valid"] = valid
+        return out
+
+    rng = np.random.default_rng(seed)
+    for segment in segments:
+        rows = np.asarray([row for _, row in segment], dtype=np.int64)
+        scale = 1.0 + rng.uniform(
+            -values["aug_scale_range"], values["aug_scale_range"]
+        )
+        bias = rng.normal(0.0, values["aug_bias_std"], size=5).astype(np.float32)
+        rope[rows] = rope[rows] * np.float32(scale) + bias
+    if values["aug_noise_std"] > 0.0:
+        rope += rng.normal(0.0, values["aug_noise_std"], size=rope.shape).astype(
+            np.float32
+        )
+    rope = np.clip(rope, 0.0, 1.0)
+    if values["aug_dropout"] > 0.0:
+        valid &= rng.random(valid.shape) >= values["aug_dropout"]
+    rope[~valid] = 0.0
+    out["input_rope_norm"] = rope
+    out["rope_valid"] = valid
+    return out
+
+
+def shuffle_history(
+    windows: np.ndarray, valid: np.ndarray, seed: int
+) -> np.ndarray:
+    source = np.asarray(windows)
+    mask = np.asarray(valid)
+    if source.ndim < 3:
+        raise ValueError(f"windows must be [N, history, ...], got {source.shape}")
+    if mask.dtype != np.bool_ or mask.shape != source.shape[:2]:
+        raise ValueError(
+            f"valid must be a boolean mask with shape {source.shape[:2]}, got {mask.shape}"
+        )
+    lengths = mask.sum(axis=1)
+    expected = np.arange(mask.shape[1])[None, :] < lengths[:, None]
+    if np.any(lengths <= 0) or not np.array_equal(mask, expected):
+        raise ValueError("valid must be non-empty and left-aligned")
+
+    out = source.copy()
+    rng = np.random.default_rng(seed)
+    for row, length in enumerate(lengths):
+        history = int(length) - 1
+        if history > 1:
+            out[row, :history] = source[row, rng.permutation(history)]
+    return out
+
+
 def build_causal_windows(
     sample_ids,
     features,
