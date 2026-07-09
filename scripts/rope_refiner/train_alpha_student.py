@@ -46,6 +46,7 @@ from ropetrack.refine.alpha_student import (
     save_student_checkpoint,
 )
 from ropetrack.refine.analysis import json_sanitize, perturb_rope_reading
+from ropetrack.refine.temporal import deterministic_sequence_split
 from ropetrack.rope import FINGER_CHAINS
 
 
@@ -96,10 +97,19 @@ def load_teacher_dirs(teacher_dirs: list[Path]) -> tuple[dict[str, np.ndarray], 
     return merged, np.concatenate(alphas, axis=0).astype(np.float32), sources
 
 
-def shuffle_rope_rows(cache: dict[str, np.ndarray], seed: int) -> None:
+def shuffle_rope_rows(
+    cache: dict[str, np.ndarray],
+    seed: int,
+    row_groups: tuple[np.ndarray, ...] | None = None,
+) -> None:
     """Control experiment: destroy per-sample rope information in place."""
     rng = np.random.default_rng(seed)
-    perm = rng.permutation(len(cache["sample_id"]))
+    if row_groups is None:
+        perm = rng.permutation(len(cache["sample_id"]))
+    else:
+        perm = np.arange(len(cache["sample_id"]))
+        for rows in row_groups:
+            perm[rows] = rng.permutation(rows)
     for key in ("base_rope_norm", "input_rope_norm", "rope_valid"):
         cache[key] = np.asarray(cache[key])[perm]
 
@@ -158,6 +168,8 @@ def train_student(
     patience: int = 20,
     val_frac: float = 0.1,
     seed: int = 0,
+    split_by: str = "frame",
+    split_seed: int | None = None,
     aug_noise_std: float = 0.05,
     aug_dropout: float = 0.1,
     aug_bias_std: float = 0.0,
@@ -175,19 +187,36 @@ def train_student(
 ) -> dict:
     if action_space not in ACTION_SPACES:
         raise ValueError(f"unsupported action space: {action_space}")
+    if split_by not in {"frame", "sequence"}:
+        raise ValueError(f"unsupported split_by: {split_by}")
+    if split_by == "frame" and split_seed is not None:
+        raise ValueError("split_seed is sequence-only; use split_by='sequence'")
     out_dim = alpha_dim(action_space)
     if teacher_alpha.shape[1] != out_dim:
         raise ValueError(f"teacher alpha dim {teacher_alpha.shape[1]} != {out_dim} for {action_space}")
 
     rng = np.random.default_rng(seed)
     torch.manual_seed(seed)
-    if shuffle_rope:
+    if shuffle_rope and split_by == "frame":
         shuffle_rope_rows(cache, seed + 1)
 
     num = len(cache["sample_id"])
-    perm = rng.permutation(num)
-    val_count = max(1, int(round(num * val_frac)))
-    val_idx, train_idx = perm[:val_count], perm[val_count:]
+    effective_split_seed = seed if split_seed is None else split_seed
+    if split_by == "frame":
+        perm = rng.permutation(num)
+        val_count = max(1, int(round(num * val_frac)))
+        val_idx, train_idx = perm[:val_count], perm[val_count:]
+        train_sequences: list[str] = []
+        val_sequences: list[str] = []
+    else:
+        split = deterministic_sequence_split(
+            cache["sample_id"], val_frac, effective_split_seed
+        )
+        train_idx, val_idx = split.train_idx, split.val_idx
+        train_sequences = list(split.train_sequences)
+        val_sequences = list(split.val_sequences)
+        if shuffle_rope:
+            shuffle_rope_rows(cache, seed + 1, (train_idx, val_idx))
     if len(train_idx) == 0:
         raise ValueError("no training samples left after validation split")
 
@@ -299,6 +328,10 @@ def train_student(
         "rope_loss_weight": rope_loss_weight,
         "shuffle_rope": shuffle_rope,
         "seed": seed,
+        "split_by": split_by,
+        "split_seed": effective_split_seed,
+        "train_sequences": train_sequences,
+        "val_sequences": val_sequences,
         "num_train": int(len(train_idx)),
         "num_val": int(len(val_idx)),
         "sources": sources or [],
@@ -335,6 +368,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--patience", type=int, default=20)
     parser.add_argument("--val-frac", type=float, default=0.1)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--split-by", choices=("frame", "sequence"), default="frame",
+                        help="Validation split unit; sequence prevents frame leakage.")
+    parser.add_argument("--split-seed", type=int, default=None,
+                        help="Sequence-only split seed; defaults to --seed.")
     parser.add_argument("--aug-noise-std", type=float, default=0.05)
     parser.add_argument("--aug-dropout", type=float, default=0.1)
     parser.add_argument("--aug-bias-std", type=float, default=0.0)
@@ -385,6 +422,8 @@ def main(argv: list[str] | None = None) -> dict:
         patience=args.patience,
         val_frac=args.val_frac,
         seed=args.seed,
+        split_by=args.split_by,
+        split_seed=args.split_seed,
         aug_noise_std=args.aug_noise_std,
         aug_dropout=args.aug_dropout,
         aug_bias_std=args.aug_bias_std,

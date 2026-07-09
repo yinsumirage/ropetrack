@@ -23,6 +23,7 @@ from ropetrack.refine.alpha_student import (
     save_student_checkpoint,
     student_alpha,
 )
+from ropetrack.refine.temporal import deterministic_sequence_split
 
 from test_apply_rope_refinement import FakeMano, toy_cache, write_toy_mano_cache
 
@@ -130,6 +131,189 @@ class TrainStudentTest(unittest.TestCase):
         )
         params.update(overrides)
         return trainer.train_student(cache, teacher_alpha, "mult5", Path(tmp) / "out", **params)
+
+    def test_framewise_sequence_split_is_recorded_and_disjoint(self):
+        trainer = load_trainer()
+        cache, teacher_alpha = synthetic_teacher(num=20)
+        cache["sample_id"] = np.asarray([
+            f"S{row // 4}/{row % 4:04d}" for row in range(20)
+        ])
+        split = deterministic_sequence_split(
+            cache["sample_id"], val_fraction=0.2, seed=20260710
+        )
+        expected_mean, expected_std = feature_stats(
+            features_from_cache(cache)[split.train_idx]
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            first = self._train(
+                trainer,
+                cache,
+                teacher_alpha,
+                tmp,
+                hidden_dim=8,
+                batch_size=20,
+                max_epochs=1,
+                patience=1,
+                split_by="sequence",
+                split_seed=20260710,
+            )["config"]
+            second = self._train(
+                trainer,
+                cache,
+                teacher_alpha,
+                tmp,
+                hidden_dim=8,
+                batch_size=20,
+                max_epochs=1,
+                patience=1,
+                split_by="sequence",
+                split_seed=20260710,
+            )["config"]
+
+        self.assertEqual(first["split_by"], "sequence")
+        self.assertEqual(first["split_seed"], 20260710)
+        self.assertTrue(first["train_sequences"])
+        self.assertTrue(first["val_sequences"])
+        self.assertTrue(set(first["train_sequences"]).isdisjoint(first["val_sequences"]))
+        self.assertEqual(first["num_train"], 4 * len(first["train_sequences"]))
+        self.assertEqual(first["num_val"], 4 * len(first["val_sequences"]))
+        self.assertEqual(first["train_sequences"], second["train_sequences"])
+        self.assertEqual(first["val_sequences"], second["val_sequences"])
+        np.testing.assert_allclose(first["feature_mean"], expected_mean)
+        np.testing.assert_allclose(first["feature_std"], expected_std)
+
+    def test_default_frame_split_preserves_legacy_indices_and_records_metadata(self):
+        trainer = load_trainer()
+        cache, teacher_alpha = synthetic_teacher(num=20)
+        seed = 13
+        val_count = max(1, int(round(len(teacher_alpha) * 0.2)))
+        permutation = np.random.default_rng(seed).permutation(len(teacher_alpha))
+        expected_train_idx = permutation[val_count:]
+        expected_mean, expected_std = feature_stats(
+            features_from_cache(cache)[expected_train_idx]
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = self._train(
+                trainer,
+                cache,
+                teacher_alpha,
+                tmp,
+                hidden_dim=8,
+                batch_size=20,
+                max_epochs=1,
+                patience=1,
+                seed=seed,
+            )["config"]
+
+        self.assertEqual(config["split_by"], "frame")
+        self.assertEqual(config["split_seed"], seed)
+        self.assertEqual(config["train_sequences"], [])
+        self.assertEqual(config["val_sequences"], [])
+        self.assertEqual(config["num_train"], len(expected_train_idx))
+        self.assertEqual(config["num_val"], val_count)
+        np.testing.assert_allclose(config["feature_mean"], expected_mean)
+        np.testing.assert_allclose(config["feature_std"], expected_std)
+
+    def test_invalid_split_by_raises(self):
+        trainer = load_trainer()
+        cache, teacher_alpha = synthetic_teacher(num=20)
+        with tempfile.TemporaryDirectory() as tmp, self.assertRaisesRegex(
+            ValueError, "split_by"
+        ):
+            self._train(
+                trainer,
+                cache,
+                teacher_alpha,
+                tmp,
+                max_epochs=1,
+                patience=1,
+                split_by="sample",
+            )
+
+    def test_frame_split_rejects_sequence_only_split_seed(self):
+        trainer = load_trainer()
+        cache, teacher_alpha = synthetic_teacher(num=20)
+        with tempfile.TemporaryDirectory() as tmp, self.assertRaisesRegex(
+            ValueError, "split_seed is sequence-only"
+        ):
+            self._train(
+                trainer,
+                cache,
+                teacher_alpha,
+                tmp,
+                max_epochs=1,
+                patience=1,
+                split_by="frame",
+                split_seed=20260710,
+            )
+
+    def test_sequence_shuffle_stays_within_split(self):
+        trainer = load_trainer()
+        cache, teacher_alpha = synthetic_teacher(num=20)
+        cache["sample_id"] = np.asarray([
+            f"S{row // 4}/{row % 4:04d}" for row in range(20)
+        ])
+        split = deterministic_sequence_split(
+            cache["sample_id"], val_fraction=0.2, seed=20260710
+        )
+        row_value = np.arange(20, dtype=np.float32)[:, None]
+        cache["base_rope_norm"] = np.repeat(row_value, 5, axis=1)
+        cache["input_rope_norm"] = np.repeat(row_value + 100.0, 5, axis=1)
+        base_before = cache["base_rope_norm"].copy()
+        input_before = cache["input_rope_norm"].copy()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self._train(
+                trainer,
+                cache,
+                teacher_alpha,
+                tmp,
+                hidden_dim=8,
+                batch_size=20,
+                max_epochs=1,
+                patience=1,
+                split_by="sequence",
+                split_seed=20260710,
+                shuffle_rope=True,
+            )
+
+        for rows in (split.train_idx, split.val_idx):
+            np.testing.assert_array_equal(
+                np.sort(cache["base_rope_norm"][rows, 0]),
+                np.sort(base_before[rows, 0]),
+            )
+            np.testing.assert_array_equal(
+                np.sort(cache["input_rope_norm"][rows, 0]),
+                np.sort(input_before[rows, 0]),
+            )
+
+    def test_split_cli_parse(self):
+        trainer = load_trainer()
+        args = trainer.parse_args([
+            "--teacher-dir", "teacher",
+            "--action-space", "mult5",
+            "--out-dir", "out",
+            "--split-by", "sequence",
+            "--split-seed", "20260710",
+        ])
+        self.assertEqual(args.split_by, "sequence")
+        self.assertEqual(args.split_seed, 20260710)
+
+        defaults = trainer.parse_args([
+            "--teacher-dir", "teacher",
+            "--action-space", "mult5",
+            "--out-dir", "out",
+        ])
+        self.assertEqual(defaults.split_by, "frame")
+        self.assertIsNone(defaults.split_seed)
+        with self.assertRaises(SystemExit):
+            trainer.parse_args([
+                "--teacher-dir", "teacher",
+                "--action-space", "mult5",
+                "--out-dir", "out",
+                "--split-by", "sample",
+            ])
 
     def test_learns_residual_mapping_and_beats_zero_baseline(self):
         trainer = load_trainer()
