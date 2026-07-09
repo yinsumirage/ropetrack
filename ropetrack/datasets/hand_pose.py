@@ -342,7 +342,7 @@ def validate_eval_protocol(adapter: str, root: Path, samples: list, count: int |
     for idx, sample in enumerate(samples[:check_count]):
         with sample.meta_path.open("rb") as f:
             meta = pickle.load(f, encoding="latin1")
-        meta_root = np.asarray(meta["handJoints3D"], dtype=np.float64)[0]
+        meta_root = np.asarray(meta["handJoints3D"], dtype=np.float64).reshape(-1, 3)[0]
         gt_root = np.asarray(xyz[idx], dtype=np.float64)[0]
         dist = float(np.linalg.norm(meta_root - gt_root))
         if dist > tolerance_m:

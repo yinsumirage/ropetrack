@@ -104,6 +104,18 @@ class HandPoseDatasetsTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "HO3D protocol check failed"):
                 validate_eval_protocol("ho3d", root, [sample], 1, 0.001)
 
+    def test_ho3d_protocol_check_accepts_flat_meta_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            meta_path = root / "meta.pkl"
+            with meta_path.open("wb") as f:
+                pickle.dump({"handJoints3D": np.asarray([1.0, 0.0, 0.0], dtype=np.float32)}, f)
+            (root / "evaluation_xyz.json").write_text(json.dumps([[[1.0, 0.0, 0.0]]]))
+            (root / "evaluation_verts.json").write_text(json.dumps([[[0.0, 0.0, 0.0]]]))
+            sample = Ho3dSample("S/0001", Path("img.png"), meta_path)
+
+            validate_eval_protocol("ho3d", root, [sample], 1, 0.001)
+
     def test_small_helpers_remain_available_for_hard_image_builder(self):
         self.assertEqual(hand_bbox_from_meta({"handBoundingBox": [1, 2, 3, 4]}).tolist(), [[1.0, 2.0, 3.0, 4.0]])
         np.testing.assert_allclose(
