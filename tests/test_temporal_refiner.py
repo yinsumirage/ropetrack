@@ -156,6 +156,24 @@ class TemporalProtocolTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             build_causal_windows(["A/0000", "A/0000"], x, 3, 4, 4)
 
+    def test_causal_ema_resets_at_gap_and_sequence_and_restores_row_order(self):
+        ids = np.asarray(["A/0001", "A/0000", "A/0003", "B/0000"])
+        values = np.asarray([[1.0], [0.0], [10.0], [20.0]], dtype=np.float32)
+
+        filtered = temporal.causal_ema(ids, values, decay=0.5, raw_frame_step=1)
+
+        self.assertEqual(filtered.dtype, np.float32)
+        np.testing.assert_allclose(filtered[:, 0], [0.5, 0.0, 10.0, 20.0])
+
+    def test_causal_ema_rejects_invalid_decay_and_rows(self):
+        ids = np.asarray(["A/0000", "A/0001"])
+        values = np.zeros((2, 1), dtype=np.float32)
+        for decay in (-0.1, 1.0, float("nan"), float("inf")):
+            with self.subTest(decay=decay), self.assertRaises(ValueError):
+                temporal.causal_ema(ids, values, decay=decay, raw_frame_step=1)
+        with self.assertRaises(ValueError):
+            temporal.causal_ema(ids, values[:1], decay=0.5, raw_frame_step=1)
+
     def test_temporal_features_use_rope_difference_without_crossing_gaps(self):
         ids = ["A/0004", "A/0000", "A/0012", "B/0000", "B/0004"]
         rope = np.asarray([[2] * 5, [1] * 5, [9] * 5, [3] * 5, [5] * 5])
@@ -971,6 +989,75 @@ class TemporalModelTest(unittest.TestCase):
         torch.testing.assert_close(loaded(windows, lengths, base), model(windows, lengths, base))
         for key, value in framewise_state.items():
             torch.testing.assert_close(framewise.state_dict()[key], value)
+
+    def test_temporal_alpha_uses_nested_framewise_and_authoritative_window_config(self):
+        torch.manual_seed(13)
+        cache = toy_cache(
+            ["A/0001", "A/0000", "A/0003", "B/0000"],
+            np.linspace(0.1, 0.8, 20, dtype=np.float32).reshape(4, 5),
+        )
+        cache["base_rope_norm"][:] = 0.3
+        framewise = RopeAlphaStudent(out_dim=5, hidden_dim=7, max_alpha=0.5, in_dim=65)
+        temporal_model = temporal.TemporalRopeAlphaStudent(70, 5, hidden_dim=6, max_alpha=0.5)
+        with torch.no_grad():
+            for parameter in framewise.parameters():
+                parameter.uniform_(-0.1, 0.1)
+            for parameter in temporal_model.parameters():
+                parameter.uniform_(-0.1, 0.1)
+
+        framewise_config = {
+            "in_dim": 65,
+            "out_dim": 5,
+            "hidden_dim": 7,
+            "max_alpha": 0.5,
+            "image_feature_dim": 0,
+            "action_space": "mult5",
+            "gate_threshold": 0.1,
+            "feature_mean": np.linspace(-0.2, 0.2, 65).tolist(),
+            "feature_std": np.linspace(0.5, 1.5, 65).tolist(),
+        }
+        config = {
+            "model_type": "causal_gru",
+            "in_dim": 70,
+            "out_dim": 5,
+            "hidden_dim": 6,
+            "max_alpha": 0.5,
+            "action_space": "mult5",
+            "gate_threshold": 0.1,
+            "history_length": 3,
+            "raw_frame_step": 1,
+            "history_step": 1,
+            "temporal_feature_mean": np.linspace(-0.3, 0.3, 70).tolist(),
+            "temporal_feature_std": np.linspace(0.5, 1.5, 70).tolist(),
+        }
+        payload = {"model_state": framewise.state_dict(), "config": framewise_config}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            checkpoint = Path(tmp) / "temporal.pt"
+            temporal.save_temporal_checkpoint(checkpoint, temporal_model, config, payload)
+            actual, actual_config = temporal.temporal_alpha(cache, checkpoint, "cpu")
+
+        frame_features = alpha_student.normalize_features(
+            features_from_cache(cache),
+            np.asarray(framewise_config["feature_mean"], dtype=np.float32),
+            np.asarray(framewise_config["feature_std"], dtype=np.float32),
+        )
+        with torch.no_grad():
+            base_alpha = framewise(torch.from_numpy(frame_features))
+        features70 = temporal_features(cache, raw_frame_step=1)
+        features70 = (
+            features70 - np.asarray(config["temporal_feature_mean"], dtype=np.float32)
+        ) / np.asarray(config["temporal_feature_std"], dtype=np.float32)
+        windows, _, lengths = build_causal_windows(
+            cache["sample_id"], features70, 3, 1, 1
+        )
+        with torch.no_grad():
+            expected = temporal_model(
+                torch.from_numpy(windows), torch.from_numpy(lengths), base_alpha
+            ).numpy()
+
+        self.assertEqual(actual_config, config)
+        np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-6)
 
     def test_temporal_checkpoint_save_requires_every_schema_key(self):
         model = temporal.TemporalRopeAlphaStudent(4, 2, hidden_dim=6, max_alpha=0.5)

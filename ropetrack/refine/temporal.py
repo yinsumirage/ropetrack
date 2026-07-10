@@ -16,8 +16,10 @@ from torch import nn
 from ropetrack.refine.alpha_student import (
     STUDENT_FEATURE_DIM,
     features_from_cache,
+    normalize_features,
     student_from_payload,
 )
+from ropetrack.refine.actions import ACTION_SPACES, alpha_dim
 
 
 @dataclass(frozen=True)
@@ -288,6 +290,37 @@ def _contiguous_segments(sample_ids, raw_frame_step: int):
     return ids, segments
 
 
+def causal_ema(
+    sample_ids, values: np.ndarray, decay: float, raw_frame_step: int
+) -> np.ndarray:
+    """Causal EMA that resets at every sequence boundary or raw-frame gap."""
+    try:
+        decay = float(decay)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("decay must be finite and in [0, 1)") from exc
+    if not math.isfinite(decay) or not 0.0 <= decay < 1.0:
+        raise ValueError("decay must be finite and in [0, 1)")
+    raw_frame_step = _positive_int("raw_frame_step", raw_frame_step)
+    ids, segments = _contiguous_segments(sample_ids, raw_frame_step)
+    source = np.asarray(values, dtype=np.float32)
+    if source.ndim == 0 or len(source) != len(ids):
+        rows = 0 if source.ndim == 0 else len(source)
+        raise ValueError(f"value/sample row mismatch: {rows} != {len(ids)}")
+    if not np.isfinite(source).all():
+        raise ValueError("EMA values must contain only finite values")
+
+    out = np.empty_like(source)
+    keep = np.float32(decay)
+    update = np.float32(1.0 - decay)
+    for segment in segments:
+        state = source[segment[0][1]].copy()
+        out[segment[0][1]] = state
+        for _, row in segment[1:]:
+            state = keep * state + update * source[row]
+            out[row] = state
+    return out
+
+
 def temporal_feature_stats(
     features70: np.ndarray, train_idx: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -464,3 +497,97 @@ def temporal_features(cache: dict[str, np.ndarray], raw_frame_step: int = 1) -> 
             delta[current_row] = input_rope[current_row] - input_rope[previous_row]
 
     return np.concatenate([base, delta], axis=1).astype(np.float32, copy=False)
+
+
+def temporal_alpha(
+    cache: dict[str, np.ndarray], checkpoint: Path, device: str
+) -> tuple[np.ndarray, dict]:
+    """Infer causal alphas from a self-contained temporal checkpoint."""
+    model, config, framewise, framewise_config = load_temporal_checkpoint(
+        checkpoint, device
+    )
+    for key in (
+        "action_space",
+        "gate_threshold",
+        "history_length",
+        "raw_frame_step",
+        "history_step",
+    ):
+        if key not in config:
+            raise ValueError(f"temporal checkpoint missing {key}")
+    action_space = config["action_space"]
+    if action_space not in ACTION_SPACES:
+        raise ValueError(f"unsupported temporal action_space: {action_space}")
+    if int(config["out_dim"]) != alpha_dim(action_space):
+        raise ValueError("temporal out_dim does not match action_space")
+    if int(config["in_dim"]) != 70:
+        raise ValueError("temporal in_dim must be 70")
+
+    gate = config["gate_threshold"]
+    if gate is not None:
+        try:
+            gate = float(gate)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("temporal gate_threshold must be non-negative and finite") from exc
+        if not math.isfinite(gate) or gate < 0.0:
+            raise ValueError("temporal gate_threshold must be non-negative and finite")
+
+    if framewise_config.get("action_space") != action_space:
+        raise ValueError("nested framewise action_space does not match temporal action_space")
+    if framewise_config.get("gate_threshold") != config["gate_threshold"]:
+        raise ValueError("nested framewise gate_threshold does not match temporal gate_threshold")
+    if int(framewise_config.get("in_dim", -1)) != STUDENT_FEATURE_DIM:
+        raise ValueError("nested framewise in_dim must be 65")
+    if int(framewise_config.get("image_feature_dim", 0)) != 0:
+        raise ValueError("temporal checkpoints cannot use framewise image features")
+
+    frame_mean = np.asarray(framewise_config.get("feature_mean"), dtype=np.float32)
+    frame_std = np.asarray(framewise_config.get("feature_std"), dtype=np.float32)
+    if frame_mean.shape != (STUDENT_FEATURE_DIM,) or frame_std.shape != (
+        STUDENT_FEATURE_DIM,
+    ):
+        raise ValueError("nested framewise feature statistics must both be [65]")
+    if (
+        not np.isfinite(frame_mean).all()
+        or not np.isfinite(frame_std).all()
+        or np.any(frame_std <= 0.0)
+    ):
+        raise ValueError("nested framewise feature statistics must be finite with positive std")
+
+    history_length = _positive_int("history_length", config["history_length"])
+    raw_frame_step = _positive_int("raw_frame_step", config["raw_frame_step"])
+    history_step = _positive_int("history_step", config["history_step"])
+    frame_features = normalize_features(
+        features_from_cache(cache), frame_mean, frame_std
+    ).astype(np.float32, copy=False)
+    with torch.no_grad():
+        base_alpha = framewise(torch.from_numpy(frame_features).to(device))
+
+    features70 = temporal_features(cache, raw_frame_step=raw_frame_step)
+    temporal_mean = np.asarray(config["temporal_feature_mean"], dtype=np.float32)
+    temporal_std = np.asarray(config["temporal_feature_std"], dtype=np.float32)
+    normalized = ((features70 - temporal_mean) / temporal_std).astype(
+        np.float32, copy=False
+    )
+    windows, valid, lengths = build_causal_windows(
+        cache["sample_id"],
+        normalized,
+        history_length,
+        raw_frame_step,
+        history_step,
+    )
+    rows = np.arange(len(normalized))
+    if not valid[rows, lengths - 1].all() or not np.allclose(
+        windows[rows, lengths - 1], normalized
+    ):
+        raise ValueError("every temporal inference window must include its current frame")
+    with torch.no_grad():
+        alpha = model(
+            torch.from_numpy(windows).to(device),
+            torch.from_numpy(lengths).to(device),
+            base_alpha,
+        )
+    result = alpha.cpu().numpy().astype(np.float32)
+    if not np.isfinite(result).all():
+        raise FloatingPointError("temporal inference produced non-finite alpha")
+    return result, config

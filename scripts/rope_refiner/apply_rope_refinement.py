@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -43,6 +44,7 @@ from ropetrack.refine.oracle import (
     torch_eval_joints_from_vertices,
     torch_eval_points_from_model,
 )
+from ropetrack.refine.temporal import causal_ema, temporal_alpha
 from ropetrack.rope import FINGER_CHAINS, FINGER_ORDER, pred_rope_norm_for_dataset
 
 
@@ -490,6 +492,16 @@ def write_pred(path: Path, xyz_rows: list, vert_rows: list) -> None:
     path.write_text(json.dumps([xyz_rows, vert_rows]), encoding="utf-8")
 
 
+def _ema_decay(value: str) -> float:
+    try:
+        decay = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("EMA decay must be in [0, 1)") from exc
+    if not np.isfinite(decay) or not 0.0 <= decay < 1.0:
+        raise argparse.ArgumentTypeError("EMA decay must be in [0, 1)")
+    return decay
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Apply a cached rope refiner or rope/oracle optimizer to eval MANO cache.")
     parser.add_argument("--dataset", choices=["freihand", "ho3d"], default="freihand")
@@ -498,10 +510,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--run-meta", type=Path, required=True)
     parser.add_argument("--mano-cache", type=Path, required=True)
     parser.add_argument("--checkpoint", type=Path, default=None,
-                        help="Student checkpoint from train_alpha_student.py (student mode only).")
-    parser.add_argument("--mode", choices=["optimize", "student"], default="optimize",
+                        help="Student or temporal checkpoint (required for its matching mode).")
+    parser.add_argument("--mode", choices=["optimize", "student", "temporal"], default="optimize",
                         help="optimize = per-sample teacher (frozen winner recipe defaults); "
-                             "student = distilled one-pass alpha predictor.")
+                             "student = distilled one-pass alpha predictor; temporal = causal GRU residual.")
+    ema = parser.add_mutually_exclusive_group()
+    ema.add_argument("--rope-ema-decay", type=_ema_decay, default=None,
+                     help="Causal EMA decay applied to rope readings before inference.")
+    ema.add_argument("--alpha-ema-decay", type=_ema_decay, default=None,
+                     help="Causal EMA decay applied to inferred alpha before the current-frame gate.")
+    parser.add_argument("--ema-raw-frame-step", type=int, default=1,
+                        help="Expected raw-frame step used to reset EMA at gaps.")
     parser.add_argument("--objective", choices=list(OBJECTIVES), default="rope",
                         help="optimize-mode data term: rope label MSE, or GT-joint oracle ceiling probes.")
     parser.add_argument("--action-space", choices=list(ACTION_SPACES), default="mult5",
@@ -548,8 +567,16 @@ def main(argv: list[str] | None = None) -> Path:
         raise ValueError("oracle objectives require --mode optimize")
     if args.objective in ORACLE_OBJECTIVES and args.gt_xyz is None:
         raise ValueError(f"--gt-xyz is required for --objective {args.objective}")
-    if args.mode == "student" and args.checkpoint is None:
-        raise ValueError("--checkpoint is required in student mode")
+    if args.mode in {"student", "temporal"} and args.checkpoint is None:
+        raise ValueError(f"--checkpoint is required in {args.mode} mode")
+    if args.ema_raw_frame_step <= 0:
+        raise ValueError("--ema-raw-frame-step must be positive")
+    if args.mode == "optimize" and (
+        args.rope_ema_decay is not None or args.alpha_ema_decay is not None
+    ):
+        raise ValueError("EMA baselines require --mode student or temporal")
+    if args.mode == "temporal" and args.feature_cache is not None:
+        raise ValueError("temporal checkpoints contain a 65D framewise model; do not pass --feature-cache")
 
     cache_path = args.out_dir / "refiner_eval_cache.npz"
     build_inference_cache(args.dataset, args.rope_labels, args.pred_dir, args.run_meta, args.mano_cache, cache_path)
@@ -575,25 +602,50 @@ def main(argv: list[str] | None = None) -> Path:
         # sensor readings the optimizer consumed; gt_rope_norm stays clean
         np.savez(cache_path, **cache)
 
+    gate_cache = cache
+    if args.rope_ema_decay is not None:
+        cache = dict(cache)
+        cache["input_rope_norm"] = causal_ema(
+            cache["sample_id"],
+            cache["input_rope_norm"],
+            args.rope_ema_decay,
+            args.ema_raw_frame_step,
+        )
+        np.savez(cache_path, **cache)
+
+    base_xyz, base_verts = mano_predictions(
+        args.dataset,
+        cache["base_hand_pose"],
+        cache["sample_id"],
+        args.mano_cache,
+        args.device,
+        args.batch_size,
+    )
+    inference_started = time.perf_counter()
     alpha = None
     resolved_action_space = args.action_space
     resolved_gate_threshold = args.gate_residual_threshold
-    if args.mode == "student":
-        from ropetrack.refine.alpha_student import (
-            join_image_features,
-            load_image_feature_cache,
-            student_alpha,
-        )
+    if args.mode in {"student", "temporal"}:
+        if args.mode == "student":
+            from ropetrack.refine.alpha_student import (
+                join_image_features,
+                load_image_feature_cache,
+                student_alpha,
+            )
 
-        image_features = None
-        if args.feature_cache is not None:
-            feature_ids, features = load_image_feature_cache(args.feature_cache)
-            image_features = join_image_features(cache["sample_id"], feature_ids, features)
-        alpha, student_config = student_alpha(cache, args.checkpoint, args.device, image_features=image_features)
-        # the checkpoint is authoritative for how its alphas must be applied
-        resolved_action_space = student_config["action_space"]
-        if resolved_gate_threshold is None:
-            resolved_gate_threshold = student_config.get("gate_threshold")
+            image_features = None
+            if args.feature_cache is not None:
+                feature_ids, features = load_image_feature_cache(args.feature_cache)
+                image_features = join_image_features(cache["sample_id"], feature_ids, features)
+            alpha, student_config = student_alpha(cache, args.checkpoint, args.device, image_features=image_features)
+            # the checkpoint is authoritative for how its alphas must be applied
+            resolved_action_space = student_config["action_space"]
+            if resolved_gate_threshold is None:
+                resolved_gate_threshold = student_config.get("gate_threshold")
+        else:
+            alpha, temporal_config = temporal_alpha(cache, args.checkpoint, args.device)
+            resolved_action_space = temporal_config["action_space"]
+            resolved_gate_threshold = temporal_config["gate_threshold"]
         directions = None
         if resolved_action_space in FLEX_ACTION_SPACES:
             orient_np, betas_np, _ = load_mano_globals(args.mano_cache, cache["sample_id"])
@@ -606,12 +658,14 @@ def main(argv: list[str] | None = None) -> Path:
                 per_finger=(resolved_action_space == "flex5"),
             )
             directions = directions_t.cpu().numpy().astype(np.float32)
-            np.save(args.out_dir / "flex_directions.npy", directions)
+        if args.alpha_ema_decay is not None:
+            alpha = causal_ema(
+                cache["sample_id"], alpha, args.alpha_ema_decay, args.ema_raw_frame_step
+            )
         if resolved_gate_threshold is not None:
-            gate = gate_from_cache(cache, resolved_gate_threshold)
+            gate = gate_from_cache(gate_cache, resolved_gate_threshold)
             alpha = alpha * expand_gate_to_alpha(gate, resolved_action_space)
         refined = apply_action_np(cache["base_hand_pose"], alpha, resolved_action_space, directions)
-        np.save(args.out_dir / "alpha.npy", alpha)
     else:
         gt_xyz = None
         j_regressor = None
@@ -634,14 +688,14 @@ def main(argv: list[str] | None = None) -> Path:
             j_regressor=j_regressor,
             gate_threshold=args.gate_residual_threshold,
         )
-        np.save(args.out_dir / "alpha.npy", alpha)
-        if directions is not None:
-            np.save(args.out_dir / "flex_directions.npy", directions)
+    refined_xyz, refined_verts = mano_predictions(args.dataset, refined, cache["sample_id"], args.mano_cache, args.device, args.batch_size)
+    inference_wall_seconds = max(0.0, time.perf_counter() - inference_started)
+
+    np.save(args.out_dir / "alpha.npy", alpha)
+    if directions is not None:
+        np.save(args.out_dir / "flex_directions.npy", directions)
     np.save(args.out_dir / "refined_hand_pose.npy", refined)
     np.save(args.out_dir / "sample_id.npy", cache["sample_id"])
-
-    base_xyz, base_verts = mano_predictions(args.dataset, cache["base_hand_pose"], cache["sample_id"], args.mano_cache, args.device, args.batch_size)
-    refined_xyz, refined_verts = mano_predictions(args.dataset, refined, cache["sample_id"], args.mano_cache, args.device, args.batch_size)
     write_pred(args.out_dir / "base_pred.json", base_xyz, base_verts)
     write_pred(args.out_dir / "pred.json", refined_xyz, refined_verts)
 
@@ -664,6 +718,15 @@ def main(argv: list[str] | None = None) -> Path:
             "frac_valid_after": float(np.asarray(cache["rope_valid"], dtype=bool).mean()),
         },
         "rope_residual": residual_summary,
+        "ema": {
+            "rope_decay": args.rope_ema_decay,
+            "alpha_decay": args.alpha_ema_decay,
+            "raw_frame_step": args.ema_raw_frame_step,
+        },
+        "timing": {
+            "wall_seconds": inference_wall_seconds,
+            "per_sample_ms": 1000.0 * inference_wall_seconds / max(int(refined.shape[0]), 1),
+        },
     }
     if args.mode == "optimize":
         summary["optimization"] = {
@@ -678,11 +741,13 @@ def main(argv: list[str] | None = None) -> Path:
             summary["oracle_joint_ids"] = oracle_joint_ids(args.dataset, args.objective)
     if args.mode == "student":
         summary["student_checkpoint"] = str(args.checkpoint)
+    if args.mode == "temporal":
+        summary["temporal_checkpoint"] = str(args.checkpoint)
     if alpha is not None:
         summary["alpha"] = alpha_summary(alpha, resolved_action_space)
         if resolved_gate_threshold is not None:
-            gate = gate_from_cache(cache, resolved_gate_threshold)
-            valid = np.asarray(cache["rope_valid"], dtype=bool)
+            gate = gate_from_cache(gate_cache, resolved_gate_threshold)
+            valid = np.asarray(gate_cache["rope_valid"], dtype=bool)
             summary["gating"] = {
                 "threshold": resolved_gate_threshold,
                 "frac_fingers_gated": float(gate.sum() / max(valid.sum(), 1)),

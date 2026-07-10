@@ -6,11 +6,13 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 import numpy as np
 import torch
 
 from ropetrack.eval.protocols import FREIHAND_TIP_VERTEX_IDS
+from ropetrack.refine import alpha_student as alpha_student_module
 from ropetrack.refine.actions import FINGER_POSE_GROUPS
 from ropetrack.rope import FINGER_CHAINS
 
@@ -291,6 +293,37 @@ class ParseArgsTest(unittest.TestCase):
         self.assertAlmostEqual(args.rope_noise_bias_fixed, -0.05)
         self.assertAlmostEqual(args.rope_noise_scale_range, 0.1)
 
+    def test_temporal_and_ema_cli_parse(self):
+        script = load_apply_script()
+        args = script.parse_args(self.REQUIRED + [
+            "--mode", "temporal",
+            "--checkpoint", "temporal.pt",
+            "--alpha-ema-decay", "0.8",
+            "--ema-raw-frame-step", "4",
+        ])
+
+        self.assertEqual(args.mode, "temporal")
+        self.assertEqual(args.checkpoint, Path("temporal.pt"))
+        self.assertAlmostEqual(args.alpha_ema_decay, 0.8)
+        self.assertIsNone(args.rope_ema_decay)
+        self.assertEqual(args.ema_raw_frame_step, 4)
+
+    def test_ema_cli_rejects_mutual_or_out_of_range_values(self):
+        script = load_apply_script()
+        with self.assertRaises(SystemExit):
+            script.parse_args(self.REQUIRED + [
+                "--rope-ema-decay", "0.5",
+                "--alpha-ema-decay", "0.5",
+            ])
+        for value in ("-0.1", "1.0", "nan", "inf"):
+            with self.subTest(value=value), self.assertRaises(SystemExit):
+                script.parse_args(self.REQUIRED + ["--rope-ema-decay", value])
+
+    def test_temporal_requires_checkpoint(self):
+        script = load_apply_script()
+        with self.assertRaisesRegex(ValueError, "checkpoint"):
+            script.main(self.REQUIRED + ["--mode", "temporal"])
+
     def test_oracle_requires_optimize_mode(self):
         script = load_apply_script()
         with self.assertRaises(ValueError):
@@ -300,6 +333,213 @@ class ParseArgsTest(unittest.TestCase):
         script = load_apply_script()
         with self.assertRaises(ValueError):
             script.main(self.REQUIRED + ["--mode", "optimize", "--objective", "oracle_tip"])
+
+
+class ApplyInferenceModeTest(unittest.TestCase):
+    REQUIRED = ParseArgsTest.REQUIRED
+
+    @staticmethod
+    def _cache(sample_ids, input_rope):
+        num_rows = len(sample_ids)
+        return {
+            "sample_id": np.asarray(sample_ids),
+            "base_hand_pose": np.zeros((num_rows, 45), dtype=np.float32),
+            "base_rope_norm": np.full((num_rows, 5), 0.5, dtype=np.float32),
+            "input_rope_norm": np.asarray(input_rope, dtype=np.float32),
+            "gt_rope_norm": np.asarray(input_rope, dtype=np.float32).copy(),
+            "rope_chain_m": np.ones((num_rows, 5), dtype=np.float32),
+            "rope_valid": np.ones((num_rows, 5), dtype=bool),
+            "fist_ratio": np.full(num_rows, 0.5, dtype=np.float32),
+        }
+
+    @staticmethod
+    def _patch_lightweight_main(script, cache):
+        def build_cache(_dataset, _labels, _pred, _meta, _mano, output):
+            output.parent.mkdir(parents=True, exist_ok=True)
+            np.savez(output, **cache)
+            return output
+
+        def predictions(_dataset, pose, _ids, _mano, _device, _batch):
+            count = len(pose)
+            return (
+                [np.zeros((21, 3), dtype=np.float32).tolist() for _ in range(count)],
+                [np.zeros((1, 3), dtype=np.float32).tolist() for _ in range(count)],
+            )
+
+        return (
+            mock.patch.object(script, "build_inference_cache", side_effect=build_cache),
+            mock.patch.object(script, "mano_predictions", side_effect=predictions),
+            mock.patch.object(script, "rope_residual_report", return_value=({}, {})),
+        )
+
+    @staticmethod
+    def _temporal_config():
+        return {
+            "action_space": "mult5",
+            "gate_threshold": 0.1,
+            "history_length": 2,
+            "raw_frame_step": 1,
+            "history_step": 1,
+        }
+
+    def test_rope_ema_precedes_temporal_features_but_current_raw_gate_is_last(self):
+        script = load_apply_script()
+        cache = self._cache(
+            ["A/0000", "A/0001"],
+            [[0.9] * 5, [0.55] * 5],
+        )
+        seen = {}
+
+        def temporal_alpha(filtered, _checkpoint, _device):
+            seen["input_rope_norm"] = filtered["input_rope_norm"].copy()
+            return np.ones((2, 5), dtype=np.float32), self._temporal_config()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp) / "out"
+            lightweight = self._patch_lightweight_main(script, cache)
+            with lightweight[0], lightweight[1], lightweight[2], mock.patch.object(
+                script, "temporal_alpha", side_effect=temporal_alpha, create=True
+            ):
+                script.main(self.REQUIRED[:-1] + [str(out_dir),
+                    "--mode", "temporal",
+                    "--checkpoint", "temporal.pt",
+                    "--action-space", "pose45",
+                    "--gate-residual-threshold", "0.0",
+                    "--rope-ema-decay", "0.5",
+                ])
+
+            alpha = np.load(out_dir / "alpha.npy")
+            summary = json.loads((out_dir / "summary.json").read_text(encoding="utf-8"))
+
+        np.testing.assert_allclose(seen["input_rope_norm"][:, 0], [0.9, 0.725])
+        np.testing.assert_array_equal(alpha[0], 1.0)
+        np.testing.assert_array_equal(alpha[1], 0.0)
+        self.assertEqual(summary["action_space"], "mult5")
+        self.assertEqual(summary["gating"]["threshold"], 0.1)
+        self.assertEqual(summary["temporal_checkpoint"], "temporal.pt")
+        self.assertGreaterEqual(summary["timing"]["wall_seconds"], 0.0)
+        self.assertAlmostEqual(
+            summary["timing"]["per_sample_ms"],
+            500.0 * summary["timing"]["wall_seconds"],
+        )
+
+    def test_alpha_ema_is_gap_safe_between_inference_and_gate(self):
+        script = load_apply_script()
+        cache = self._cache(
+            ["A/0000", "A/0001", "A/0003", "B/0000"],
+            [[0.9] * 5] * 4,
+        )
+        raw = np.repeat(np.asarray([[0.0], [0.4], [0.2], [0.3]], np.float32), 5, axis=1)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp) / "out"
+            lightweight = self._patch_lightweight_main(script, cache)
+            with lightweight[0], lightweight[1], lightweight[2], mock.patch.object(
+                script,
+                "temporal_alpha",
+                return_value=(raw, self._temporal_config()),
+                create=True,
+            ):
+                script.main(self.REQUIRED[:-1] + [str(out_dir),
+                    "--mode", "temporal",
+                    "--checkpoint", "temporal.pt",
+                    "--alpha-ema-decay", "0.5",
+                    "--ema-raw-frame-step", "1",
+                ])
+            alpha = np.load(out_dir / "alpha.npy")
+
+        np.testing.assert_allclose(alpha[:, 0], [0.0, 0.2, 0.2, 0.3])
+
+    def test_student_without_ema_keeps_legacy_non_temporal_ids_and_alpha(self):
+        script = load_apply_script()
+        cache = self._cache(
+            ["00000000", "00000001"],
+            [[0.9] * 5, [0.9] * 5],
+        )
+        expected = np.full((2, 5), 0.2, dtype=np.float32)
+        student_config = {"action_space": "mult5", "gate_threshold": 0.1}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp) / "out"
+            lightweight = self._patch_lightweight_main(script, cache)
+            with lightweight[0], lightweight[1], lightweight[2], mock.patch.object(
+                alpha_student_module,
+                "student_alpha",
+                return_value=(expected.copy(), student_config),
+            ), mock.patch.object(
+                script,
+                "causal_ema",
+                side_effect=AssertionError("legacy path must not call causal_ema"),
+                create=True,
+            ):
+                script.main(self.REQUIRED[:-1] + [str(out_dir),
+                    "--mode", "student",
+                    "--checkpoint", "student.pt",
+                ])
+            alpha = np.load(out_dir / "alpha.npy")
+
+        np.testing.assert_array_equal(alpha, expected)
+
+    def test_timing_wraps_inference_action_and_refined_decode_only(self):
+        script = load_apply_script()
+        cache = self._cache(["A/0000"], [[0.9] * 5])
+        events = []
+        ticks = iter((10.0, 10.25))
+        original_save = np.save
+
+        def clock():
+            events.append("clock")
+            return next(ticks)
+
+        def temporal_alpha(_cache, _checkpoint, _device):
+            events.append("inference")
+            return np.ones((1, 5), dtype=np.float32), self._temporal_config()
+
+        def apply_action(base, _alpha, _space, _directions):
+            events.append("action")
+            return np.asarray(base, dtype=np.float32) + 1.0
+
+        def predictions(_dataset, pose, _ids, _mano, _device, _batch):
+            events.append("decode_refined" if np.all(np.asarray(pose) == 1.0) else "decode_base")
+            return ([np.zeros((21, 3)).tolist()], [np.zeros((1, 3)).tolist()])
+
+        def save(path, array):
+            events.append("save")
+            return original_save(path, array)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp) / "out"
+            lightweight = self._patch_lightweight_main(script, cache)
+            with lightweight[0], lightweight[2], mock.patch.object(
+                script.time, "perf_counter", side_effect=clock
+            ), mock.patch.object(
+                script, "temporal_alpha", side_effect=temporal_alpha
+            ), mock.patch.object(
+                script, "apply_action_np", side_effect=apply_action
+            ), mock.patch.object(
+                script, "mano_predictions", side_effect=predictions
+            ), mock.patch.object(
+                script.np, "save", side_effect=save
+            ):
+                script.main(self.REQUIRED[:-1] + [str(out_dir),
+                    "--mode", "temporal",
+                    "--checkpoint", "temporal.pt",
+                ])
+
+        self.assertEqual(
+            events,
+            [
+                "decode_base",
+                "clock",
+                "inference",
+                "action",
+                "decode_refined",
+                "clock",
+                "save",
+                "save",
+                "save",
+            ],
+        )
 
 
 class OptimizeAlphaToyTest(unittest.TestCase):
