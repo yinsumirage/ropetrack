@@ -107,6 +107,119 @@ class TemporalRopeAlphaStudent(nn.Module):
         return self.max_alpha * torch.tanh(torch.atanh(unit) + delta)
 
 
+class PastResidualRopeAlphaStudent(nn.Module):
+    """Strict-past residual on top of an externally computed K1 alpha."""
+
+    def __init__(
+        self,
+        in_dim: int,
+        out_dim: int,
+        hidden_dim: int = 64,
+        max_alpha: float = 0.5,
+    ) -> None:
+        super().__init__()
+        self.in_dim = int(in_dim)
+        self.out_dim = int(out_dim)
+        self.hidden_dim = int(hidden_dim)
+        self.max_alpha = float(max_alpha)
+        if min(self.in_dim, self.out_dim, self.hidden_dim) <= 0:
+            raise ValueError("model dimensions must be positive")
+        if not math.isfinite(self.max_alpha) or self.max_alpha <= 0.0:
+            raise ValueError("max_alpha must be positive and finite")
+
+        self.encoder = nn.Sequential(
+            nn.Linear(self.in_dim, self.hidden_dim),
+            nn.ReLU(),
+            nn.LayerNorm(self.hidden_dim),
+        )
+        self.gru = nn.GRU(self.hidden_dim, self.hidden_dim, batch_first=True)
+        self.head = nn.Linear(self.hidden_dim, self.out_dim)
+        nn.init.zeros_(self.head.weight)
+        nn.init.zeros_(self.head.bias)
+
+    def _validated_lengths(
+        self, windows: torch.Tensor, lengths: torch.Tensor
+    ) -> torch.Tensor:
+        if windows.ndim != 3 or windows.shape[2] != self.in_dim:
+            raise ValueError(
+                f"windows must be [batch, history, {self.in_dim}], got {tuple(windows.shape)}"
+            )
+        if not torch.is_floating_point(windows):
+            raise ValueError("windows must be a floating-point tensor")
+        batch_size, history_length, _ = windows.shape
+        lengths = torch.as_tensor(lengths)
+        if lengths.ndim != 1 or len(lengths) != batch_size:
+            raise ValueError(f"lengths must be [{batch_size}], got {tuple(lengths.shape)}")
+        if lengths.dtype not in (
+            torch.uint8,
+            torch.int8,
+            torch.int16,
+            torch.int32,
+            torch.int64,
+        ):
+            raise ValueError("lengths must contain integers")
+        if bool(((lengths <= 0) | (lengths > history_length)).any().item()):
+            raise ValueError(f"lengths must be positive and at most {history_length}")
+        return lengths.to(device=windows.device, dtype=torch.long)
+
+    def logit_residual(
+        self, windows: torch.Tensor, lengths: torch.Tensor
+    ) -> torch.Tensor:
+        lengths = self._validated_lengths(windows, lengths)
+        active = lengths > 1
+        delta = self.head.weight.new_zeros((len(windows), self.out_dim))
+        delta = delta + self.head.weight.sum() * 0.0
+        if not bool(active.any().item()):
+            return delta
+
+        active_rows = torch.nonzero(active, as_tuple=False).flatten()
+        encoded = self.encoder(windows[active_rows])
+        packed = nn.utils.rnn.pack_padded_sequence(
+            encoded,
+            (lengths[active_rows] - 1).detach().cpu(),
+            batch_first=True,
+            enforce_sorted=False,
+        )
+        _, hidden = self.gru(packed)
+        return delta.index_copy(0, active_rows, self.head(hidden[-1]))
+
+    def forward_with_residual(
+        self,
+        windows: torch.Tensor,
+        lengths: torch.Tensor,
+        base_alpha: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        validated_lengths = self._validated_lengths(windows, lengths)
+        if not torch.is_tensor(base_alpha) or not torch.is_floating_point(base_alpha):
+            raise ValueError("base_alpha must be a floating-point tensor")
+        if base_alpha.shape != (len(windows), self.out_dim):
+            raise ValueError(
+                f"base_alpha must be {(len(windows), self.out_dim)}, got {tuple(base_alpha.shape)}"
+            )
+
+        delta = self.logit_residual(windows, validated_lengths)
+        base = base_alpha.to(device=delta.device, dtype=delta.dtype)
+        epsilon = max(1e-6, torch.finfo(delta.dtype).eps)
+        base_logit = torch.atanh(
+            (base / self.max_alpha).clamp(-1.0 + epsilon, 1.0 - epsilon)
+        )
+        anchor = self.max_alpha * torch.tanh(base_logit)
+        candidate = self.max_alpha * torch.tanh(base_logit + delta)
+        output = torch.clamp(
+            base + (candidate - anchor), -self.max_alpha, self.max_alpha
+        )
+        output = torch.where((validated_lengths > 1)[:, None], output, base)
+        return output, delta
+
+    def forward(
+        self,
+        windows: torch.Tensor,
+        lengths: torch.Tensor,
+        base_alpha: torch.Tensor,
+    ) -> torch.Tensor:
+        return self.forward_with_residual(windows, lengths, base_alpha)[0]
+
+
 def _validate_temporal_checkpoint_config(
     config: dict,
     framewise_config: dict,
@@ -208,8 +321,25 @@ def save_temporal_checkpoint(
     )
 
 
-def load_temporal_checkpoint(path: Path, device: str):
-    payload = torch.load(path, map_location=device, weights_only=True)
+def _checkpoint_schema_version(payload: dict) -> int:
+    raw = payload.get("schema_version", 1)
+    if isinstance(raw, (bool, np.bool_)):
+        raise ValueError("schema_version must be 1 or 2")
+    try:
+        version = operator.index(raw)
+    except TypeError as exc:
+        raise ValueError("schema_version must be 1 or 2") from exc
+    if version not in (1, 2):
+        raise ValueError("schema_version must be 1 or 2")
+    config_version = payload.get("config", {}).get("schema_version")
+    if config_version is not None and config_version != version:
+        raise ValueError("top-level and config schema_version must match")
+    return int(version)
+
+
+def _temporal_from_payload(payload: dict, device: str):
+    if _checkpoint_schema_version(payload) != 1:
+        raise ValueError("expected a schema-v1 temporal checkpoint")
     config = payload["config"]
     in_dim, out_dim, hidden_dim, max_alpha = _validate_temporal_checkpoint_config(
         config, payload["framewise"]["config"]
@@ -225,6 +355,163 @@ def load_temporal_checkpoint(path: Path, device: str):
     framewise, framewise_config = student_from_payload(payload["framewise"], device)
     framewise.requires_grad_(False)
     return model, config, framewise, framewise_config
+
+
+def load_temporal_checkpoint(path: Path, device: str):
+    payload = torch.load(path, map_location=device, weights_only=True)
+    return _temporal_from_payload(payload, device)
+
+
+def _validate_past_residual_checkpoint_config(
+    config: dict,
+    base_payload: dict,
+    model: PastResidualRopeAlphaStudent | None = None,
+) -> None:
+    if config.get("schema_version") != 2:
+        raise ValueError("schema_version must be 2")
+    if config.get("model_type") != "causal_past_residual_gru":
+        raise ValueError("model_type must be causal_past_residual_gru")
+    if _checkpoint_schema_version(base_payload) != 1:
+        raise ValueError("base_temporal must be a schema-v1 checkpoint")
+    if "framewise" not in base_payload:
+        raise ValueError("base_temporal is missing its nested framewise payload")
+
+    base_config = base_payload["config"]
+    framewise_config = base_payload["framewise"]["config"]
+    _validate_temporal_checkpoint_config(base_config, framewise_config)
+    _validate_temporal_checkpoint_config(config, framewise_config, model)
+    if int(config["in_dim"]) != 70 or int(base_config["in_dim"]) != 70:
+        raise ValueError("schema-v2 and base_temporal in_dim must both be 70")
+    if int(framewise_config.get("image_feature_dim", 0)) != 0:
+        raise ValueError("nested framewise image_feature_dim must be 0")
+    if int(framewise_config.get("in_dim", -1)) != STUDENT_FEATURE_DIM:
+        raise ValueError("nested framewise in_dim must be 65")
+
+    for key in ("action_space", "gate_threshold"):
+        if config.get(key) != base_config.get(key):
+            raise ValueError(f"{key} does not match base_temporal")
+        if framewise_config.get(key) != base_config.get(key):
+            raise ValueError(f"nested framewise {key} does not match base_temporal")
+    action_space = config.get("action_space")
+    if action_space not in ACTION_SPACES:
+        raise ValueError(f"unsupported action_space: {action_space}")
+    if int(config["out_dim"]) != alpha_dim(action_space):
+        raise ValueError("out_dim does not match action_space")
+
+    for key in (
+        "split_by",
+        "split_seed",
+        "val_frac",
+        "train_sequences",
+        "val_sequences",
+        "num_train",
+        "num_val",
+        "teacher_source",
+    ):
+        if key not in config or config[key] != base_config.get(key):
+            raise ValueError(f"{key} does not match base_temporal")
+    if config["split_by"] != "sequence":
+        raise ValueError("split_by must be sequence")
+    for key in (
+        "split_by",
+        "split_seed",
+        "train_sequences",
+        "val_sequences",
+        "num_train",
+        "num_val",
+    ):
+        if framewise_config.get(key) != base_config.get(key):
+            raise ValueError(f"nested framewise {key} does not match base_temporal")
+    framewise_sources = framewise_config.get("sources")
+    if framewise_sources != base_config.get("framewise_sources"):
+        raise ValueError("nested framewise sources do not match base_temporal")
+    if framewise_sources != [base_config["teacher_source"]]:
+        raise ValueError("nested framewise sources do not match teacher_source")
+
+    if base_config.get("model_type") != "causal_gru":
+        raise ValueError("base_temporal model_type must be causal_gru")
+    if _positive_int("base_temporal history_length", base_config.get("history_length")) != 1:
+        raise ValueError("base_temporal history_length must be 1")
+    if int(base_config["in_dim"]) != int(config["in_dim"]):
+        raise ValueError("in_dim does not match base_temporal")
+    if int(base_config["out_dim"]) != int(config["out_dim"]):
+        raise ValueError("out_dim does not match base_temporal")
+    if float(base_config["max_alpha"]) != float(config["max_alpha"]):
+        raise ValueError("max_alpha does not match base_temporal")
+
+    history_length = _positive_int("history_length", config.get("history_length"))
+    if history_length <= 1:
+        raise ValueError("history_length must include at least one past slot")
+    train_raw = _positive_int(
+        "train_raw_frame_step", config.get("train_raw_frame_step")
+    )
+    inference_raw = _positive_int(
+        "inference_raw_frame_step", config.get("inference_raw_frame_step")
+    )
+    history_step = _positive_int("history_step", config.get("history_step"))
+    delta_step = _positive_int(
+        "feature_delta_step", config.get("feature_delta_step")
+    )
+    base_raw = _positive_int("base_temporal raw_frame_step", base_config.get("raw_frame_step"))
+    base_history = _positive_int(
+        "base_temporal history_step", base_config.get("history_step")
+    )
+    if train_raw != base_raw:
+        raise ValueError("train_raw_frame_step does not match base_temporal raw_frame_step")
+    if history_step != base_history:
+        raise ValueError("history_step does not match base_temporal history_step")
+    if delta_step != base_raw:
+        raise ValueError("feature_delta_step does not match base_temporal raw_frame_step")
+    if history_step % train_raw or delta_step % train_raw:
+        raise ValueError("training cadence steps must be divisible by train_raw_frame_step")
+    if history_step % inference_raw or delta_step % inference_raw:
+        raise ValueError(
+            "inference_raw_frame_step must divide history_step and feature_delta_step"
+        )
+
+
+def save_past_residual_checkpoint(
+    path: Path,
+    model: PastResidualRopeAlphaStudent,
+    config: dict,
+    base_temporal_payload: dict,
+) -> None:
+    _validate_past_residual_checkpoint_config(config, base_temporal_payload, model)
+    _temporal_from_payload(base_temporal_payload, "cpu")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(
+        {
+            "schema_version": 2,
+            "model_state": {
+                key: value.detach().clone() for key, value in model.state_dict().items()
+            },
+            "config": copy.deepcopy(config),
+            "base_temporal": copy.deepcopy(base_temporal_payload),
+        },
+        path,
+    )
+
+
+def load_past_residual_checkpoint(path: Path, device: str):
+    payload = torch.load(path, map_location=device, weights_only=True)
+    if _checkpoint_schema_version(payload) != 2:
+        raise ValueError("expected a schema-v2 temporal checkpoint")
+    config = payload["config"]
+    _validate_past_residual_checkpoint_config(config, payload["base_temporal"])
+    model = PastResidualRopeAlphaStudent(
+        in_dim=int(config["in_dim"]),
+        out_dim=int(config["out_dim"]),
+        hidden_dim=int(config["hidden_dim"]),
+        max_alpha=float(config["max_alpha"]),
+    ).to(device)
+    model.load_state_dict(payload["model_state"])
+    model.eval()
+    base, base_config, framewise, framewise_config = _temporal_from_payload(
+        payload["base_temporal"], device
+    )
+    base.requires_grad_(False)
+    framewise.requires_grad_(False)
+    return model, config, base, base_config, framewise, framewise_config
 
 
 def sequence_frame(sample_id: str) -> tuple[str, int]:
@@ -528,9 +815,18 @@ def build_causal_windows(
     return windows, valid, valid.sum(axis=1).astype(np.int64)
 
 
-def temporal_features(cache: dict[str, np.ndarray], raw_frame_step: int = 1) -> np.ndarray:
+def temporal_features(
+    cache: dict[str, np.ndarray],
+    raw_frame_step: int = 1,
+    delta_step: int | None = None,
+) -> np.ndarray:
     base = np.asarray(features_from_cache(cache), dtype=np.float32)
     raw_frame_step = _positive_int("raw_frame_step", raw_frame_step)
+    delta_step = raw_frame_step if delta_step is None else _positive_int(
+        "delta_step", delta_step
+    )
+    if delta_step % raw_frame_step:
+        raise ValueError("delta_step must be divisible by raw_frame_step")
     ids, segments = _contiguous_segments(cache["sample_id"], raw_frame_step)
     input_rope = np.asarray(cache["input_rope_norm"], dtype=np.float32)
 
@@ -544,13 +840,16 @@ def temporal_features(cache: dict[str, np.ndarray], raw_frame_step: int = 1) -> 
 
     delta = np.zeros((len(ids), 5), dtype=np.float32)
     for segment in segments:
-        for (_, previous_row), (_, current_row) in zip(segment, segment[1:]):
-            delta[current_row] = input_rope[current_row] - input_rope[previous_row]
+        row_by_frame = dict(segment)
+        for frame, current_row in segment:
+            previous_row = row_by_frame.get(frame - delta_step)
+            if previous_row is not None:
+                delta[current_row] = input_rope[current_row] - input_rope[previous_row]
 
     return np.concatenate([base, delta], axis=1).astype(np.float32, copy=False)
 
 
-def temporal_alpha(
+def _temporal_alpha_v1(
     cache: dict[str, np.ndarray], checkpoint: Path, device: str
 ) -> tuple[np.ndarray, dict]:
     """Infer causal alphas from a self-contained temporal checkpoint."""
@@ -642,3 +941,117 @@ def temporal_alpha(
     if not np.isfinite(result).all():
         raise FloatingPointError("temporal inference produced non-finite alpha")
     return result, config
+
+
+def _past_residual_alpha(
+    cache: dict[str, np.ndarray],
+    checkpoint: Path,
+    device: str,
+    disable_history: bool,
+) -> tuple[np.ndarray, dict]:
+    model, config, base, base_config, framewise, framewise_config = (
+        load_past_residual_checkpoint(checkpoint, device)
+    )
+    frame_mean = np.asarray(framewise_config.get("feature_mean"), dtype=np.float32)
+    frame_std = np.asarray(framewise_config.get("feature_std"), dtype=np.float32)
+    if frame_mean.shape != (STUDENT_FEATURE_DIM,) or frame_std.shape != (
+        STUDENT_FEATURE_DIM,
+    ):
+        raise ValueError("nested framewise feature statistics must both be [65]")
+    if (
+        not np.isfinite(frame_mean).all()
+        or not np.isfinite(frame_std).all()
+        or np.any(frame_std <= 0.0)
+    ):
+        raise ValueError(
+            "nested framewise feature statistics must be finite with positive std"
+        )
+
+    raw_frame_step = _positive_int(
+        "inference_raw_frame_step", config["inference_raw_frame_step"]
+    )
+    history_step = _positive_int("history_step", config["history_step"])
+    delta_step = _positive_int(
+        "feature_delta_step", config["feature_delta_step"]
+    )
+    history_length = _positive_int("history_length", config["history_length"])
+    features70 = temporal_features(
+        cache,
+        raw_frame_step=raw_frame_step,
+        delta_step=delta_step,
+    )
+
+    frame_features = normalize_features(
+        features_from_cache(cache), frame_mean, frame_std
+    ).astype(np.float32, copy=False)
+    with torch.no_grad():
+        frame_alpha = framewise(torch.from_numpy(frame_features).to(device))
+
+    base_mean = np.asarray(
+        base_config["temporal_feature_mean"], dtype=np.float32
+    )
+    base_std = np.asarray(base_config["temporal_feature_std"], dtype=np.float32)
+    base_features = ((features70 - base_mean) / base_std).astype(
+        np.float32, copy=False
+    )
+    base_windows, base_valid, base_lengths = build_causal_windows(
+        cache["sample_id"],
+        base_features,
+        history_length=1,
+        raw_frame_step=raw_frame_step,
+        history_step=history_step,
+    )
+    rows = np.arange(len(base_features))
+    if not base_valid[rows, base_lengths - 1].all() or not np.allclose(
+        base_windows[rows, base_lengths - 1], base_features
+    ):
+        raise ValueError("every base temporal window must include its current frame")
+    with torch.no_grad():
+        base_alpha = base(
+            torch.from_numpy(base_windows).to(device),
+            torch.from_numpy(base_lengths).to(device),
+            frame_alpha,
+        )
+    if disable_history:
+        result = base_alpha.cpu().numpy().astype(np.float32)
+    else:
+        mean = np.asarray(config["temporal_feature_mean"], dtype=np.float32)
+        std = np.asarray(config["temporal_feature_std"], dtype=np.float32)
+        normalized = ((features70 - mean) / std).astype(np.float32, copy=False)
+        windows, valid, lengths = build_causal_windows(
+            cache["sample_id"],
+            normalized,
+            history_length,
+            raw_frame_step,
+            history_step,
+        )
+        if not valid[rows, lengths - 1].all() or not np.allclose(
+            windows[rows, lengths - 1], normalized
+        ):
+            raise ValueError("every past-residual window must include its current frame")
+        with torch.no_grad():
+            alpha = model(
+                torch.from_numpy(windows).to(device),
+                torch.from_numpy(lengths).to(device),
+                base_alpha,
+            )
+        result = alpha.cpu().numpy().astype(np.float32)
+    if not np.isfinite(result).all():
+        raise FloatingPointError("temporal inference produced non-finite alpha")
+    return result, config
+
+
+def temporal_alpha(
+    cache: dict[str, np.ndarray],
+    checkpoint: Path,
+    device: str,
+    *,
+    disable_history: bool = False,
+) -> tuple[np.ndarray, dict]:
+    payload = torch.load(checkpoint, map_location="cpu", weights_only=True)
+    schema_version = _checkpoint_schema_version(payload)
+    if schema_version == 1:
+        if disable_history:
+            raise ValueError("disable_history requires a schema-v2 temporal checkpoint")
+        return _temporal_alpha_v1(cache, checkpoint, device)
+    return _past_residual_alpha(cache, checkpoint, device, disable_history)

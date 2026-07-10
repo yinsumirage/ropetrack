@@ -308,6 +308,21 @@ class ParseArgsTest(unittest.TestCase):
         self.assertIsNone(args.rope_ema_decay)
         self.assertEqual(args.ema_raw_frame_step, 4)
 
+    def test_temporal_disable_history_cli_parse(self):
+        script = load_apply_script()
+        args = script.parse_args(
+            self.REQUIRED
+            + [
+                "--mode",
+                "temporal",
+                "--checkpoint",
+                "temporal.pt",
+                "--temporal-disable-history",
+            ]
+        )
+
+        self.assertTrue(args.temporal_disable_history)
+
     def test_ema_cli_rejects_mutual_or_out_of_range_values(self):
         script = load_apply_script()
         with self.assertRaises(SystemExit):
@@ -323,6 +338,20 @@ class ParseArgsTest(unittest.TestCase):
         script = load_apply_script()
         with self.assertRaisesRegex(ValueError, "checkpoint"):
             script.main(self.REQUIRED + ["--mode", "temporal"])
+
+    def test_temporal_disable_history_rejects_other_modes(self):
+        script = load_apply_script()
+        with self.assertRaisesRegex(ValueError, "disable-history"):
+            script.main(
+                self.REQUIRED
+                + [
+                    "--mode",
+                    "student",
+                    "--checkpoint",
+                    "student.pt",
+                    "--temporal-disable-history",
+                ]
+            )
 
     def test_oracle_requires_optimize_mode(self):
         script = load_apply_script()
@@ -417,6 +446,7 @@ class ApplyInferenceModeTest(unittest.TestCase):
         self.assertEqual(summary["action_space"], "mult5")
         self.assertEqual(summary["gating"]["threshold"], 0.1)
         self.assertEqual(summary["temporal_checkpoint"], "temporal.pt")
+        self.assertNotIn("temporal_disable_history", summary)
         self.assertGreaterEqual(summary["timing"]["wall_seconds"], 0.0)
         self.assertAlmostEqual(
             summary["timing"]["per_sample_ms"],
@@ -449,6 +479,39 @@ class ApplyInferenceModeTest(unittest.TestCase):
             alpha = np.load(out_dir / "alpha.npy")
 
         np.testing.assert_allclose(alpha[:, 0], [0.0, 0.2, 0.2, 0.3])
+
+    def test_temporal_disable_history_is_forwarded_and_recorded(self):
+        script = load_apply_script()
+        cache = self._cache(["A/0000", "A/0001"], [[0.9] * 5] * 2)
+        seen = {}
+
+        def temporal_alpha(_cache, _checkpoint, _device, *, disable_history=False):
+            seen["disable_history"] = disable_history
+            return np.full((2, 5), 0.2, dtype=np.float32), self._temporal_config()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp) / "out"
+            lightweight = self._patch_lightweight_main(script, cache)
+            with lightweight[0], lightweight[1], lightweight[2], mock.patch.object(
+                script, "temporal_alpha", side_effect=temporal_alpha
+            ):
+                script.main(
+                    self.REQUIRED[:-1]
+                    + [
+                        str(out_dir),
+                        "--mode",
+                        "temporal",
+                        "--checkpoint",
+                        "temporal.pt",
+                        "--temporal-disable-history",
+                    ]
+                )
+            summary = json.loads(
+                (out_dir / "summary.json").read_text(encoding="utf-8")
+            )
+
+        self.assertTrue(seen["disable_history"])
+        self.assertTrue(summary["temporal_disable_history"])
 
     def test_student_without_ema_keeps_legacy_non_temporal_ids_and_alpha(self):
         script = load_apply_script()

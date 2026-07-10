@@ -243,6 +243,51 @@ class TemporalProtocolTest(unittest.TestCase):
         expected_delta = np.asarray([[1] * 5, [0] * 5, [0] * 5, [0] * 5, [2] * 5])
         np.testing.assert_array_equal(features[:, 65:], expected_delta)
 
+    def test_dense_history_and_feature_delta_use_separate_cadences(self):
+        ids = [f"A/{frame:04d}" for frame in range(9)]
+        rope = np.repeat(np.arange(9, dtype=np.float32)[:, None], 5, axis=1)
+        cache = toy_cache(ids, rope)
+
+        features = temporal_features(cache, raw_frame_step=1, delta_step=4)
+        windows, valid, lengths = build_causal_windows(
+            ids, features, history_length=3, raw_frame_step=1, history_step=4
+        )
+
+        np.testing.assert_array_equal(windows[8, :, 50], [0.0, 4.0, 8.0])
+        np.testing.assert_array_equal(valid[8], [True, True, True])
+        self.assertEqual(int(lengths[8]), 3)
+        np.testing.assert_array_equal(features[8, 65:], [4.0] * 5)
+
+    def test_missing_raw_frame_resets_sparse_history_and_feature_delta(self):
+        ids = [f"A/{frame:04d}" for frame in (0, 1, 2, 3, 4, 6, 7, 8)]
+        rope = np.repeat(
+            np.asarray([0, 1, 2, 3, 4, 6, 7, 8], dtype=np.float32)[:, None],
+            5,
+            axis=1,
+        )
+        cache = toy_cache(ids, rope)
+
+        features = temporal_features(cache, raw_frame_step=1, delta_step=4)
+        windows, valid, lengths = build_causal_windows(
+            ids, features, history_length=3, raw_frame_step=1, history_step=4
+        )
+
+        np.testing.assert_array_equal(valid[-1], [True, False, False])
+        self.assertEqual(int(lengths[-1]), 1)
+        np.testing.assert_array_equal(windows[-1, 0, 50], 8.0)
+        np.testing.assert_array_equal(features[-1, 65:], 0.0)
+
+    def test_temporal_feature_delta_default_preserves_v1_values(self):
+        cache = toy_cache(
+            ["A/0000", "A/0004", "A/0008"],
+            np.arange(15, dtype=np.float32).reshape(3, 5),
+        )
+
+        implicit = temporal_features(cache, raw_frame_step=4)
+        explicit = temporal_features(cache, raw_frame_step=4, delta_step=4)
+
+        np.testing.assert_array_equal(implicit, explicit)
+
     def test_temporal_features_reject_invalid_protocol_inputs(self):
         cache = toy_cache(["A/0000", "A/0004"], [[0] * 5, [1] * 5])
         with self.assertRaises(ValueError):
@@ -257,6 +302,10 @@ class TemporalProtocolTest(unittest.TestCase):
         duplicate["sample_id"] = np.asarray(["A/0000", "A/0000"])
         with self.assertRaises(ValueError):
             temporal_features(duplicate, raw_frame_step=4)
+
+        for delta_step in (0, 6):
+            with self.subTest(delta_step=delta_step), self.assertRaises(ValueError):
+                temporal_features(cache, raw_frame_step=4, delta_step=delta_step)
 
 
 class TemporalAugmentationTest(unittest.TestCase):
@@ -475,7 +524,167 @@ def temporal_training_fixture(root: Path):
     return teacher_dir, checkpoint, teacher_alpha, framewise_config
 
 
+def past_residual_training_fixture(root: Path):
+    teacher_dir, framewise_checkpoint, teacher_alpha, framewise_config = (
+        temporal_training_fixture(root)
+    )
+    framewise_payload = torch.load(
+        framewise_checkpoint, map_location="cpu", weights_only=True
+    )
+    base = temporal.TemporalRopeAlphaStudent(70, 5, hidden_dim=8, max_alpha=0.5)
+    config = {
+        "model_type": "causal_gru",
+        "in_dim": 70,
+        "out_dim": 5,
+        "hidden_dim": 8,
+        "max_alpha": 0.5,
+        "action_space": "mult5",
+        "gate_threshold": 0.1,
+        "history_length": 1,
+        "raw_frame_step": 1,
+        "history_step": 1,
+        "temporal_feature_mean": [0.0] * 70,
+        "temporal_feature_std": [1.0] * 70,
+        "split_by": "sequence",
+        "split_seed": 17,
+        "val_frac": 0.5,
+        "train_sequences": framewise_config["train_sequences"],
+        "val_sequences": framewise_config["val_sequences"],
+        "num_train": framewise_config["num_train"],
+        "num_val": framewise_config["num_val"],
+        "teacher_source": {"dir": str(teacher_dir), "num_samples": 8},
+        "framewise_sources": framewise_config["sources"],
+    }
+    checkpoint = root / "k1.pt"
+    temporal.save_temporal_checkpoint(
+        checkpoint, base, config, framewise_payload
+    )
+    return teacher_dir, checkpoint, teacher_alpha, config
+
+
 class TemporalTrainingTest(unittest.TestCase):
+    def test_past_residual_loss_penalizes_only_logit_residual(self):
+        trainer = load_temporal_trainer()
+        prediction = torch.tensor([[0.4, -0.3]])
+        target = prediction.clone()
+        residual = torch.tensor([[2.0, -4.0]])
+
+        loss = trainer._past_residual_loss(prediction, target, residual)
+
+        self.assertAlmostEqual(float(loss), 1e-4 * 10.0)
+
+    def test_v2_one_epoch_no_improvement_keeps_zero_residual_and_k1(self):
+        trainer = load_temporal_trainer()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            teacher_dir, k1_checkpoint, _, _ = past_residual_training_fixture(root)
+            out_dir = root / "out"
+
+            summary = trainer.train_temporal_student(
+                teacher_dir,
+                None,
+                "mult5",
+                out_dir,
+                base_temporal_checkpoint=k1_checkpoint,
+                history_length=2,
+                raw_frame_step=1,
+                inference_raw_frame_step=1,
+                history_step=1,
+                feature_delta_step=1,
+                hidden_dim=8,
+                lr=1e-3,
+                batch_size=4,
+                max_epochs=1,
+                patience=1,
+                val_frac=0.5,
+                split_seed=17,
+                seed=3,
+                aug_noise_std=0.0,
+                aug_dropout=0.0,
+                device="cpu",
+            )
+
+            path = out_dir / "temporal_student.pt"
+            raw = torch.load(path, map_location="cpu", weights_only=True)
+            model, config, base, _, framewise, _ = (
+                temporal.load_past_residual_checkpoint(path, "cpu")
+            )
+
+        self.assertEqual(raw["schema_version"], 2)
+        self.assertEqual(config["model_type"], "causal_past_residual_gru")
+        self.assertEqual(config["train_raw_frame_step"], 1)
+        self.assertEqual(config["inference_raw_frame_step"], 1)
+        self.assertEqual(config["feature_delta_step"], 1)
+        self.assertEqual(summary["best_epoch"], -1)
+        self.assertEqual(summary["base_temporal_zero_baseline_val_l1"], 0.0)
+        self.assertEqual(summary["best_temporal_val_l1"], 0.0)
+        torch.testing.assert_close(model.head.weight, torch.zeros_like(model.head.weight))
+        torch.testing.assert_close(model.head.bias, torch.zeros_like(model.head.bias))
+        self.assertTrue(all(not parameter.requires_grad for parameter in base.parameters()))
+        self.assertTrue(all(not parameter.requires_grad for parameter in framewise.parameters()))
+        windows = torch.randn(3, 2, 70)
+        lengths = torch.tensor([2, 1, 2])
+        k1 = torch.randn(3, 5).clamp(-0.5, 0.5)
+        self.assertTrue(torch.equal(model(windows, lengths, k1), k1))
+
+    def test_v2_optimizer_excludes_nested_k1_and_framewise_parameters(self):
+        trainer = load_temporal_trainer()
+        captured = {}
+        original_load = trainer.load_temporal_checkpoint
+        original_adam = trainer.torch.optim.Adam
+
+        def capture_load(*args, **kwargs):
+            loaded = original_load(*args, **kwargs)
+            captured["nested_parameters"] = [
+                parameter
+                for module in (loaded[0], loaded[2])
+                for parameter in module.parameters()
+            ]
+            captured["nested"] = {
+                id(parameter) for parameter in captured["nested_parameters"]
+            }
+            return loaded
+
+        def capture_adam(parameters, *args, **kwargs):
+            parameters = list(parameters)
+            captured["optimizer"] = {id(parameter) for parameter in parameters}
+            return original_adam(parameters, *args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            teacher_dir, k1_checkpoint, _, _ = past_residual_training_fixture(root)
+            with mock.patch.object(
+                trainer, "load_temporal_checkpoint", side_effect=capture_load
+            ), mock.patch.object(trainer.torch.optim, "Adam", side_effect=capture_adam):
+                trainer.train_temporal_student(
+                    teacher_dir,
+                    None,
+                    "mult5",
+                    root / "out",
+                    base_temporal_checkpoint=k1_checkpoint,
+                    history_length=2,
+                    raw_frame_step=1,
+                    inference_raw_frame_step=1,
+                    history_step=1,
+                    feature_delta_step=1,
+                    hidden_dim=8,
+                    batch_size=4,
+                    max_epochs=1,
+                    patience=1,
+                    val_frac=0.5,
+                    split_seed=17,
+                    aug_noise_std=0.0,
+                    aug_dropout=0.0,
+                    device="cpu",
+                )
+
+        self.assertTrue(captured["optimizer"])
+        self.assertTrue(captured["nested"])
+        self.assertTrue(captured["optimizer"].isdisjoint(captured["nested"]))
+        self.assertFalse(
+            any(parameter.requires_grad for parameter in captured["nested_parameters"])
+        )
+
     def test_subset_cache_copies_required_rows_in_order(self):
         trainer = load_temporal_trainer()
         cache = toy_cache(
@@ -908,6 +1117,47 @@ class TemporalTrainingTest(unittest.TestCase):
         self.assertTrue(args.shuffle_rope)
         self.assertTrue(args.shuffle_history)
 
+    def test_v2_training_cli_uses_mutually_exclusive_base_checkpoint(self):
+        trainer = load_temporal_trainer()
+        common = [
+            "--teacher-dir",
+            "teacher",
+            "--action-space",
+            "mult5",
+            "--out-dir",
+            "out",
+        ]
+        args = trainer.parse_args(
+            common
+            + [
+                "--base-temporal-checkpoint",
+                "k1.pt",
+                "--raw-frame-step",
+                "4",
+                "--inference-raw-frame-step",
+                "1",
+                "--history-step",
+                "4",
+                "--feature-delta-step",
+                "4",
+            ]
+        )
+
+        self.assertIsNone(args.framewise_checkpoint)
+        self.assertEqual(args.base_temporal_checkpoint, Path("k1.pt"))
+        self.assertEqual(args.inference_raw_frame_step, 1)
+        self.assertEqual(args.feature_delta_step, 4)
+        with self.assertRaises(SystemExit):
+            trainer.parse_args(
+                common
+                + [
+                    "--framewise-checkpoint",
+                    "frame.pt",
+                    "--base-temporal-checkpoint",
+                    "k1.pt",
+                ]
+            )
+
 
 def framewise_payload():
     model = RopeAlphaStudent(out_dim=2, hidden_dim=5, max_alpha=0.5, in_dim=65)
@@ -938,7 +1188,303 @@ def temporal_checkpoint_config(in_dim=4, out_dim=2, hidden_dim=6, max_alpha=0.5)
     }
 
 
+def k1_payload():
+    framewise = RopeAlphaStudent(out_dim=5, hidden_dim=7, max_alpha=0.5, in_dim=65)
+    framewise_config = {
+        "in_dim": 65,
+        "out_dim": 5,
+        "hidden_dim": 7,
+        "max_alpha": 0.5,
+        "image_feature_dim": 0,
+        "action_space": "mult5",
+        "gate_threshold": 0.1,
+        "feature_mean": [0.0] * 65,
+        "feature_std": [1.0] * 65,
+        "split_by": "sequence",
+        "split_seed": 17,
+        "train_sequences": ["A"],
+        "val_sequences": ["B"],
+        "num_train": 4,
+        "num_val": 4,
+        "sources": [{"dir": "teacher", "num_samples": 8}],
+    }
+    base = temporal.TemporalRopeAlphaStudent(70, 5, hidden_dim=6, max_alpha=0.5)
+    config = {
+        "model_type": "causal_gru",
+        "in_dim": 70,
+        "out_dim": 5,
+        "hidden_dim": 6,
+        "max_alpha": 0.5,
+        "action_space": "mult5",
+        "gate_threshold": 0.1,
+        "history_length": 1,
+        "raw_frame_step": 4,
+        "history_step": 4,
+        "temporal_feature_mean": [0.0] * 70,
+        "temporal_feature_std": [1.0] * 70,
+        "split_by": "sequence",
+        "split_seed": 17,
+        "val_frac": 0.5,
+        "train_sequences": ["A"],
+        "val_sequences": ["B"],
+        "num_train": 4,
+        "num_val": 4,
+        "teacher_source": {"dir": "teacher", "num_samples": 8},
+        "framewise_sources": [{"dir": "teacher", "num_samples": 8}],
+    }
+    return base, {
+        "model_state": base.state_dict(),
+        "config": config,
+        "framewise": {
+            "model_state": framewise.state_dict(),
+            "config": framewise_config,
+        },
+    }
+
+
+def past_residual_config():
+    return {
+        "schema_version": 2,
+        "model_type": "causal_past_residual_gru",
+        "in_dim": 70,
+        "out_dim": 5,
+        "hidden_dim": 8,
+        "max_alpha": 0.5,
+        "action_space": "mult5",
+        "gate_threshold": 0.1,
+        "history_length": 4,
+        "train_raw_frame_step": 4,
+        "inference_raw_frame_step": 1,
+        "history_step": 4,
+        "feature_delta_step": 4,
+        "temporal_feature_mean": [0.0] * 70,
+        "temporal_feature_std": [1.0] * 70,
+        "split_by": "sequence",
+        "split_seed": 17,
+        "val_frac": 0.5,
+        "train_sequences": ["A"],
+        "val_sequences": ["B"],
+        "num_train": 4,
+        "num_val": 4,
+        "teacher_source": {"dir": "teacher", "num_samples": 8},
+    }
+
+
 class TemporalModelTest(unittest.TestCase):
+    def test_past_residual_zero_head_is_bitwise_k1_identity(self):
+        model = temporal.PastResidualRopeAlphaStudent(
+            in_dim=70, out_dim=5, hidden_dim=8, max_alpha=0.5
+        )
+        windows = torch.randn(4, 4, 70)
+        lengths = torch.tensor([4, 3, 2, 1])
+        base = torch.tensor(
+            [[0.1] * 5, [-0.2] * 5, [0.49] * 5, [-0.5] * 5],
+            dtype=torch.float32,
+        )
+
+        actual = model(windows, lengths, base)
+
+        self.assertTrue(torch.equal(actual, base))
+
+    def test_past_residual_no_past_is_bitwise_k1_after_training(self):
+        torch.manual_seed(41)
+        model = temporal.PastResidualRopeAlphaStudent(4, 2, hidden_dim=6, max_alpha=0.5)
+        with torch.no_grad():
+            for parameter in model.parameters():
+                parameter.normal_()
+        windows = torch.randn(3, 4, 4)
+        lengths = torch.ones(3, dtype=torch.long)
+        base = torch.tensor([[0.1, -0.2], [0.5, -0.5], [-0.0, 0.0]])
+
+        actual = model(windows, lengths, base)
+
+        self.assertTrue(torch.equal(actual, base))
+
+    def test_past_residual_excludes_current_slot_but_uses_past(self):
+        torch.manual_seed(43)
+        model = temporal.PastResidualRopeAlphaStudent(4, 2, hidden_dim=6, max_alpha=0.5)
+        with torch.no_grad():
+            for parameter in model.parameters():
+                parameter.normal_()
+        windows = torch.randn(2, 4, 4)
+        lengths = torch.tensor([4, 2])
+        expected = model.logit_residual(windows, lengths)
+
+        changed_current = windows.clone()
+        changed_current[0, 3] += 1_000.0
+        changed_current[1, 1] -= 1_000.0
+        actual = model.logit_residual(changed_current, lengths)
+
+        self.assertTrue(torch.equal(actual, expected))
+
+        changed_past = windows.clone()
+        changed_past[0, 0] += 1_000.0
+        past_actual = model.logit_residual(changed_past, lengths)
+        self.assertFalse(torch.equal(past_actual[0], expected[0]))
+
+    def test_past_residual_output_is_bounded(self):
+        model = temporal.PastResidualRopeAlphaStudent(4, 2, hidden_dim=6, max_alpha=0.5)
+        with torch.no_grad():
+            model.head.bias.fill_(100.0)
+        output = model(
+            torch.zeros(2, 2, 4),
+            torch.full((2,), 2, dtype=torch.long),
+            torch.tensor([[0.49, -0.49], [0.0, 0.0]]),
+        )
+
+        self.assertTrue(torch.isfinite(output).all())
+        self.assertLessEqual(float(output.abs().max()), 0.5)
+
+    def test_past_residual_schema_v2_roundtrip_is_self_contained(self):
+        torch.manual_seed(47)
+        model = temporal.PastResidualRopeAlphaStudent(70, 5, hidden_dim=8, max_alpha=0.5)
+        with torch.no_grad():
+            model.head.weight.normal_()
+        config = past_residual_config()
+        base_model, base_payload = k1_payload()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "k1.pt"
+            torch.save(base_payload, source)
+            embedded = torch.load(source, map_location="cpu", weights_only=True)
+            path = Path(tmp) / "v2.pt"
+            temporal.save_past_residual_checkpoint(path, model, config, embedded)
+            source.unlink()
+
+            raw = torch.load(path, map_location="cpu", weights_only=True)
+            self.assertEqual(
+                set(raw), {"schema_version", "model_state", "config", "base_temporal"}
+            )
+            self.assertEqual(raw["schema_version"], 2)
+            self.assertEqual(raw["base_temporal"]["config"], base_payload["config"])
+            loaded = temporal.load_past_residual_checkpoint(path, "cpu")
+
+        (
+            loaded_model,
+            loaded_config,
+            loaded_base,
+            loaded_base_config,
+            loaded_framewise,
+            loaded_framewise_config,
+        ) = loaded
+        self.assertEqual(loaded_config, config)
+        self.assertEqual(loaded_base_config, base_payload["config"])
+        self.assertEqual(loaded_framewise_config, base_payload["framewise"]["config"])
+        self.assertFalse(loaded_model.training)
+        self.assertTrue(all(not p.requires_grad for p in loaded_base.parameters()))
+        self.assertTrue(all(not p.requires_grad for p in loaded_framewise.parameters()))
+        windows = torch.randn(3, 4, 70)
+        lengths = torch.tensor([4, 2, 1])
+        base_alpha = torch.randn(3, 5).clamp(-0.5, 0.5)
+        torch.testing.assert_close(
+            loaded_model(windows, lengths, base_alpha),
+            model(windows, lengths, base_alpha),
+        )
+        for key, value in base_model.state_dict().items():
+            torch.testing.assert_close(loaded_base.state_dict()[key], value)
+
+    def test_past_residual_schema_rejects_provenance_and_cadence_mismatches(self):
+        model = temporal.PastResidualRopeAlphaStudent(70, 5, hidden_dim=8, max_alpha=0.5)
+        _, base_payload = k1_payload()
+        config = past_residual_config()
+        cases = (
+            (dict(config, action_space="pose45"), "action_space"),
+            (dict(config, gate_threshold=0.2), "gate_threshold"),
+            (dict(config, split_seed=18), "split_seed"),
+            (
+                dict(config, teacher_source={"dir": "other", "num_samples": 8}),
+                "teacher_source",
+            ),
+            (dict(config, out_dim=15), "out_dim"),
+            (dict(config, train_raw_frame_step=2), "train_raw_frame_step"),
+            (dict(config, inference_raw_frame_step=3), "inference_raw_frame_step"),
+            (dict(config, history_step=8), "history_step"),
+            (dict(config, feature_delta_step=8), "feature_delta_step"),
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            for index, (bad_config, message) in enumerate(cases):
+                path = Path(tmp) / f"bad-{index}.pt"
+                with self.subTest(message=message), self.assertRaisesRegex(
+                    ValueError, message
+                ):
+                    temporal.save_past_residual_checkpoint(
+                        path, model, bad_config, base_payload
+                    )
+                self.assertFalse(path.exists())
+
+    def test_past_residual_save_rejects_broken_nested_k1_state(self):
+        model = temporal.PastResidualRopeAlphaStudent(70, 5, hidden_dim=8, max_alpha=0.5)
+        _, base_payload = k1_payload()
+        base_payload = copy.deepcopy(base_payload)
+        base_payload["model_state"].pop("head.bias")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "broken-v2.pt"
+            with self.assertRaises(RuntimeError):
+                temporal.save_past_residual_checkpoint(
+                    path, model, past_residual_config(), base_payload
+                )
+            self.assertFalse(path.exists())
+
+    def test_past_residual_schema_rejects_nested_framewise_provenance(self):
+        model = temporal.PastResidualRopeAlphaStudent(70, 5, hidden_dim=8, max_alpha=0.5)
+        config = past_residual_config()
+        _, source = k1_payload()
+        cases = []
+
+        bad_split = copy.deepcopy(source)
+        bad_split["framewise"]["config"]["split_seed"] = 18
+        cases.append((bad_split, "split_seed"))
+
+        bad_teacher = copy.deepcopy(source)
+        bad_teacher["framewise"]["config"]["sources"] = [
+            {"dir": "other", "num_samples": 8}
+        ]
+        cases.append((bad_teacher, "sources"))
+
+        bad_image = copy.deepcopy(source)
+        image_framewise = RopeAlphaStudent(
+            out_dim=5, hidden_dim=7, max_alpha=0.5, in_dim=68
+        )
+        bad_image["framewise"]["model_state"] = image_framewise.state_dict()
+        bad_image["framewise"]["config"]["in_dim"] = 68
+        bad_image["framewise"]["config"]["image_feature_dim"] = 3
+        cases.append((bad_image, "image_feature_dim"))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            for index, (bad_source, message) in enumerate(cases):
+                path = Path(tmp) / f"nested-{index}.pt"
+                with self.subTest(message=message), self.assertRaisesRegex(
+                    ValueError, message
+                ):
+                    temporal.save_past_residual_checkpoint(
+                        path, model, config, bad_source
+                    )
+                self.assertFalse(path.exists())
+
+    def test_past_residual_schema_requires_70d_temporal_features(self):
+        _, source = k1_payload()
+        source = copy.deepcopy(source)
+        base = temporal.TemporalRopeAlphaStudent(69, 5, hidden_dim=6, max_alpha=0.5)
+        source["model_state"] = base.state_dict()
+        source["config"]["in_dim"] = 69
+        source["config"]["temporal_feature_mean"] = [0.0] * 69
+        source["config"]["temporal_feature_std"] = [1.0] * 69
+        model = temporal.PastResidualRopeAlphaStudent(69, 5, hidden_dim=8, max_alpha=0.5)
+        config = dict(
+            past_residual_config(),
+            in_dim=69,
+            temporal_feature_mean=[0.0] * 69,
+            temporal_feature_std=[1.0] * 69,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "wrong-dim.pt"
+            with self.assertRaisesRegex(ValueError, "in_dim"):
+                temporal.save_past_residual_checkpoint(path, model, config, source)
+            self.assertFalse(path.exists())
+
     def test_temporal_model_has_single_layer_architecture_and_dimension_attrs(self):
         model = temporal.TemporalRopeAlphaStudent(70, 15, hidden_dim=16, max_alpha=0.5)
 
@@ -1133,6 +1679,9 @@ class TemporalModelTest(unittest.TestCase):
             checkpoint = Path(tmp) / "temporal.pt"
             temporal.save_temporal_checkpoint(checkpoint, temporal_model, config, payload)
             actual, actual_config = temporal.temporal_alpha(cache, checkpoint, "cpu")
+            legacy, legacy_config = temporal._temporal_alpha_v1(
+                cache, checkpoint, "cpu"
+            )
 
         frame_features = alpha_student.normalize_features(
             features_from_cache(cache),
@@ -1154,7 +1703,62 @@ class TemporalModelTest(unittest.TestCase):
             ).numpy()
 
         self.assertEqual(actual_config, config)
+        self.assertEqual(legacy_config, config)
+        np.testing.assert_array_equal(actual, legacy)
         np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-6)
+
+    def test_v2_temporal_alpha_dispatch_and_disable_history_return_same_cadence_k1(self):
+        cache = toy_cache(
+            [f"A/{frame:04d}" for frame in range(9)],
+            np.repeat(np.arange(9, dtype=np.float32)[:, None], 5, axis=1),
+        )
+        cache["base_rope_norm"][:] = 0.25
+        _, base_payload = k1_payload()
+        base_payload["framewise"]["model_state"]["net.4.bias"].fill_(0.2)
+        residual = temporal.PastResidualRopeAlphaStudent(
+            70, 5, hidden_dim=8, max_alpha=0.5
+        )
+        with torch.no_grad():
+            residual.head.bias.fill_(0.4)
+        config = past_residual_config()
+
+        framewise, framewise_config = alpha_student.student_from_payload(
+            base_payload["framewise"], "cpu"
+        )
+        base_model = temporal.TemporalRopeAlphaStudent(70, 5, 6, 0.5)
+        base_model.load_state_dict(base_payload["model_state"])
+        frame_features = alpha_student.normalize_features(
+            features_from_cache(cache),
+            np.asarray(framewise_config["feature_mean"], dtype=np.float32),
+            np.asarray(framewise_config["feature_std"], dtype=np.float32),
+        )
+        features70 = temporal_features(cache, raw_frame_step=1, delta_step=4)
+        base_windows, _, base_lengths = build_causal_windows(
+            cache["sample_id"], features70, 1, 1, 4
+        )
+        with torch.no_grad():
+            frame_alpha = framewise(torch.from_numpy(frame_features))
+            expected_k1 = base_model(
+                torch.from_numpy(base_windows),
+                torch.from_numpy(base_lengths),
+                frame_alpha,
+            ).numpy()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "v2.pt"
+            temporal.save_past_residual_checkpoint(
+                path, residual, config, base_payload
+            )
+            disabled, disabled_config = temporal.temporal_alpha(
+                cache, path, "cpu", disable_history=True
+            )
+            enabled, enabled_config = temporal.temporal_alpha(cache, path, "cpu")
+
+        np.testing.assert_array_equal(disabled, expected_k1)
+        self.assertEqual(disabled_config, config)
+        self.assertEqual(enabled_config, config)
+        np.testing.assert_array_equal(enabled[0], expected_k1[0])
+        self.assertFalse(np.array_equal(enabled[-1], expected_k1[-1]))
 
     def test_temporal_checkpoint_save_requires_every_schema_key(self):
         model = temporal.TemporalRopeAlphaStudent(4, 2, hidden_dim=6, max_alpha=0.5)

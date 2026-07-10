@@ -23,10 +23,13 @@ from ropetrack.refine.alpha_student import (
     student_from_payload,
 )
 from ropetrack.refine.temporal import (
+    PastResidualRopeAlphaStudent,
     TemporalRopeAlphaStudent,
     build_causal_windows,
     deterministic_sequence_split,
+    load_temporal_checkpoint,
     prepare_temporal_cache,
+    save_past_residual_checkpoint,
     save_temporal_checkpoint,
     shuffle_history as shuffle_temporal_history,
     temporal_feature_stats,
@@ -117,10 +120,17 @@ def _normalized_windows(
     raw_frame_step: int,
     history_step: int,
     *,
+    delta_step: int | None = None,
     shuffle: bool,
     seed: int,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    features = temporal_features(cache, raw_frame_step=raw_frame_step)
+    features = (
+        temporal_features(cache, raw_frame_step=raw_frame_step)
+        if delta_step is None
+        else temporal_features(
+            cache, raw_frame_step=raw_frame_step, delta_step=delta_step
+        )
+    )
     normalized = ((features - mean) / std).astype(np.float32)
     windows, valid, lengths = build_causal_windows(
         cache["sample_id"],
@@ -137,6 +147,51 @@ def _normalized_windows(
     if shuffle:
         windows = shuffle_temporal_history(windows, valid, seed)
     return windows, valid, lengths
+
+
+def _past_residual_loss(
+    prediction: torch.Tensor,
+    target: torch.Tensor,
+    logit_residual: torch.Tensor,
+) -> torch.Tensor:
+    return torch.nn.functional.l1_loss(prediction, target) + ALPHA_L2 * (
+        logit_residual * logit_residual
+    ).mean()
+
+
+def _base_temporal_alpha(
+    model: torch.nn.Module,
+    config: dict,
+    framewise: torch.nn.Module,
+    framewise_config: dict,
+    cache: dict[str, np.ndarray],
+    device: str,
+    raw_frame_step: int,
+    history_step: int,
+    feature_delta_step: int,
+) -> torch.Tensor:
+    base_alpha = _framewise_alpha(framewise, framewise_config, cache, device)
+    mean = np.asarray(config["temporal_feature_mean"], dtype=np.float32)
+    std = np.asarray(config["temporal_feature_std"], dtype=np.float32)
+    features = temporal_features(
+        cache,
+        raw_frame_step=raw_frame_step,
+        delta_step=feature_delta_step,
+    )
+    normalized = ((features - mean) / std).astype(np.float32, copy=False)
+    windows, _, lengths = build_causal_windows(
+        cache["sample_id"],
+        normalized,
+        history_length=1,
+        raw_frame_step=raw_frame_step,
+        history_step=history_step,
+    )
+    with torch.no_grad():
+        return model(
+            torch.from_numpy(windows).to(device),
+            torch.from_numpy(lengths).to(device),
+            base_alpha,
+        ).detach()
 
 
 def _validate_framewise_provenance(
@@ -194,15 +249,78 @@ def _validate_framewise_provenance(
     return max_alpha, None if gate is None else float(gate)
 
 
+def _validate_base_temporal_provenance(
+    config: dict,
+    framewise_config: dict,
+    split,
+    split_seed: int,
+    action_space: str,
+    out_dim: int,
+    teacher_dir: Path,
+    num_samples: int,
+    raw_frame_step: int,
+    history_step: int,
+    feature_delta_step: int,
+) -> tuple[float, float | None]:
+    max_alpha, gate = _validate_framewise_provenance(
+        framewise_config,
+        split,
+        split_seed,
+        action_space,
+        out_dim,
+        teacher_dir,
+        num_samples,
+    )
+    for key, expected in (
+        ("model_type", "causal_gru"),
+        ("action_space", action_space),
+        ("out_dim", out_dim),
+        ("in_dim", 70),
+        ("history_length", 1),
+        ("raw_frame_step", raw_frame_step),
+        ("history_step", history_step),
+        ("split_by", "sequence"),
+        ("split_seed", int(split_seed)),
+        ("train_sequences", list(split.train_sequences)),
+        ("val_sequences", list(split.val_sequences)),
+        ("num_train", len(split.train_idx)),
+        ("num_val", len(split.val_idx)),
+        (
+            "teacher_source",
+            {"dir": str(teacher_dir), "num_samples": num_samples},
+        ),
+    ):
+        if config.get(key) != expected:
+            raise ValueError(f"base temporal {key} does not match V2 training")
+    if config.get("gate_threshold") != gate:
+        raise ValueError("base temporal gate_threshold does not match framewise")
+    if float(config.get("max_alpha", float("nan"))) != max_alpha:
+        raise ValueError("base temporal max_alpha does not match framewise")
+    if feature_delta_step != raw_frame_step:
+        raise ValueError(
+            "feature_delta_step must match the schema-v1 base raw_frame_step"
+        )
+    for key in ("temporal_feature_mean", "temporal_feature_std"):
+        values = np.asarray(config.get(key), dtype=np.float32)
+        if values.shape != (70,) or not np.isfinite(values).all():
+            raise ValueError(f"base temporal {key} must be finite [70]")
+        if key.endswith("std") and np.any(values <= 0.0):
+            raise ValueError("base temporal temporal_feature_std must be positive")
+    return max_alpha, gate
+
+
 def train_temporal_student(
     teacher_dir: Path,
-    framewise_checkpoint: Path,
+    framewise_checkpoint: Path | None,
     action_space: str,
     out_dir: Path,
     *,
+    base_temporal_checkpoint: Path | None = None,
     history_length: int = 8,
     raw_frame_step: int = 1,
+    inference_raw_frame_step: int | None = None,
     history_step: int = 1,
+    feature_delta_step: int | None = None,
     hidden_dim: int = 128,
     lr: float = 1e-3,
     batch_size: int = 512,
@@ -223,13 +341,53 @@ def train_temporal_student(
     if isinstance(teacher_dir, (list, tuple)):
         raise ValueError("temporal training supports exactly one teacher_dir")
     teacher_dir = Path(teacher_dir)
-    framewise_checkpoint = Path(framewise_checkpoint)
     out_dir = Path(out_dir)
+    is_v2 = base_temporal_checkpoint is not None
+    if (framewise_checkpoint is None) == (base_temporal_checkpoint is None):
+        raise ValueError(
+            "provide exactly one of framewise_checkpoint or base_temporal_checkpoint"
+        )
+    framewise_checkpoint = (
+        None if framewise_checkpoint is None else Path(framewise_checkpoint)
+    )
+    base_temporal_checkpoint = (
+        None
+        if base_temporal_checkpoint is None
+        else Path(base_temporal_checkpoint)
+    )
     if action_space not in ACTION_SPACES:
         raise ValueError(f"unsupported action_space: {action_space}")
     history_length = _positive_int("history_length", history_length)
     raw_frame_step = _positive_int("raw_frame_step", raw_frame_step)
     history_step = _positive_int("history_step", history_step)
+    if is_v2:
+        if inference_raw_frame_step is None or feature_delta_step is None:
+            raise ValueError(
+                "V2 training requires inference_raw_frame_step and feature_delta_step"
+            )
+        inference_raw_frame_step = _positive_int(
+            "inference_raw_frame_step", inference_raw_frame_step
+        )
+        feature_delta_step = _positive_int(
+            "feature_delta_step", feature_delta_step
+        )
+        if history_length <= 1:
+            raise ValueError("V2 history_length must include at least one past slot")
+        if history_step % raw_frame_step or feature_delta_step % raw_frame_step:
+            raise ValueError(
+                "history_step and feature_delta_step must be divisible by raw_frame_step"
+            )
+        if (
+            history_step % inference_raw_frame_step
+            or feature_delta_step % inference_raw_frame_step
+        ):
+            raise ValueError(
+                "inference_raw_frame_step must divide history_step and feature_delta_step"
+            )
+    elif inference_raw_frame_step is not None or feature_delta_step is not None:
+        raise ValueError(
+            "inference_raw_frame_step and feature_delta_step require base_temporal_checkpoint"
+        )
     hidden_dim = _positive_int("hidden_dim", hidden_dim)
     batch_size = _positive_int("batch_size", batch_size)
     max_epochs = _positive_int("max_epochs", max_epochs)
@@ -256,19 +414,46 @@ def train_temporal_student(
     val_cache = _subset_cache(cache, split.val_idx)
     train_target = teacher_alpha[split.train_idx].copy()
     val_target = teacher_alpha[split.val_idx].copy()
-    framewise_payload = torch.load(
-        framewise_checkpoint, map_location=device, weights_only=True
-    )
-    framewise_config = framewise_payload["config"]
-    max_alpha, gate_threshold = _validate_framewise_provenance(
-        framewise_config,
-        split,
-        split_seed,
-        action_space,
-        out_dim,
-        teacher_dir,
-        num_samples,
-    )
+    base_temporal = None
+    base_temporal_config = None
+    base_temporal_payload = None
+    if is_v2:
+        base_temporal, base_temporal_config, framewise, framewise_config = (
+            load_temporal_checkpoint(base_temporal_checkpoint, device)
+        )
+        base_temporal_payload = torch.load(
+            base_temporal_checkpoint, map_location=device, weights_only=True
+        )
+        framewise_payload = base_temporal_payload["framewise"]
+        max_alpha, gate_threshold = _validate_base_temporal_provenance(
+            base_temporal_config,
+            framewise_config,
+            split,
+            split_seed,
+            action_space,
+            out_dim,
+            teacher_dir,
+            num_samples,
+            raw_frame_step,
+            history_step,
+            feature_delta_step,
+        )
+        base_temporal.requires_grad_(False)
+    else:
+        framewise_payload = torch.load(
+            framewise_checkpoint, map_location=device, weights_only=True
+        )
+        framewise_config = framewise_payload["config"]
+        max_alpha, gate_threshold = _validate_framewise_provenance(
+            framewise_config,
+            split,
+            split_seed,
+            action_space,
+            out_dim,
+            teacher_dir,
+            num_samples,
+        )
+        framewise, _ = student_from_payload(framewise_payload, device)
     teacher_gate = teacher_summary.get("optimization", {}).get(
         "gate_residual_threshold"
     )
@@ -280,13 +465,20 @@ def train_temporal_student(
     if float(np.abs(teacher_alpha).max(initial=0.0)) > max_alpha + 1e-6:
         raise ValueError("teacher alpha exceeds framewise max_alpha")
 
-    framewise, _ = student_from_payload(framewise_payload, device)
     framewise.eval()
     framewise.requires_grad_(False)
     if any(parameter.requires_grad for parameter in framewise.parameters()):
         raise ValueError("framewise parameters must be frozen")
 
-    clean_features = temporal_features(train_cache, raw_frame_step=raw_frame_step)
+    clean_features = (
+        temporal_features(
+            train_cache,
+            raw_frame_step=raw_frame_step,
+            delta_step=feature_delta_step,
+        )
+        if is_v2
+        else temporal_features(train_cache, raw_frame_step=raw_frame_step)
+    )
     temporal_mean, temporal_std = temporal_feature_stats(
         clean_features, np.arange(len(train_cache["sample_id"]))
     )
@@ -310,16 +502,30 @@ def train_temporal_student(
         history_length,
         raw_frame_step,
         history_step,
+        delta_step=feature_delta_step if is_v2 else None,
         shuffle=shuffle_history,
         seed=seed + 2,
     )
-    clean_base_alpha = _framewise_alpha(
-        framewise, framewise_config, clean_val_cache, device
+    clean_base_alpha = (
+        _base_temporal_alpha(
+            base_temporal,
+            base_temporal_config,
+            framewise,
+            framewise_config,
+            clean_val_cache,
+            device,
+            raw_frame_step,
+            history_step,
+            feature_delta_step,
+        )
+        if is_v2
+        else _framewise_alpha(framewise, framewise_config, clean_val_cache, device)
     )
 
     torch.manual_seed(seed)
     rng = np.random.default_rng(seed)
-    model = TemporalRopeAlphaStudent(
+    model_class = PastResidualRopeAlphaStudent if is_v2 else TemporalRopeAlphaStudent
+    model = model_class(
         in_dim=70,
         out_dim=out_dim,
         hidden_dim=hidden_dim,
@@ -379,10 +585,25 @@ def train_temporal_student(
             history_length,
             raw_frame_step,
             history_step,
+            delta_step=feature_delta_step if is_v2 else None,
             shuffle=shuffle_history,
             seed=seed + 2_000 + epoch,
         )
-        base_alpha = _framewise_alpha(framewise, framewise_config, augmented, device)
+        base_alpha = (
+            _base_temporal_alpha(
+                base_temporal,
+                base_temporal_config,
+                framewise,
+                framewise_config,
+                augmented,
+                device,
+                raw_frame_step,
+                history_step,
+                feature_delta_step,
+            )
+            if is_v2
+            else _framewise_alpha(framewise, framewise_config, augmented, device)
+        )
         windows_t = torch.from_numpy(windows).to(device)
         lengths_t = torch.from_numpy(lengths).to(device)
 
@@ -393,9 +614,21 @@ def train_temporal_student(
         for start in range(0, len(order), batch_size):
             batch = order[start : start + batch_size]
             index = torch.from_numpy(batch).to(device)
-            prediction = model(windows_t[index], lengths_t[index], base_alpha[index])
-            l1 = torch.nn.functional.l1_loss(prediction, train_target_t[index])
-            loss = l1 + ALPHA_L2 * (prediction * prediction).mean()
+            if is_v2:
+                prediction, logit_residual = model.forward_with_residual(
+                    windows_t[index], lengths_t[index], base_alpha[index]
+                )
+                loss = _past_residual_loss(
+                    prediction, train_target_t[index], logit_residual
+                )
+            else:
+                prediction = model(
+                    windows_t[index], lengths_t[index], base_alpha[index]
+                )
+                l1 = torch.nn.functional.l1_loss(
+                    prediction, train_target_t[index]
+                )
+                loss = l1 + ALPHA_L2 * (prediction * prediction).mean()
             loss_value = float(loss.detach())
             if not math.isfinite(loss_value):
                 raise FloatingPointError(
@@ -475,18 +708,85 @@ def train_temporal_student(
         "teacher_source": {"dir": str(teacher_dir), "num_samples": num_samples},
         "framewise_checkpoint": str(framewise_checkpoint),
     }
+    if is_v2:
+        config = {
+            "schema_version": 2,
+            "model_type": "causal_past_residual_gru",
+            "in_dim": 70,
+            "out_dim": out_dim,
+            "hidden_dim": hidden_dim,
+            "max_alpha": max_alpha,
+            "action_space": action_space,
+            "gate_threshold": gate_threshold,
+            "history_length": history_length,
+            "train_raw_frame_step": raw_frame_step,
+            "inference_raw_frame_step": inference_raw_frame_step,
+            "history_step": history_step,
+            "feature_delta_step": feature_delta_step,
+            "temporal_feature_mean": temporal_mean.tolist(),
+            "temporal_feature_std": temporal_std.tolist(),
+            "split_by": "sequence",
+            "split_seed": int(split_seed),
+            "val_frac": float(val_frac),
+            "train_sequences": list(split.train_sequences),
+            "val_sequences": list(split.val_sequences),
+            "num_train": int(len(split.train_idx)),
+            "num_val": int(len(split.val_idx)),
+            "seed": int(seed),
+            "lr": float(lr),
+            "batch_size": batch_size,
+            "max_epochs": max_epochs,
+            "patience": patience,
+            "training_device": str(device),
+            "base_temporal_frozen": True,
+            "framewise_frozen": True,
+            "sensor_mode": sensor_mode,
+            "shuffle_rope": bool(shuffle_rope),
+            "shuffle_history": bool(shuffle_history),
+            "augmentation": {
+                "noise_std": float(aug_noise_std),
+                "dropout": float(aug_dropout),
+                "bias_std": float(aug_bias_std),
+                "scale_range": float(aug_scale_range),
+            },
+            "clean_validation": {
+                "augmentation": False,
+                "sensor_mode": sensor_mode,
+                "shuffle_rope": bool(shuffle_rope),
+                "shuffle_history": bool(shuffle_history),
+            },
+            "logit_residual_l2": ALPHA_L2,
+            "teacher_source": {
+                "dir": str(teacher_dir),
+                "num_samples": num_samples,
+            },
+            "base_temporal_checkpoint": str(base_temporal_checkpoint),
+        }
     out_dir.mkdir(parents=True, exist_ok=True)
-    save_temporal_checkpoint(
-        out_dir / "temporal_student.pt", model, config, framewise_payload
-    )
-    summary = {
-        "framewise_zero_baseline_val_l1": framewise_zero_baseline,
-        "best_temporal_val_l1": best_val,
-        "beats_framewise": bool(best_val < framewise_zero_baseline - 1e-8),
-        "best_epoch": best_epoch,
-        "epochs_run": len(log),
-        "config": config,
-    }
+    if is_v2:
+        save_past_residual_checkpoint(
+            out_dir / "temporal_student.pt", model, config, base_temporal_payload
+        )
+        summary = {
+            "base_temporal_zero_baseline_val_l1": framewise_zero_baseline,
+            "best_temporal_val_l1": best_val,
+            "beats_base_temporal": bool(best_val < framewise_zero_baseline - 1e-8),
+            "best_epoch": best_epoch,
+            "epochs_run": len(log),
+            "config": config,
+        }
+    else:
+        save_temporal_checkpoint(
+            out_dir / "temporal_student.pt", model, config, framewise_payload
+        )
+        summary = {
+            "framewise_zero_baseline_val_l1": framewise_zero_baseline,
+            "best_temporal_val_l1": best_val,
+            "beats_framewise": bool(best_val < framewise_zero_baseline - 1e-8),
+            "best_epoch": best_epoch,
+            "epochs_run": len(log),
+            "config": config,
+        }
     (out_dir / "train_log.json").write_text(
         json.dumps({"summary": summary, "log": log}, indent=2), encoding="utf-8"
     )
@@ -496,12 +796,16 @@ def train_temporal_student(
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--teacher-dir", type=Path, required=True)
-    parser.add_argument("--framewise-checkpoint", type=Path, required=True)
+    base = parser.add_mutually_exclusive_group(required=True)
+    base.add_argument("--framewise-checkpoint", type=Path)
+    base.add_argument("--base-temporal-checkpoint", type=Path)
     parser.add_argument("--action-space", choices=list(ACTION_SPACES), required=True)
     parser.add_argument("--out-dir", type=Path, required=True)
     parser.add_argument("--history-length", type=int, default=8)
     parser.add_argument("--raw-frame-step", type=int, default=1)
+    parser.add_argument("--inference-raw-frame-step", type=int, default=None)
     parser.add_argument("--history-step", type=int, default=1)
+    parser.add_argument("--feature-delta-step", type=int, default=None)
     parser.add_argument("--hidden-dim", type=int, default=128)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--batch-size", type=int, default=512)
@@ -528,9 +832,12 @@ def main(argv: list[str] | None = None) -> dict:
         args.framewise_checkpoint,
         args.action_space,
         args.out_dir,
+        base_temporal_checkpoint=args.base_temporal_checkpoint,
         history_length=args.history_length,
         raw_frame_step=args.raw_frame_step,
+        inference_raw_frame_step=args.inference_raw_frame_step,
         history_step=args.history_step,
+        feature_delta_step=args.feature_delta_step,
         hidden_dim=args.hidden_dim,
         lr=args.lr,
         batch_size=args.batch_size,

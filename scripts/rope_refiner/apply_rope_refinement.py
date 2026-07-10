@@ -514,6 +514,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--mode", choices=["optimize", "student", "temporal"], default="optimize",
                         help="optimize = per-sample teacher (frozen winner recipe defaults); "
                              "student = distilled one-pass alpha predictor; temporal = causal GRU residual.")
+    parser.add_argument(
+        "--temporal-disable-history",
+        action="store_true",
+        help="Schema-v2 temporal control: return the embedded K1 at the same cadence.",
+    )
     ema = parser.add_mutually_exclusive_group()
     ema.add_argument("--rope-ema-decay", type=_ema_decay, default=None,
                      help="Causal EMA decay applied to rope readings before inference.")
@@ -569,6 +574,8 @@ def main(argv: list[str] | None = None) -> Path:
         raise ValueError(f"--gt-xyz is required for --objective {args.objective}")
     if args.mode in {"student", "temporal"} and args.checkpoint is None:
         raise ValueError(f"--checkpoint is required in {args.mode} mode")
+    if args.temporal_disable_history and args.mode != "temporal":
+        raise ValueError("--temporal-disable-history requires --mode temporal")
     if args.ema_raw_frame_step <= 0:
         raise ValueError("--ema-raw-frame-step must be positive")
     if args.mode == "optimize" and (
@@ -643,7 +650,17 @@ def main(argv: list[str] | None = None) -> Path:
             if resolved_gate_threshold is None:
                 resolved_gate_threshold = student_config.get("gate_threshold")
         else:
-            alpha, temporal_config = temporal_alpha(cache, args.checkpoint, args.device)
+            if args.temporal_disable_history:
+                alpha, temporal_config = temporal_alpha(
+                    cache,
+                    args.checkpoint,
+                    args.device,
+                    disable_history=True,
+                )
+            else:
+                alpha, temporal_config = temporal_alpha(
+                    cache, args.checkpoint, args.device
+                )
             resolved_action_space = temporal_config["action_space"]
             resolved_gate_threshold = temporal_config["gate_threshold"]
         directions = None
@@ -743,6 +760,8 @@ def main(argv: list[str] | None = None) -> Path:
         summary["student_checkpoint"] = str(args.checkpoint)
     if args.mode == "temporal":
         summary["temporal_checkpoint"] = str(args.checkpoint)
+        if args.temporal_disable_history:
+            summary["temporal_disable_history"] = True
     if alpha is not None:
         summary["alpha"] = alpha_summary(alpha, resolved_action_space)
         if resolved_gate_threshold is not None:
