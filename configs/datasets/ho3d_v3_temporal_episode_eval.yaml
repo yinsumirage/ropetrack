@@ -1,0 +1,17 @@
+name: ho3d_v3_temporal_episode_eval
+adapter: ho3d
+remote_root: /data/wentao/ropetrack/hard/ho3d_v3/temporal_episode_30_60_30_eval
+local_link: data/raw/ho3d_v3_temporal_episode_eval
+eval:
+  list: evaluation.txt
+  images: evaluation/*/rgb
+  count: 20137
+  gt:
+    - evaluation_xyz.json
+    - evaluation_verts.json
+protocol:
+  units: m
+  camera: HO3D/OpenGL-style; flip y and z from OpenCV predictions
+  benchmark_mode: gt_bbox
+  joint_source: mano_vertices
+notes: Dense 30-context/60-mask/30-recovery HO3D v3 evaluation episodes.

@@ -1,0 +1,16 @@
+name: ho3d_v3_temporal_episode_train
+adapter: ho3d
+remote_root: /data/wentao/ropetrack/hard/ho3d_v3/temporal_episode_30_60_30_train
+local_link: data/raw/ho3d_v3_temporal_episode_train
+train:
+  list: train.txt
+  images: train/*/rgb
+  count: 83325
+  gt:
+    - training_xyz.json
+protocol:
+  units: m
+  camera: HO3D/OpenGL-style; flip y and z from OpenCV predictions
+  benchmark_mode: gt_bbox
+  joint_source: mano_vertices
+notes: Dense 30-context/60-mask/30-recovery HO3D v3 training episodes.

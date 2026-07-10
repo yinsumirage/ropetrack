@@ -57,6 +57,36 @@ class EvalConfigTest(unittest.TestCase):
         self.assertEqual(args.ho3d_root, Path("/data/wentao/ropetrack/hard/ho3d_v2/finger_end80"))
         self.assertEqual(args.joint_source, "mano_vertices")
 
+    def test_temporal_episode_configs_use_dense_ho3d_roots(self):
+        train = build_run_args(
+            "ho3d_v3_temporal_episode_train",
+            "wilor_original",
+            split="training",
+        )
+        evaluation = build_run_args(
+            "ho3d_v3_temporal_episode_eval",
+            "wilor_original",
+        )
+
+        self.assertEqual(train.adapter, "ho3d")
+        self.assertEqual(
+            train.ho3d_root,
+            Path(
+                "/data/wentao/ropetrack/hard/ho3d_v3/"
+                "temporal_episode_30_60_30_train"
+            ),
+        )
+        self.assertEqual(train.split, "training")
+        self.assertEqual(evaluation.adapter, "ho3d")
+        self.assertEqual(
+            evaluation.ho3d_root,
+            Path(
+                "/data/wentao/ropetrack/hard/ho3d_v3/"
+                "temporal_episode_30_60_30_eval"
+            ),
+        )
+        self.assertEqual(evaluation.joint_source, "mano_vertices")
+
 
 if __name__ == "__main__":
     unittest.main()
