@@ -18,6 +18,7 @@ from ropetrack.refine.temporal import (
     SequenceSplit,
     build_causal_windows,
     deterministic_sequence_split,
+    episode_schedule,
     sequence_frame,
     temporal_features,
 )
@@ -90,6 +91,61 @@ class TemporalProtocolTest(unittest.TestCase):
             deterministic_sequence_split(["A/0000"], 0.2, seed=0)
         with self.assertRaises(ValueError):
             deterministic_sequence_split([], 0.2, seed=0)
+
+    def test_episode_schedule_resets_at_gap_and_sequence(self):
+        ids = (
+            [f"A/{frame:04d}" for frame in range(120)]
+            + ["A/0200", "A/0201"]
+            + [f"B/{frame:04d}" for frame in range(120)]
+        )
+
+        schedule = episode_schedule(
+            ids, context=30, masked=60, recovery=30, raw_frame_step=1
+        )
+
+        self.assertEqual(schedule[0].phase, "context")
+        self.assertEqual(schedule[30].phase, "masked")
+        self.assertEqual(schedule[90].phase, "recovery")
+        self.assertEqual(schedule[120].phase, "tail")
+        self.assertEqual(schedule[122].phase, "context")
+        self.assertEqual(schedule[0].segment_id, "A:0")
+        self.assertEqual(schedule[120].segment_id, "A:1")
+        self.assertEqual(schedule[122].segment_id, "B:0")
+        self.assertEqual(schedule[0].episode_id, "A:0:0")
+        self.assertIsNone(schedule[120].episode_id)
+        self.assertEqual(schedule[122].episode_id, "B:0:0")
+        self.assertEqual(schedule[90].episode_offset, 90)
+        self.assertEqual(schedule[120].episode_offset, 0)
+
+    def test_episode_schedule_sorts_for_protocol_but_restores_input_order(self):
+        schedule = episode_schedule(
+            ["A/0001", "A/0000", "A/0002"],
+            context=1,
+            masked=1,
+            recovery=1,
+            raw_frame_step=1,
+        )
+
+        self.assertEqual([row.phase for row in schedule], ["masked", "context", "recovery"])
+        self.assertEqual([row.episode_offset for row in schedule], [1, 0, 2])
+
+    def test_episode_schedule_rejects_invalid_lengths_steps_and_duplicates(self):
+        ids = ["A/0000", "A/0001", "A/0002"]
+        for context, masked, recovery, raw_frame_step in (
+            (0, 1, 1, 1),
+            (1, 0, 1, 1),
+            (1, 1, 0, 1),
+            (1, 1, 1, 0),
+        ):
+            with self.subTest(
+                context=context,
+                masked=masked,
+                recovery=recovery,
+                raw_frame_step=raw_frame_step,
+            ), self.assertRaises(ValueError):
+                episode_schedule(ids, context, masked, recovery, raw_frame_step)
+        with self.assertRaises(ValueError):
+            episode_schedule(["A/0000", "A/0000"], 1, 1, 1, 1)
 
     def test_causal_windows_reset_on_sequence_and_gap(self):
         ids = np.array(["A/0000", "A/0004", "A/0012", "B/0000"])

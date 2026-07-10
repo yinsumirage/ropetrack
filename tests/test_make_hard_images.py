@@ -1,11 +1,14 @@
 import importlib.util
 import json
+import os
 import pickle
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
+import numpy as np
 from PIL import Image
 
 
@@ -214,6 +217,206 @@ class MakeHardImagesTest(unittest.TestCase):
 
             rows = [(json.loads(line)) for line in (out / "hard_manifest.jsonl").read_text().splitlines()]
             self.assertEqual(rows[0]["points_xy"][0], [41.0, 52.0])
+
+    def test_build_ho3d_episode_root_masks_only_complete_masked_phase(self):
+        hard = load_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "ho3d"
+            out = Path(tmp) / "hard"
+            rgb = src / "evaluation" / "AP10" / "rgb"
+            meta_dir = src / "evaluation" / "AP10" / "meta"
+            rgb.mkdir(parents=True)
+            meta_dir.mkdir(parents=True)
+            K = np.eye(3, dtype=np.float32)
+            joints = np.zeros((21, 3), dtype=np.float32)
+            joints[:, 2] = -1.0
+            source_mtime = 1_600_000_000_000_000_000
+            for frame in ("0000", "0001", "0002", "0003"):
+                image_path = rgb / f"{frame}.png"
+                Image.new("RGB", (32, 32), "white").save(image_path)
+                os.utime(image_path, ns=(source_mtime, source_mtime))
+                with (meta_dir / f"{frame}.pkl").open("wb") as handle:
+                    pickle.dump(
+                        {
+                            "handBoundingBox": [4, 4, 28, 28],
+                            "handJoints3D": joints,
+                            "camMat": K,
+                        },
+                        handle,
+                    )
+            ids = [f"AP10/{frame}" for frame in ("0000", "0001", "0002", "0003")]
+            (src / "evaluation.txt").write_text("\n".join(ids) + "\n")
+            (src / "evaluation_xyz.json").write_text(
+                json.dumps([joints.tolist()] * len(ids))
+            )
+            (src / "evaluation_verts.json").write_text(
+                json.dumps([[[0, 0, 0]]] * len(ids))
+            )
+
+            hard.build_ho3d_hard_root(
+                src,
+                out,
+                "mask",
+                0.7,
+                None,
+                7,
+                episode_context=1,
+                episode_mask=1,
+                episode_recovery=1,
+            )
+
+            rows = [
+                json.loads(line)
+                for line in (out / "hard_manifest.jsonl").read_text().splitlines()
+            ]
+            self.assertEqual(
+                [row["episode_phase"] for row in rows],
+                ["context", "masked", "recovery", "tail"],
+            )
+            self.assertEqual(
+                [row["episode_id"] for row in rows],
+                ["AP10:0:0", "AP10:0:0", "AP10:0:0", None],
+            )
+            self.assertEqual([row["episode_offset"] for row in rows], [0, 1, 2, 0])
+            self.assertEqual({row["segment_id"] for row in rows}, {"AP10:0"})
+            self.assertEqual({row["effect"] for row in rows}, {"mask"})
+            for row in rows:
+                self.assertTrue(
+                    {"episode_id", "episode_phase", "episode_offset", "segment_id"}
+                    <= row.keys()
+                )
+
+            output_images = [out / "evaluation" / "AP10" / "rgb" / f"{frame}.png" for frame in ("0000", "0001", "0002", "0003")]
+            self.assertEqual(
+                [image.getpixel((16, 16)) for image in map(Image.open, output_images)],
+                [(255, 255, 255), (0, 0, 0), (255, 255, 255), (255, 255, 255)],
+            )
+            for index in (0, 2, 3):
+                source_image = rgb / output_images[index].name
+                self.assertEqual(
+                    output_images[index].stat().st_mtime_ns,
+                    source_image.stat().st_mtime_ns,
+                )
+
+    def test_build_ho3d_training_episode_root_uses_same_schedule(self):
+        hard = load_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "ho3d"
+            out = Path(tmp) / "hard"
+            rgb = src / "train" / "ABF10" / "rgb"
+            meta_dir = src / "train" / "ABF10" / "meta"
+            rgb.mkdir(parents=True)
+            meta_dir.mkdir(parents=True)
+            K = np.asarray([[10.0, 0.0, 16.0], [0.0, 10.0, 16.0], [0.0, 0.0, 1.0]])
+            joints = np.zeros((21, 3), dtype=np.float32)
+            joints[:, 2] = -1.0
+            ids = [f"ABF10/{frame}" for frame in ("0000", "0001", "0002")]
+            source_mtime = 1_600_000_000_000_000_000
+            for sample_id in ids:
+                frame = sample_id.split("/")[1]
+                image_path = rgb / f"{frame}.png"
+                Image.new("RGB", (32, 32), "white").save(image_path)
+                os.utime(image_path, ns=(source_mtime, source_mtime))
+                with (meta_dir / f"{frame}.pkl").open("wb") as handle:
+                    pickle.dump({"handJoints3D": joints, "camMat": K}, handle)
+            (src / "train.txt").write_text("\n".join(ids) + "\n")
+
+            hard.build_ho3d_train_hard_root(
+                src,
+                out,
+                "mask",
+                0.7,
+                None,
+                7,
+                episode_context=1,
+                episode_mask=1,
+                episode_recovery=1,
+            )
+
+            rows = [
+                json.loads(line)
+                for line in (out / "hard_manifest.jsonl").read_text().splitlines()
+            ]
+            self.assertEqual(
+                [row["episode_phase"] for row in rows],
+                ["context", "masked", "recovery"],
+            )
+            self.assertEqual({row["segment_id"] for row in rows}, {"ABF10:0"})
+            self.assertEqual([row["episode_offset"] for row in rows], [0, 1, 2])
+            self.assertEqual({row["episode_id"] for row in rows}, {"ABF10:0:0"})
+            self.assertEqual({row["effect"] for row in rows}, {"mask"})
+            for row in rows:
+                self.assertTrue(
+                    {"episode_id", "episode_phase", "episode_offset", "segment_id"}
+                    <= row.keys()
+                )
+
+            output_images = [
+                out / "train" / "ABF10" / "rgb" / f"{frame}.png"
+                for frame in ("0000", "0001", "0002")
+            ]
+            self.assertEqual(
+                [image.getpixel((16, 16)) for image in map(Image.open, output_images)],
+                [(255, 255, 255), (0, 0, 0), (255, 255, 255)],
+            )
+            for index in (0, 2):
+                source_image = rgb / output_images[index].name
+                self.assertEqual(
+                    output_images[index].stat().st_mtime_ns,
+                    source_image.stat().st_mtime_ns,
+                )
+
+    def test_episode_arguments_must_be_complete_and_ho3d_only(self):
+        hard = load_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(ValueError, "all three"):
+                hard.build_ho3d_hard_root(
+                    Path(tmp) / "missing",
+                    Path(tmp) / "out",
+                    "mask",
+                    0.7,
+                    None,
+                    7,
+                    episode_context=1,
+                )
+
+            argv = [
+                "make_hard_images.py",
+                "--dataset",
+                "freihand",
+                "--input-root",
+                str(Path(tmp) / "missing"),
+                "--output-root",
+                str(Path(tmp) / "out"),
+                "--episode-context",
+                "1",
+                "--episode-mask",
+                "1",
+                "--episode-recovery",
+                "1",
+            ]
+            with mock.patch.object(sys, "argv", argv), self.assertRaisesRegex(
+                ValueError, "HO3D"
+            ):
+                hard.main()
+
+    def test_episode_cli_lengths_default_to_disabled(self):
+        hard = load_script()
+        argv = [
+            "make_hard_images.py",
+            "--dataset",
+            "ho3d",
+            "--input-root",
+            "in",
+            "--output-root",
+            "out",
+        ]
+        with mock.patch.object(sys, "argv", argv):
+            args = hard.parse_args()
+        self.assertEqual(
+            (args.episode_context, args.episode_mask, args.episode_recovery),
+            (0, 0, 0),
+        )
 
 
 if __name__ == "__main__":

@@ -27,6 +27,7 @@ from ropetrack.datasets.hand_pose import (  # noqa: E402
     resolve_image_path,
 )
 from ropetrack.io import write_jsonl  # noqa: E402
+from ropetrack.refine.temporal import episode_schedule  # noqa: E402
 from ropetrack.rope import FINGER_CHAINS  # noqa: E402
 
 # fingertip ids derive from the canonical chains so they cannot drift
@@ -189,6 +190,15 @@ def save_hard_image(src_image: Path, dst_image: Path, bbox, effect: str, severit
     hard.save(dst_image)
 
 
+def _episode_lengths(context: int, masked: int, recovery: int) -> tuple[int, int, int] | None:
+    values = (context, masked, recovery)
+    if values == (0, 0, 0):
+        return None
+    if any(value <= 0 for value in values):
+        raise ValueError("episode mode requires all three positive episode lengths")
+    return values
+
+
 def build_freihand_hard_root(
     input_root: Path,
     output_root: Path,
@@ -241,9 +251,22 @@ def build_ho3d_hard_root(
     limit: int | None,
     seed: int,
     sample_order_file: Path | None = None,
+    episode_context: int = 0,
+    episode_mask: int = 0,
+    episode_recovery: int = 0,
 ) -> Path:
+    episode_lengths = _episode_lengths(episode_context, episode_mask, episode_recovery)
     samples = list(iter_ho3d_samples_from_order(input_root, sample_order_file, limit)
                    if sample_order_file else iter_ho3d_samples(input_root, limit))
+    schedule = (
+        episode_schedule(
+            [sample.sample_id for sample in samples],
+            *episode_lengths,
+            raw_frame_step=1,
+        )
+        if episode_lengths
+        else None
+    )
     xyz = read_json(input_root / "evaluation_xyz.json")
     verts = read_json(input_root / "evaluation_verts.json")
     rows = []
@@ -259,10 +282,15 @@ def build_ho3d_hard_root(
         points_xy = project_ho3d_fingertips_from_joints(xyz[idx], K) if K is not None else fingertip_points_from_meta(meta)
         segments_xy = project_ho3d_finger_end_segments_from_joints(xyz[idx], K) if K is not None else []
         sample_seed = seed + idx
-        save_hard_image(sample.image_path, dst_image, bbox, effect, severity, sample_seed, points_xy=points_xy, segments_xy=segments_xy)
+        episode = schedule[idx] if schedule is not None else None
+        if episode is not None and episode.phase != "masked":
+            dst_image.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(sample.image_path, dst_image)
+        else:
+            save_hard_image(sample.image_path, dst_image, bbox, effect, severity, sample_seed, points_xy=points_xy, segments_xy=segments_xy)
         dst_meta.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(sample.meta_path, dst_meta)
-        rows.append({
+        row = {
             "sample_id": sample.sample_id,
             "dataset": "ho3d",
             "source_image": str(sample.image_path),
@@ -273,7 +301,15 @@ def build_ho3d_hard_root(
             "effect": effect,
             "severity": severity,
             "seed": sample_seed,
-        })
+        }
+        if episode is not None:
+            row.update({
+                "episode_id": episode.episode_id,
+                "episode_phase": episode.phase,
+                "episode_offset": episode.episode_offset,
+                "segment_id": episode.segment_id,
+            })
+        rows.append(row)
 
     write_json(output_root / "evaluation_xyz.json", xyz[:len(samples)])
     write_json(output_root / "evaluation_verts.json", verts[:len(samples)])
@@ -291,6 +327,9 @@ def build_ho3d_train_hard_root(
     seed: int,
     stride: int = 1,
     split_dir: str = "train",
+    episode_context: int = 0,
+    episode_mask: int = 0,
+    episode_recovery: int = 0,
 ) -> Path:
     """Hard-image root for the HO3D TRAIN split (audit: experience/0040).
 
@@ -299,7 +338,13 @@ def build_ho3d_train_hard_root(
     the root itself: the emitted train.txt lists only the strided ids, so
     downstream exports and rope labels stay aligned by construction.
     """
+    episode_lengths = _episode_lengths(episode_context, episode_mask, episode_recovery)
     ids = read_ho3d_train_ids(input_root, stride=stride, limit=limit)
+    schedule = (
+        episode_schedule(ids, *episode_lengths, raw_frame_step=stride)
+        if episode_lengths
+        else None
+    )
     rows = []
     xyz_rows = []
 
@@ -317,11 +362,16 @@ def build_ho3d_train_hard_root(
         points_xy = project_ho3d_fingertips_from_joints(joints, K)
         segments_xy = project_ho3d_finger_end_segments_from_joints(joints, K)
         sample_seed = seed + idx
-        save_hard_image(src_image, dst_image, bbox, effect, severity, sample_seed, points_xy=points_xy, segments_xy=segments_xy)
+        episode = schedule[idx] if schedule is not None else None
+        if episode is not None and episode.phase != "masked":
+            dst_image.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src_image, dst_image)
+        else:
+            save_hard_image(src_image, dst_image, bbox, effect, severity, sample_seed, points_xy=points_xy, segments_xy=segments_xy)
         dst_meta.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(meta_path, dst_meta)
         xyz_rows.append(np.asarray(joints, dtype=np.float64).tolist())
-        rows.append({
+        row = {
             "sample_id": sample_id,
             "dataset": "ho3d",
             "source_image": str(src_image),
@@ -333,7 +383,15 @@ def build_ho3d_train_hard_root(
             "severity": severity,
             "seed": sample_seed,
             "stride": stride,
-        })
+        }
+        if episode is not None:
+            row.update({
+                "episode_id": episode.episode_id,
+                "episode_phase": episode.phase,
+                "episode_offset": episode.episode_offset,
+                "segment_id": episode.segment_id,
+            })
+        rows.append(row)
 
     write_json(output_root / "training_xyz.json", xyz_rows)
     (output_root / "train.txt").write_text("".join(f"{sample_id}\n" for sample_id in ids), encoding="utf-8")
@@ -359,12 +417,20 @@ def parse_args() -> argparse.Namespace:
                         help="HO3D training only: keep every k-th train.txt frame (video subsampling).")
     parser.add_argument("--sample-order-file", type=Path, default=None,
                         help="Optional HO3D run_meta.json or JSON list with sample_order.")
+    parser.add_argument("--episode-context", type=int, default=0)
+    parser.add_argument("--episode-mask", type=int, default=0)
+    parser.add_argument("--episode-recovery", type=int, default=0)
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     limit = None if args.limit <= 0 else args.limit
+    episode_lengths = _episode_lengths(
+        args.episode_context, args.episode_mask, args.episode_recovery
+    )
+    if episode_lengths is not None and args.dataset != "ho3d":
+        raise ValueError("episode mode is only supported for HO3D")
     if args.stride != 1 and not (args.dataset == "ho3d" and args.split == "training"):
         raise ValueError("--stride is only supported for --dataset ho3d --split training")
     if args.dataset == "freihand":
@@ -378,6 +444,9 @@ def main() -> None:
             limit,
             args.seed,
             stride=args.stride,
+            episode_context=args.episode_context,
+            episode_mask=args.episode_mask,
+            episode_recovery=args.episode_recovery,
         )
     else:
         build_ho3d_hard_root(
@@ -388,6 +457,9 @@ def main() -> None:
             limit,
             args.seed,
             sample_order_file=args.sample_order_file,
+            episode_context=args.episode_context,
+            episode_mask=args.episode_mask,
+            episode_recovery=args.episode_recovery,
         )
     print(f"Wrote hard root: {args.output_root}")
 

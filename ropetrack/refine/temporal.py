@@ -30,6 +30,14 @@ class SequenceSplit:
     val_sequences: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class EpisodeFrame:
+    episode_id: str | None
+    phase: str
+    episode_offset: int
+    segment_id: str
+
+
 class TemporalRopeAlphaStudent(nn.Module):
     def __init__(
         self,
@@ -288,6 +296,49 @@ def _contiguous_segments(sample_ids, raw_frame_step: int):
                 start = index
         segments.append(rows[start:])
     return ids, segments
+
+
+def episode_schedule(
+    sample_ids,
+    context: int,
+    masked: int,
+    recovery: int,
+    raw_frame_step: int,
+) -> list[EpisodeFrame]:
+    """Assign complete causal occlusion cycles inside each contiguous segment."""
+    context = _positive_int("context", context)
+    masked = _positive_int("masked", masked)
+    recovery = _positive_int("recovery", recovery)
+    raw_frame_step = _positive_int("raw_frame_step", raw_frame_step)
+    ids, segments = _contiguous_segments(sample_ids, raw_frame_step)
+    cycle_length = context + masked + recovery
+    output: dict[int, EpisodeFrame] = {}
+    sequence_segment_index: dict[str, int] = {}
+
+    for segment in segments:
+        sequence = sequence_frame(ids[segment[0][1]])[0]
+        segment_index = sequence_segment_index.get(sequence, 0)
+        sequence_segment_index[sequence] = segment_index + 1
+        segment_id = f"{sequence}:{segment_index}"
+        complete_rows = len(segment) // cycle_length * cycle_length
+
+        for position, (_, row) in enumerate(segment):
+            if position >= complete_rows:
+                output[row] = EpisodeFrame(None, "tail", position - complete_rows, segment_id)
+                continue
+            offset = position % cycle_length
+            if offset < context:
+                phase = "context"
+            elif offset < context + masked:
+                phase = "masked"
+            else:
+                phase = "recovery"
+            episode_index = position // cycle_length
+            output[row] = EpisodeFrame(
+                f"{segment_id}:{episode_index}", phase, offset, segment_id
+            )
+
+    return [output[row] for row in range(len(ids))]
 
 
 def causal_ema(
