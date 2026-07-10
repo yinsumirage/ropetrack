@@ -207,6 +207,7 @@ class TemporalAugmentationTest(unittest.TestCase):
     def test_temporal_stats_ignore_validation_extremes(self):
         features = np.zeros((6, 70), dtype=np.float32)
         features[:4, 0] = [0, 1, 2, 3]
+        features[:, 60:65] = 1.0
         features[4:, 0] = 9999
 
         mean, std = temporal.temporal_feature_stats(features, np.asarray([0, 1, 2, 3]))
@@ -217,7 +218,19 @@ class TemporalAugmentationTest(unittest.TestCase):
         self.assertEqual(std.shape, (70,))
         self.assertAlmostEqual(float(mean[0]), 1.5)
         self.assertLess(float(std[0]), 2.0)
+        self.assertAlmostEqual(float(std[1]), 1e-4)
+        np.testing.assert_array_equal(std[60:65], np.ones(5, dtype=np.float32))
         self.assertTrue((std >= 1e-4).all())
+
+        dropped = features[:4].copy()
+        dropped[0, [60, 62, 64]] = 0.0
+        normalized_valid = ((dropped - mean) / std)[:, 60:65]
+        np.testing.assert_array_equal(
+            normalized_valid,
+            dropped[:, 60:65] - np.float32(1.0),
+        )
+        self.assertTrue(np.isfinite(normalized_valid).all())
+        self.assertLessEqual(float(np.abs(normalized_valid).max()), 1.0)
 
     def test_temporal_stats_reject_invalid_rows_and_indices(self):
         features = np.zeros((4, 70), dtype=np.float32)
@@ -780,6 +793,30 @@ class TemporalTrainingTest(unittest.TestCase):
                     device="cpu",
                 )
 
+    def test_trainer_rejects_stale_framewise_validity_scale(self):
+        trainer = load_temporal_trainer()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            teacher_dir, checkpoint, _, _ = temporal_training_fixture(root)
+            payload = torch.load(checkpoint, map_location="cpu", weights_only=True)
+            payload["config"]["feature_std"][60:65] = [1e-4] * 5
+            torch.save(payload, checkpoint)
+
+            with self.assertRaisesRegex(ValueError, "validity"):
+                trainer.train_temporal_student(
+                    teacher_dir,
+                    checkpoint,
+                    "mult5",
+                    root / "out",
+                    history_length=2,
+                    hidden_dim=8,
+                    max_epochs=1,
+                    patience=1,
+                    val_frac=0.5,
+                    split_seed=17,
+                    device="cpu",
+                )
+
     def test_temporal_training_cli_has_the_plan_controls(self):
         trainer = load_temporal_trainer()
         args = trainer.parse_args(
@@ -1005,6 +1042,8 @@ class TemporalModelTest(unittest.TestCase):
             for parameter in temporal_model.parameters():
                 parameter.uniform_(-0.1, 0.1)
 
+        legacy_framewise_std = np.linspace(0.5, 1.5, 65)
+        legacy_framewise_std[60:65] = 1e-4
         framewise_config = {
             "in_dim": 65,
             "out_dim": 5,
@@ -1014,8 +1053,10 @@ class TemporalModelTest(unittest.TestCase):
             "action_space": "mult5",
             "gate_threshold": 0.1,
             "feature_mean": np.linspace(-0.2, 0.2, 65).tolist(),
-            "feature_std": np.linspace(0.5, 1.5, 65).tolist(),
+            "feature_std": legacy_framewise_std.tolist(),
         }
+        legacy_temporal_std = np.linspace(0.5, 1.5, 70)
+        legacy_temporal_std[60:65] = 1e-4
         config = {
             "model_type": "causal_gru",
             "in_dim": 70,
@@ -1028,7 +1069,7 @@ class TemporalModelTest(unittest.TestCase):
             "raw_frame_step": 1,
             "history_step": 1,
             "temporal_feature_mean": np.linspace(-0.3, 0.3, 70).tolist(),
-            "temporal_feature_std": np.linspace(0.5, 1.5, 70).tolist(),
+            "temporal_feature_std": legacy_temporal_std.tolist(),
         }
         payload = {"model_state": framewise.state_dict(), "config": framewise_config}
 

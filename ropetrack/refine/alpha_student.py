@@ -90,6 +90,7 @@ def normalize_features(features: np.ndarray, mean: np.ndarray, std: np.ndarray) 
 def feature_stats(features: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     mean = features.mean(axis=0).astype(np.float32)
     std = np.maximum(features.std(axis=0), 1e-4).astype(np.float32)
+    std[STUDENT_FEATURE_DIM - 5 : STUDENT_FEATURE_DIM] = 1.0
     return mean, std
 
 

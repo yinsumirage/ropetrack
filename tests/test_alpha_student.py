@@ -90,7 +90,31 @@ class ModelAndFeatureTest(unittest.TestCase):
         mean, std = feature_stats(features)
         normed = normalize_features(features, mean, std)
         self.assertLess(float(np.abs(normed.mean(axis=0)).max()), 1e-4)
-        self.assertLess(float(np.abs(normed.std(axis=0) - 1.0).max()), 1e-3)
+        self.assertLess(float(np.abs(normed[:, :60].std(axis=0) - 1.0).max()), 1e-3)
+        np.testing.assert_array_equal(std[60:65], np.ones(5, dtype=np.float32))
+
+    def test_validity_normalization_stays_bounded_after_dropout(self):
+        pose = np.zeros((4, 45), dtype=np.float32)
+        base = np.full((4, 5), 0.2, dtype=np.float32)
+        inp = np.full((4, 5), 0.4, dtype=np.float32)
+        clean_valid = np.ones((4, 5), dtype=bool)
+        clean = build_student_features(pose, base, inp, clean_valid)
+        mean, std = feature_stats(clean)
+
+        dropped_valid = clean_valid.copy()
+        dropped_valid[0, [0, 2, 4]] = False
+        dropped_valid[1] = False
+        dropped = build_student_features(pose, base, inp, dropped_valid)
+        normalized_valid = normalize_features(dropped, mean, std)[:, 60:65]
+
+        self.assertAlmostEqual(float(std[0]), 1e-4)
+        np.testing.assert_array_equal(std[60:65], np.ones(5, dtype=np.float32))
+        np.testing.assert_array_equal(
+            normalized_valid,
+            dropped_valid.astype(np.float32) - np.float32(1.0),
+        )
+        self.assertTrue(np.isfinite(normalized_valid).all())
+        self.assertLessEqual(float(np.abs(normalized_valid).max()), 1.0)
 
     def test_checkpoint_roundtrip(self):
         cache, _ = synthetic_teacher(num=8)

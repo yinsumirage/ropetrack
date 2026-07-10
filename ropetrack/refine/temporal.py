@@ -340,10 +340,10 @@ def temporal_feature_stats(
     if len(np.unique(rows)) != len(rows):
         raise ValueError("train_idx contains duplicate rows")
     train = features[rows]
-    return (
-        train.mean(axis=0).astype(np.float32),
-        np.maximum(train.std(axis=0), 1e-4).astype(np.float32),
-    )
+    mean = train.mean(axis=0).astype(np.float32)
+    std = np.maximum(train.std(axis=0), 1e-4).astype(np.float32)
+    std[STUDENT_FEATURE_DIM - 5 : STUDENT_FEATURE_DIM] = 1.0
+    return mean, std
 
 
 def prepare_temporal_cache(

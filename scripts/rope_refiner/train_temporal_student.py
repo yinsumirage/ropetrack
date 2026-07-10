@@ -187,7 +187,9 @@ def _validate_framewise_provenance(
         raise ValueError("framewise config.sources has invalid provenance") from exc
     if source_dir != teacher_dir.expanduser().resolve() or source_count != num_samples:
         raise ValueError("framewise config.sources does not match the temporal teacher")
-    _framewise_feature_stats(config)
+    _, feature_std = _framewise_feature_stats(config)
+    if np.any(feature_std[STUDENT_FEATURE_DIM - 5 : STUDENT_FEATURE_DIM] != 1.0):
+        raise ValueError("framewise validity feature std must be 1.0")
     gate = config.get("gate_threshold")
     return max_alpha, None if gate is None else float(gate)
 
