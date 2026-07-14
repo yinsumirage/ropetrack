@@ -23,14 +23,20 @@ from scripts.score_sliced_predictions import (  # noqa: E402
 )
 
 
+MASKED_HORIZONS = (1, 5, 15, 30, 60)
+
 BOOTSTRAP_METRICS = (
     "pa_mpjpe_mm",
     "pa_mpvpe_mm",
     "masked_pa_mpjpe_mm",
     "masked_occluded_tip_pa_mpjpe_mm",
     "recovery_pa_mpjpe_mm",
+    *(f"masked_h{horizon}_pa_mpjpe_mm" for horizon in MASKED_HORIZONS),
     "velocity_error_mm_s",
     "acceleration_error_mm_s2",
+    "masked_velocity_error_mm_s",
+    "masked_acceleration_error_mm_s2",
+    "masked_jitter_mm_s2",
 )
 
 
@@ -373,6 +379,10 @@ def _phase_metrics(
     for phase in ("context", "masked", "recovery"):
         values = frame_pa[phases == phase]
         out[f"{phase}_pa_mpjpe_mm"] = float(values.mean()) if values.size else None
+    offsets = np.asarray([row["episode_offset"] for row in manifest])
+    for horizon in MASKED_HORIZONS:
+        values = frame_pa[(phases == "masked") & (offsets == 29 + horizon)]
+        out[f"masked_h{horizon}_pa_mpjpe_mm"] = float(values.mean()) if values.size else None
 
     episodes: dict[tuple[str, str], list[int]] = {}
     for index, row in enumerate(manifest):
@@ -404,6 +414,28 @@ def _phase_metrics(
     out["recovery_frames"] = float(np.mean(recoveries)) if recoveries else None
     out["num_recovery_episodes"] = len(recoveries)
     return out
+
+
+def _masked_motion_metrics(
+    sample_ids,
+    gt_xyz: np.ndarray,
+    pred_xyz: np.ndarray,
+    manifest: list[dict],
+    fps: float,
+    raw_frame_step: int,
+) -> dict:
+    selected = np.flatnonzero([row["episode_phase"] == "masked" for row in manifest])
+    motion = temporal_motion_metrics(
+        np.asarray(sample_ids)[selected], gt_xyz[selected], pred_xyz[selected], fps, raw_frame_step
+    )
+    return {
+        "masked_velocity_error_mm_s": motion["velocity_error_mm_s"],
+        "masked_acceleration_error_mm_s2": motion["acceleration_error_mm_s2"],
+        "masked_prediction_acceleration_mm_s2": motion["prediction_acceleration_mm_s2"],
+        "masked_jitter_mm_s2": motion["jitter_mm_s2"],
+        "num_masked_velocity_edges": motion["num_velocity_edges"],
+        "num_masked_acceleration_triplets": motion["num_acceleration_triplets"],
+    }
 
 
 def _sequence_rows(sample_ids) -> dict[str, np.ndarray]:
@@ -445,6 +477,26 @@ def _sequence_metrics(
             if tip_mask.any():
                 values = joint_pa[rows][tip_mask]
                 out["masked_occluded_tip_pa_mpjpe_mm"][sequence] = (float(values.mean()), len(values))
+            offsets = np.asarray([manifest[row]["episode_offset"] for row in rows])
+            for horizon in MASKED_HORIZONS:
+                selected = rows[(phases[rows] == "masked") & (offsets == 29 + horizon)]
+                if selected.size:
+                    out[f"masked_h{horizon}_pa_mpjpe_mm"][sequence] = (
+                        float(frame_pa[selected].mean()), len(selected)
+                    )
+            selected = rows[phases[rows] == "masked"]
+            if selected.size:
+                masked_motion = temporal_motion_metrics(
+                    ids[selected], gt_xyz[selected], pred_xyz[selected], fps, raw_frame_step
+                )
+                for metric, count_key in (
+                    ("masked_velocity_error_mm_s", "num_velocity_edges"),
+                    ("masked_acceleration_error_mm_s2", "num_acceleration_triplets"),
+                    ("masked_jitter_mm_s2", "num_acceleration_triplets"),
+                ):
+                    source = metric.removeprefix("masked_")
+                    if masked_motion[source] is not None:
+                        out[metric][sequence] = (masked_motion[source], masked_motion[count_key])
     return out
 
 
@@ -556,6 +608,7 @@ def build_report(
         }
         if manifest is not None:
             metrics.update(_phase_metrics(frame_pa, manifest, order, raw_frame_step))
+            metrics.update(_masked_motion_metrics(order, gt_xyz, data["xyz"], manifest, fps, raw_frame_step))
             metrics["masked_occluded_tip_pa_mpjpe_mm"] = float(joint_pa[occluded_tip_mask].mean())
         methods[name] = metrics
         sequence_values[name] = _sequence_metrics(

@@ -415,8 +415,22 @@ def optimize_alpha(
     return refined, final_alpha, directions_np
 
 
-def mano_predictions(dataset: str, hand_pose: np.ndarray, sample_ids, mano_cache: Path, device: str, batch_size: int, mano_module=None) -> tuple[list, list]:
+def mano_predictions(
+    dataset: str,
+    hand_pose: np.ndarray,
+    sample_ids,
+    mano_cache: Path,
+    device: str,
+    batch_size: int,
+    mano_module=None,
+    betas_override: np.ndarray | None = None,
+    keep_vertices: bool = True,
+) -> tuple[list, list]:
     global_orient, betas, cam_t = load_mano_globals(mano_cache, sample_ids)
+    if betas_override is not None:
+        betas = np.asarray(betas_override, dtype=np.float32)
+        if betas.shape != (len(hand_pose), 10) or not np.isfinite(betas).all():
+            raise ValueError(f"betas_override must be finite [{len(hand_pose)}, 10], got {betas.shape}")
     j_regressor = load_mano_j_regressor(REPO / "mano_data" / "MANO_RIGHT.pkl")
     mano = mano_module if mano_module is not None else mano_layer(device)
     xyz_rows, vert_rows = [], []
@@ -433,7 +447,8 @@ def mano_predictions(dataset: str, hand_pose: np.ndarray, sample_ids, mano_cache
             for verts, trans in zip(verts_model, cam_t[start:end], strict=True):
                 verts_eval = eval_points_from_model(dataset, verts, trans, "m")
                 xyz_rows.append(joints_from_vertices(dataset, verts_eval, j_regressor).tolist())
-                vert_rows.append(verts_eval.tolist())
+                if keep_vertices:
+                    vert_rows.append(verts_eval.tolist())
     return xyz_rows, vert_rows
 
 

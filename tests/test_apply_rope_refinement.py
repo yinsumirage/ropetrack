@@ -144,6 +144,23 @@ def rope_residual_for_pose(script, pose_np: np.ndarray, target: np.ndarray) -> f
 
 
 class ApplyRopeRefinementTest(unittest.TestCase):
+    def test_mano_predictions_rejects_bad_beta_override_before_decode(self):
+        script = load_apply_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp) / "mano_cache.npz"
+            write_toy_mano_cache(cache, 1)
+            with self.assertRaisesRegex(ValueError, "betas_override"):
+                script.mano_predictions(
+                    "freihand",
+                    toy_pose(1, 0.0),
+                    ["00000000"],
+                    cache,
+                    "cpu",
+                    1,
+                    mano_module=FakeMano(),
+                    betas_override=np.zeros((1, 9), dtype=np.float32),
+                )
+
     def test_apply_finger_curl_alpha_only_changes_selected_finger_groups(self):
         script = load_apply_script()
         base = np.arange(45, dtype=np.float32).reshape(1, 45)

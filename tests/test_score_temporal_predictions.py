@@ -201,6 +201,13 @@ class ScorerEndToEndTest(unittest.TestCase):
             self.assertIn("masked_pa_mpjpe_mm", report["methods"]["temporal"])
             self.assertIn("masked_occluded_tip_pa_mpjpe_mm", report["methods"]["temporal"])
             self.assertIn("recovery_frames", report["methods"]["temporal"])
+            self.assertIn("masked_velocity_error_mm_s", report["methods"]["temporal"])
+            self.assertIn("masked_acceleration_error_mm_s2", report["methods"]["temporal"])
+            self.assertIn("masked_jitter_mm_s2", report["methods"]["temporal"])
+            for horizon in (1, 5, 15, 30, 60):
+                metric = f"masked_h{horizon}_pa_mpjpe_mm"
+                self.assertIn(metric, report["methods"]["temporal"])
+                self.assertEqual(len(report["bootstrap_ci"]["temporal"][metric]), 2)
             self.assertLess(report["paired_deltas"]["temporal"]["pa_mpjpe_mm"], 0.0)
             self.assertLess(report["paired_deltas"]["temporal"]["masked_occluded_tip_pa_mpjpe_mm"], 0.0)
             self.assertEqual(len(report["bootstrap_ci"]["temporal"]["pa_mpjpe_mm"]), 2)
