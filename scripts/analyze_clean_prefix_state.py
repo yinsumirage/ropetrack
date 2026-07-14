@@ -33,22 +33,27 @@ from scripts.score_temporal_predictions import (  # noqa: E402
 from scripts.temporal_oracle_state import complete_episode_rows  # noqa: E402
 
 
-def perfect_prefix_predictions(
-    gt_xyz: np.ndarray,
+def prefix_predictions(
+    prefix_xyz: np.ndarray,
     episodes: tuple[np.ndarray, ...],
     baseline: np.ndarray | None = None,
+    name_prefix: str = "perfect_prefix",
 ) -> dict[str, np.ndarray]:
-    gt = np.asarray(gt_xyz, dtype=np.float64)
-    if gt.ndim != 3 or gt.shape[1:] != (21, 3) or not np.isfinite(gt).all():
-        raise ValueError(f"gt_xyz must be finite [N,21,3], got {gt.shape}")
-    outside = gt if baseline is None else np.asarray(baseline, dtype=np.float64)
-    if outside.shape != gt.shape or not np.isfinite(outside).all():
-        raise ValueError("baseline must match finite gt_xyz")
+    source = np.asarray(prefix_xyz, dtype=np.float64)
+    if source.ndim != 3 or source.shape[1:] != (21, 3) or not np.isfinite(source).all():
+        raise ValueError(f"prefix_xyz must be finite [N,21,3], got {source.shape}")
+    outside = source if baseline is None else np.asarray(baseline, dtype=np.float64)
+    if outside.shape != source.shape or not np.isfinite(outside).all():
+        raise ValueError("baseline must match finite prefix_xyz")
     predictions = {
         name: outside.copy()
-        for name in ("perfect_prefix_last_clean", "perfect_prefix_constant_velocity", "perfect_prefix_damped_velocity")
+        for name in (
+            f"{name_prefix}_last_clean",
+            f"{name_prefix}_constant_velocity",
+            f"{name_prefix}_damped_velocity",
+        )
     }
-    root_relative = gt - gt[:, :1]
+    root_relative = source - source[:, :1]
     for rows in episodes:
         context = rows[:30]
         last_five = root_relative[context[-5:]]
@@ -56,13 +61,21 @@ def perfect_prefix_predictions(
         last_clean = last_five[-1]
         for horizon, row in enumerate(rows[30:90], start=1):
             scales = {
-                "perfect_prefix_last_clean": 0.0,
-                "perfect_prefix_constant_velocity": float(min(horizon, 5)),
-                "perfect_prefix_damped_velocity": float((1.0 - 0.8**horizon) / 0.2),
+                f"{name_prefix}_last_clean": 0.0,
+                f"{name_prefix}_constant_velocity": float(min(horizon, 5)),
+                f"{name_prefix}_damped_velocity": float((1.0 - 0.8**horizon) / 0.2),
             }
             for name, scale in scales.items():
-                predictions[name][row] = gt[row, :1] + last_clean + scale * velocity
+                predictions[name][row] = source[row, :1] + last_clean + scale * velocity
     return predictions
+
+
+def perfect_prefix_predictions(
+    gt_xyz: np.ndarray,
+    episodes: tuple[np.ndarray, ...],
+    baseline: np.ndarray | None = None,
+) -> dict[str, np.ndarray]:
+    return prefix_predictions(gt_xyz, episodes, baseline, "perfect_prefix")
 
 
 def ideal_gate(
@@ -162,6 +175,13 @@ def run(args: argparse.Namespace) -> dict:
         if baseline.shape != gt_xyz.shape or not np.isfinite(baseline).all():
             raise ValueError("K1 xyz must match finite GT xyz")
     predictions = perfect_prefix_predictions(gt_xyz, episodes, baseline)
+    if args.visual_method_dir is not None:
+        visual_rows, visual_vertex_rows = load_pred_json(args.visual_method_dir / "pred.json")
+        visual = np.asarray(visual_rows, dtype=np.float64)
+        del visual_rows, visual_vertex_rows
+        if visual.shape != gt_xyz.shape or not np.isfinite(visual).all():
+            raise ValueError("visual prefix xyz must match finite GT xyz")
+        predictions.update(prefix_predictions(visual, episodes, baseline, "visual_prefix"))
     masked_rows = np.sort(np.concatenate([rows[30:90] for rows in episodes]))
     gate_counts = {}
     if baseline is not None:
@@ -186,6 +206,27 @@ def run(args: argparse.Namespace) -> dict:
             masked_rows,
             baseline,
         )
+        if args.visual_method_dir is not None:
+            predictions["ideal_k1_visual_last_clean_gate"], gate_counts["ideal_k1_visual_last_clean_gate"] = ideal_gate(
+                gt_xyz,
+                {"k1": baseline, "visual_prefix_last_clean": predictions["visual_prefix_last_clean"]},
+                masked_rows,
+                baseline,
+            )
+            predictions["ideal_k1_visual_motion_gate"], gate_counts["ideal_k1_visual_motion_gate"] = ideal_gate(
+                gt_xyz,
+                {
+                    name: predictions[name]
+                    for name in (
+                        "k1",
+                        "visual_prefix_last_clean",
+                        "visual_prefix_constant_velocity",
+                        "visual_prefix_damped_velocity",
+                    )
+                },
+                masked_rows,
+                baseline,
+            )
 
     occluded_tip_mask = _masked_occluded_tip_mask(manifest)
     methods = {}
@@ -237,6 +278,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--mano-cache", type=Path, required=True)
     parser.add_argument("--run-meta", type=Path, default=None)
     parser.add_argument("--k1-method-dir", type=Path, default=None)
+    parser.add_argument("--visual-method-dir", type=Path, default=None)
     parser.add_argument("--fps", type=float, default=30.0)
     parser.add_argument("--output", type=Path, required=True)
     return parser.parse_args(argv)

@@ -34,6 +34,11 @@ class CleanPrefixStateAnalysisTest(unittest.TestCase):
         self.assertAlmostEqual(predictions["perfect_prefix_constant_velocity"][89, 1, 0], 0.34)
         self.assertAlmostEqual(predictions["perfect_prefix_damped_velocity"][89, 1, 0], 0.34, places=5)
 
+        visual = gt.copy()
+        visual[:, 1, 0] += 1.0
+        visual_predictions = script.prefix_predictions(visual, (np.arange(120),), baseline, "visual_prefix")
+        self.assertAlmostEqual(visual_predictions["visual_prefix_last_clean"][30, 1, 0], 1.29)
+
 
 if __name__ == "__main__":
     unittest.main()
