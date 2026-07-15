@@ -352,7 +352,7 @@ def _load_episode_manifest(path: Path, order: list[str], raw_frame_step: int) ->
     return rows
 
 
-def _masked_occluded_tip_mask(manifest: list[dict]) -> np.ndarray:
+def _masked_occluded_tip_mask(manifest: list[dict]) -> np.ndarray | None:
     _, tips = finger_joint_map("ho3d")
     mask = np.zeros((len(manifest), 21), dtype=bool)
     for row_index, row in enumerate(manifest):
@@ -360,12 +360,10 @@ def _masked_occluded_tip_mask(manifest: list[dict]) -> np.ndarray:
             continue
         occluded = occluded_fingers_for_row(row, (640, 480))
         if occluded is None:
-            raise ValueError(f"masked row has undecidable occluded fingers: {row['sample_id']}")
+            return None
         for finger_index, is_occluded in enumerate(occluded):
             mask[row_index, tips[finger_index]] = is_occluded
-    if not mask.any():
-        raise ValueError("episode manifest contains no masked occluded fingertips")
-    return mask
+    return mask if mask.any() else None
 
 
 def _phase_metrics(
@@ -473,10 +471,11 @@ def _sequence_metrics(
                 selected = rows[phases[rows] == phase]
                 if selected.size:
                     out[f"{phase}_pa_mpjpe_mm"][sequence] = (float(frame_pa[selected].mean()), len(selected))
-            tip_mask = occluded_tip_mask[rows]
-            if tip_mask.any():
-                values = joint_pa[rows][tip_mask]
-                out["masked_occluded_tip_pa_mpjpe_mm"][sequence] = (float(values.mean()), len(values))
+            if occluded_tip_mask is not None:
+                tip_mask = occluded_tip_mask[rows]
+                if tip_mask.any():
+                    values = joint_pa[rows][tip_mask]
+                    out["masked_occluded_tip_pa_mpjpe_mm"][sequence] = (float(values.mean()), len(values))
             offsets = np.asarray([manifest[row]["episode_offset"] for row in rows])
             for horizon in MASKED_HORIZONS:
                 selected = rows[(phases[rows] == "masked") & (offsets == 29 + horizon)]
@@ -609,7 +608,9 @@ def build_report(
         if manifest is not None:
             metrics.update(_phase_metrics(frame_pa, manifest, order, raw_frame_step))
             metrics.update(_masked_motion_metrics(order, gt_xyz, data["xyz"], manifest, fps, raw_frame_step))
-            metrics["masked_occluded_tip_pa_mpjpe_mm"] = float(joint_pa[occluded_tip_mask].mean())
+            metrics["masked_occluded_tip_pa_mpjpe_mm"] = (
+                None if occluded_tip_mask is None else float(joint_pa[occluded_tip_mask].mean())
+            )
         methods[name] = metrics
         sequence_values[name] = _sequence_metrics(
             order,
@@ -648,6 +649,7 @@ def build_report(
             "bootstrap_seed": 20260710,
             "num_sequences": len(sequence_keys),
             "episode_phases": {"context": 30, "masked": 60, "recovery": 30} if manifest is not None else None,
+            "masked_occluded_tip_defined": occluded_tip_mask is not None,
         },
     }
 

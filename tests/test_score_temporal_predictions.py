@@ -352,6 +352,12 @@ class ScorerEndToEndTest(unittest.TestCase):
             self.assertFalse(mask[phases != "masked"].any())
             self.assertEqual(int(mask.sum()), 2 * 60 * 5)
 
+    def test_occluded_tip_mask_is_undefined_for_crop(self):
+        script = load_script()
+        self.assertIsNone(script._masked_occluded_tip_mask([
+            {"sample_id": "A/0001", "episode_phase": "masked", "effect": "crop"},
+        ]))
+
     def test_recovery_uses_episode_offset_instead_of_storage_order(self):
         script = load_script()
         ids = np.asarray([f"A/{frame:04d}" for frame in range(120)])
