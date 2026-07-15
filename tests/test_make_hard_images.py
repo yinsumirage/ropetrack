@@ -369,7 +369,7 @@ class MakeHardImagesTest(unittest.TestCase):
     def test_episode_arguments_must_be_complete_and_ho3d_only(self):
         hard = load_script()
         with tempfile.TemporaryDirectory() as tmp:
-            with self.assertRaisesRegex(ValueError, "all three"):
+            with self.assertRaisesRegex(ValueError, "positive context/masked"):
                 hard.build_ho3d_hard_root(
                     Path(tmp) / "missing",
                     Path(tmp) / "out",

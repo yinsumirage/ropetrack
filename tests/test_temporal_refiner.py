@@ -129,12 +129,23 @@ class TemporalProtocolTest(unittest.TestCase):
         self.assertEqual([row.phase for row in schedule], ["masked", "context", "recovery"])
         self.assertEqual([row.episode_offset for row in schedule], [1, 0, 2])
 
+    def test_episode_schedule_allows_no_recovery(self):
+        schedule = episode_schedule(
+            [f"A/{frame:04d}" for frame in range(6)],
+            context=2,
+            masked=4,
+            recovery=0,
+            raw_frame_step=1,
+        )
+
+        self.assertEqual([row.phase for row in schedule], ["context"] * 2 + ["masked"] * 4)
+
     def test_episode_schedule_rejects_invalid_lengths_steps_and_duplicates(self):
         ids = ["A/0000", "A/0001", "A/0002"]
         for context, masked, recovery, raw_frame_step in (
             (0, 1, 1, 1),
             (1, 0, 1, 1),
-            (1, 1, 0, 1),
+            (1, 1, -1, 1),
             (1, 1, 1, 0),
         ):
             with self.subTest(

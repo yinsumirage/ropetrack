@@ -595,7 +595,9 @@ def episode_schedule(
     """Assign complete causal occlusion cycles inside each contiguous segment."""
     context = _positive_int("context", context)
     masked = _positive_int("masked", masked)
-    recovery = _positive_int("recovery", recovery)
+    if not isinstance(recovery, (int, np.integer)) or isinstance(recovery, (bool, np.bool_)) or recovery < 0:
+        raise ValueError("recovery must be a non-negative integer")
+    recovery = int(recovery)
     raw_frame_step = _positive_int("raw_frame_step", raw_frame_step)
     ids, segments = _contiguous_segments(sample_ids, raw_frame_step)
     cycle_length = context + masked + recovery

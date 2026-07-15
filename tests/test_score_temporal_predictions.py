@@ -383,9 +383,32 @@ class ScorerEndToEndTest(unittest.TestCase):
 
         self.assertEqual(metrics["recovery_frames"], 1.0)
 
-    def test_phase_metrics_reject_non_registered_episode_lengths(self):
+    def test_phase_metrics_supports_no_recovery_and_long_horizons(self):
         script = load_script()
-        phases = ("context", "masked", "recovery", "recovery", "recovery")
+        phases = ("context",) * 30 + ("masked",) * 240
+        ids = np.asarray([f"A/{frame:04d}" for frame in range(len(phases))])
+        rows = [
+            {
+                "sample_id": sample_id,
+                "episode_id": "episode-0",
+                "episode_phase": phase,
+                "episode_offset": offset,
+                "segment_id": "A:0",
+            }
+            for offset, (sample_id, phase) in enumerate(zip(ids, phases, strict=True))
+        ]
+        errors = np.arange(len(phases), dtype=np.float64)
+
+        metrics = script._phase_metrics(errors, rows, ids, raw_frame_step=1)
+
+        self.assertEqual(metrics["masked_h120_pa_mpjpe_mm"], 149.0)
+        self.assertEqual(metrics["masked_h240_pa_mpjpe_mm"], 269.0)
+        self.assertIsNone(metrics["recovery_pa_mpjpe_mm"])
+        self.assertIsNone(metrics["recovery_frames"])
+
+    def test_phase_metrics_rejects_out_of_order_phases(self):
+        script = load_script()
+        phases = ("context", "recovery", "masked")
         ids = np.asarray([f"A/{frame:04d}" for frame in range(len(phases))])
         rows = [
             {
@@ -398,7 +421,7 @@ class ScorerEndToEndTest(unittest.TestCase):
             for offset, (sample_id, phase) in enumerate(zip(ids, phases, strict=True))
         ]
 
-        with self.assertRaisesRegex(ValueError, "30/60/30"):
+        with self.assertRaisesRegex(ValueError, "contiguous context/masked/recovery"):
             script._phase_metrics(np.ones(len(phases)), rows, ids, raw_frame_step=1)
 
 

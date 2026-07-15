@@ -194,8 +194,8 @@ def _episode_lengths(context: int, masked: int, recovery: int) -> tuple[int, int
     values = (context, masked, recovery)
     if values == (0, 0, 0):
         return None
-    if any(value <= 0 for value in values):
-        raise ValueError("episode mode requires all three positive episode lengths")
+    if context <= 0 or masked <= 0 or recovery < 0:
+        raise ValueError("episode mode requires positive context/masked and non-negative recovery")
     return values
 
 

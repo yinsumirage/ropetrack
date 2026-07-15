@@ -23,7 +23,7 @@ from scripts.score_sliced_predictions import (  # noqa: E402
 )
 
 
-MASKED_HORIZONS = (1, 5, 15, 30, 60)
+MASKED_HORIZONS = (1, 5, 15, 30, 60, 120, 240)
 
 BOOTSTRAP_METRICS = (
     "pa_mpjpe_mm",
@@ -366,6 +366,29 @@ def _masked_occluded_tip_mask(manifest: list[dict]) -> np.ndarray | None:
     return mask if mask.any() else None
 
 
+def _episode_phase_lengths(manifest: list[dict]) -> dict[str, int]:
+    episodes: dict[tuple[str, str], list[dict]] = {}
+    for row in manifest:
+        if row["episode_phase"] != "tail":
+            episodes.setdefault((str(row["segment_id"]), str(row["episode_id"])), []).append(row)
+    layouts = set()
+    for key, rows in episodes.items():
+        ordered = sorted(rows, key=lambda row: row["episode_offset"])
+        if [row["episode_offset"] for row in ordered] != list(range(len(ordered))):
+            raise ValueError(f"episode {key} must use contiguous offsets")
+        labels = [row["episode_phase"] for row in ordered]
+        context = next((index for index, label in enumerate(labels) if label != "context"), len(labels))
+        masked_end = next((index for index in range(context, len(labels)) if labels[index] != "masked"), len(labels))
+        recovery_end = next((index for index in range(masked_end, len(labels)) if labels[index] != "recovery"), len(labels))
+        if context == 0 or masked_end == context or recovery_end != len(labels):
+            raise ValueError(f"episode {key} must use contiguous context/masked/recovery phases")
+        layouts.add((context, masked_end - context, recovery_end - masked_end))
+    if len(layouts) != 1:
+        raise ValueError("all complete episodes must use one common phase layout")
+    context, masked, recovery = layouts.pop()
+    return {"context": context, "masked": masked, "recovery": recovery}
+
+
 def _phase_metrics(
     frame_pa: np.ndarray,
     manifest: list[dict],
@@ -373,13 +396,14 @@ def _phase_metrics(
     raw_frame_step: int,
 ) -> dict:
     out = {}
+    layout = _episode_phase_lengths(manifest)
     phases = np.asarray([row["episode_phase"] for row in manifest])
     for phase in ("context", "masked", "recovery"):
         values = frame_pa[phases == phase]
         out[f"{phase}_pa_mpjpe_mm"] = float(values.mean()) if values.size else None
     offsets = np.asarray([row["episode_offset"] for row in manifest])
     for horizon in MASKED_HORIZONS:
-        values = frame_pa[(phases == "masked") & (offsets == 29 + horizon)]
+        values = frame_pa[(phases == "masked") & (offsets == layout["context"] - 1 + horizon)]
         out[f"masked_h{horizon}_pa_mpjpe_mm"] = float(values.mean()) if values.size else None
 
     episodes: dict[tuple[str, str], list[int]] = {}
@@ -391,24 +415,27 @@ def _phase_metrics(
         indices = sorted(indices, key=lambda index: manifest[index]["episode_offset"])
         offsets = [manifest[index]["episode_offset"] for index in indices]
         labels = [manifest[index]["episode_phase"] for index in indices]
-        if offsets != list(range(120)) or labels != ["context"] * 30 + ["masked"] * 60 + ["recovery"] * 30:
-            raise ValueError(f"episode {key} must use contiguous offsets and the registered 30/60/30 phases")
+        expected = (["context"] * layout["context"] + ["masked"] * layout["masked"]
+                    + ["recovery"] * layout["recovery"])
+        if offsets != list(range(len(expected))) or labels != expected:
+            raise ValueError(f"episode {key} does not match the common phase layout")
         parsed = [_sequence_frame(sample_ids[index]) for index in indices]
         if len({sequence for sequence, _ in parsed}) != 1 or any(
             parsed[index][1] - parsed[index - 1][1] != raw_frame_step
             for index in range(1, len(parsed))
         ):
             raise ValueError(f"episode {key} crosses a sequence or raw-frame gap")
-        recoveries.append(
-            recovery_frames(
-                frame_pa[indices],
-                context=30,
-                masked=60,
-                recovery=30,
-                margin_mm=0.5,
-                stable=3,
+        if layout["recovery"]:
+            recoveries.append(
+                recovery_frames(
+                    frame_pa[indices],
+                    context=layout["context"],
+                    masked=layout["masked"],
+                    recovery=layout["recovery"],
+                    margin_mm=0.5,
+                    stable=min(3, layout["recovery"]),
+                )
             )
-        )
     out["recovery_frames"] = float(np.mean(recoveries)) if recoveries else None
     out["num_recovery_episodes"] = len(recoveries)
     return out
@@ -457,6 +484,7 @@ def _sequence_metrics(
 ) -> dict[str, dict[str, tuple[float, int]]]:
     out = {metric: {} for metric in BOOTSTRAP_METRICS}
     phases = None if manifest is None else np.asarray([row["episode_phase"] for row in manifest])
+    layout = None if manifest is None else _episode_phase_lengths(manifest)
     ids = np.asarray(sample_ids)
     for sequence, rows in _sequence_rows(sample_ids).items():
         out["pa_mpjpe_mm"][sequence] = (float(frame_pa[rows].mean()), len(rows))
@@ -478,7 +506,7 @@ def _sequence_metrics(
                     out["masked_occluded_tip_pa_mpjpe_mm"][sequence] = (float(values.mean()), len(values))
             offsets = np.asarray([manifest[row]["episode_offset"] for row in rows])
             for horizon in MASKED_HORIZONS:
-                selected = rows[(phases[rows] == "masked") & (offsets == 29 + horizon)]
+                selected = rows[(phases[rows] == "masked") & (offsets == layout["context"] - 1 + horizon)]
                 if selected.size:
                     out[f"masked_h{horizon}_pa_mpjpe_mm"][sequence] = (
                         float(frame_pa[selected].mean()), len(selected)
@@ -648,7 +676,7 @@ def build_report(
             "bootstrap_iterations": 2000,
             "bootstrap_seed": 20260710,
             "num_sequences": len(sequence_keys),
-            "episode_phases": {"context": 30, "masked": 60, "recovery": 30} if manifest is not None else None,
+            "episode_phases": _episode_phase_lengths(manifest) if manifest is not None else None,
             "masked_occluded_tip_defined": occluded_tip_mask is not None,
         },
     }
