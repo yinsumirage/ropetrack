@@ -18,6 +18,20 @@ from ropetrack.refine.alpha_student import load_image_feature_cache  # noqa: E40
 from scripts.probe_visibility_gate import Gate, probabilities  # noqa: E402
 
 
+def load_gate_checkpoint(path: Path, feature_dim: int) -> tuple[Gate, np.ndarray, np.ndarray, dict[str, float]]:
+    # Trusted checkpoint produced by scripts/probe_image_visibility_gate.py;
+    # it contains NumPy normalization arrays in addition to tensor weights.
+    payload = torch.load(path, map_location="cpu", weights_only=False)
+    mean = np.asarray(payload["mean"], dtype=np.float32)
+    std = np.asarray(payload["std"], dtype=np.float32)
+    if mean.shape != (feature_dim,) or std.shape != mean.shape:
+        raise ValueError(f"feature/checkpoint dimension mismatch: {feature_dim}, {mean.shape}, {std.shape}")
+    model = Gate(feature_dim, int(payload["hidden"]))
+    model.load_state_dict(payload["state_dict"])
+    thresholds = {str(key): float(value) for key, value in payload["thresholds"].items()}
+    return model.eval(), mean, std, thresholds
+
+
 def longest_run(values: np.ndarray) -> int:
     best = current = 0
     for value in values:
@@ -51,17 +65,8 @@ def run(args: argparse.Namespace) -> dict:
     if args.expected_count and len(sample_ids) != args.expected_count:
         raise ValueError(f"expected {args.expected_count} rows, got {len(sample_ids)}")
 
-    # Trusted checkpoint produced by scripts/probe_image_visibility_gate.py;
-    # it contains NumPy normalization arrays in addition to tensor weights.
-    payload = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
-    mean = np.asarray(payload["mean"], dtype=np.float32)
-    std = np.asarray(payload["std"], dtype=np.float32)
-    if features.shape[1] != len(mean) or mean.shape != std.shape:
-        raise ValueError(f"feature/checkpoint dimension mismatch: {features.shape}, {mean.shape}, {std.shape}")
-    model = Gate(features.shape[1], int(payload["hidden"]))
-    model.load_state_dict(payload["state_dict"])
+    model, mean, std, thresholds = load_gate_checkpoint(args.checkpoint, features.shape[1])
     scores = probabilities(model.eval(), features, mean, std)
-    thresholds = {str(key): float(value) for key, value in payload["thresholds"].items()}
     effects = sorted({str(row.get("effect")) for row in manifest})
     severities = sorted({float(row.get("severity")) for row in manifest})
     report = {

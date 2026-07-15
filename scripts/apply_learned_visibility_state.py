@@ -20,6 +20,18 @@ from scripts.temporal_oracle_state import _prepare_state, _refine_masked, _write
 from scripts.temporal_state_followups import load_pose  # noqa: E402
 
 
+DEFAULT_GATE_SPECS = (
+    ("image_linear_default", "image_linear_scores.npz", "default_050"),
+    ("image_linear_zero", "image_linear_scores.npz", "val_zero_false_clean"),
+    ("image_cached_linear_default", "image_cached_linear_scores.npz", "default_050"),
+    ("image_cached_linear_zero", "image_cached_linear_scores.npz", "val_zero_false_clean"),
+)
+
+
+def gate_specs(values: list[list[str]] | None) -> tuple[tuple[str, str, str], ...]:
+    return tuple(tuple(value) for value in values) if values else DEFAULT_GATE_SPECS
+
+
 def load_gate(path: Path, order: list[str], threshold_name: str) -> tuple[np.ndarray, float]:
     with np.load(path, allow_pickle=False) as loaded:
         ids = [str(value) for value in loaded["sample_id"]]
@@ -84,22 +96,18 @@ def run(args: argparse.Namespace) -> Path:
     mano = mano_layer(args.device)
     method_root = args.out_dir / "methods"
     method_root.mkdir(parents=True)
-    specs = (
-        ("image_linear_default", "image_linear_scores.npz", "default_050"),
-        ("image_linear_zero", "image_linear_scores.npz", "val_zero_false_clean"),
-        ("image_cached_linear_default", "image_cached_linear_scores.npz", "default_050"),
-        ("image_cached_linear_zero", "image_cached_linear_scores.npz", "val_zero_false_clean"),
-    )
     created = []
-    for name, score_file, threshold_name in specs:
-        score, threshold = load_gate(args.score_dir / score_file, order, threshold_name)
+    for name, score_file, threshold_name in gate_specs(args.gate):
+        score_path = Path(score_file)
+        score, threshold = load_gate(score_path if score_path.is_absolute() else args.score_dir / score_path,
+                                     order, threshold_name)
         freeze = score >= threshold
         state_pose = causal_trusted_pose(base_pose, cache["sample_id"], freeze)
         state_cache, state_base_xyz = _prepare_state(
             args.dataset, cache, state_pose, betas, args.mano_cache, args.device, args.batch_size, mano
         )
         variants = [(name, state_cache, False)]
-        if name == "image_cached_linear_default":
+        if name == args.shuffle_method:
             variants.append((name + "_rope_shuffled", shuffle_selected_rope(state_cache, freeze, args.shuffle_seed), True))
         for output_name, method_cache, shuffled in variants:
             refined, alpha, elapsed = _refine_masked(
@@ -163,6 +171,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--k1-method-dir", type=Path, required=True)
     parser.add_argument("--k1-checkpoint", type=Path, required=True)
     parser.add_argument("--score-dir", type=Path, required=True)
+    parser.add_argument("--gate", nargs=3, action="append", metavar=("NAME", "SCORE_FILE", "THRESHOLD"),
+                        help="Method spec; repeat to override the four default image-gate methods.")
+    parser.add_argument("--shuffle-method", default="image_cached_linear_default",
+                        help="Also emit a rope-shuffled control for this method name; empty disables it.")
     parser.add_argument("--out-dir", type=Path, required=True)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--batch-size", type=int, default=512)

@@ -19,6 +19,13 @@ def load_script():
 
 
 class LearnedVisibilityStateTest(unittest.TestCase):
+    def test_custom_gate_specs_replace_defaults(self):
+        script = load_script()
+        self.assertEqual(
+            script.gate_specs([["shift", "scores.npz", "val_zero_false_clean"]]),
+            (("shift", "scores.npz", "val_zero_false_clean"),),
+        )
+
     def test_causal_state_updates_only_on_predicted_clean(self):
         script = load_script()
         pose = np.zeros((6, 45), dtype=np.float32)
