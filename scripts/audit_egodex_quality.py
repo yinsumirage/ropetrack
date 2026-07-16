@@ -69,6 +69,11 @@ def select_diverse(order: np.ndarray, rows: list[dict], count: int) -> list[int]
     return selected
 
 
+def confidence_bin_order(values: np.ndarray, mask: np.ndarray, center: float) -> np.ndarray:
+    indices = np.flatnonzero(mask)
+    return indices[np.argsort(np.abs(values[indices] - center))]
+
+
 def confidence_color(value: float) -> tuple[int, int, int]:
     if value < 0.25:
         return (220, 45, 45)
@@ -287,6 +292,14 @@ def run(args: argparse.Namespace) -> Path:
             np.argsort(np.where(has_native_confidence, tip_mean, -np.inf))[::-1], rows, args.high_count
         ),
     }
+    for low, high in ((0.0, 0.25), (0.25, 0.5), (0.5, 0.75), (0.75, 0.9), (0.9, 1.000001)):
+        name = f"tip_{int(low * 100):03d}_{int(min(high, 1.0) * 100):03d}"
+        mask = has_native_confidence & (tip_mean >= low) & (tip_mean < high)
+        order = confidence_bin_order(tip_mean, mask, (low + min(high, 1.0)) / 2.0)
+        selections[name] = select_diverse(order, rows, args.bin_count)
+    selections["confidence_missing"] = select_diverse(
+        np.flatnonzero(~has_native_confidence), rows, args.bin_count
+    )
     visual_manifest = []
     for category, indices in selections.items():
         paths = []
@@ -304,6 +317,7 @@ def run(args: argparse.Namespace) -> Path:
                 "mean_confidence": float(mean_conf[idx]),
                 "tip_mean_confidence": float(tip_mean[idx]),
                 "min_confidence": float(min_conf[idx]),
+                "native_confidence_available": bool(has_native_confidence[idx]),
                 "temporal_speed_m_s": float(temporal_speed[idx]) if np.isfinite(temporal_speed[idx]) else None,
                 "path": str(path.relative_to(args.output_dir)),
             })
@@ -326,6 +340,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--low-count", type=int, default=8)
     parser.add_argument("--jump-count", type=int, default=6)
     parser.add_argument("--high-count", type=int, default=4)
+    parser.add_argument("--bin-count", type=int, default=6)
     return parser.parse_args(argv)
 
 

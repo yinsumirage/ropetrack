@@ -44,6 +44,13 @@ class EgoDexQualityAuditTest(unittest.TestCase):
         self.assertEqual(result["bins"][-1]["tip_confidence"], "missing")
         self.assertEqual(result["bins"][-1]["student_delta_vs_base_mm"], 4.0)
 
+    def test_confidence_bin_order_filters_and_prefers_bin_center(self):
+        audit = load_script()
+        values = np.asarray([0.1, 0.3, 0.49, 0.7])
+        mask = (values >= 0.25) & (values < 0.5)
+
+        np.testing.assert_array_equal(audit.confidence_bin_order(values, mask, 0.375), [1, 2])
+
 
 if __name__ == "__main__":
     unittest.main()
