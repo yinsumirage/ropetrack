@@ -171,12 +171,16 @@ def score_by_confidence(
                 if name != "base":
                     item[f"{name}_delta_vs_base_mm"] = float((values[missing] - errors["base"][missing]).mean())
         rows.append(item)
+    native_count = int(has_native_confidence.sum())
+    correlation = None
+    if "base" in errors and native_count >= 2:
+        native_tip = tip_mean[has_native_confidence]
+        native_error = errors["base"][has_native_confidence]
+        if native_tip.std() > 0.0 and native_error.std() > 0.0:
+            correlation = float(np.corrcoef(native_tip, native_error)[0, 1])
     return {
         "bins": rows,
-        "correlation_tip_confidence_base_error": (
-            float(np.corrcoef(tip_mean[has_native_confidence], errors["base"][has_native_confidence])[0, 1])
-            if "base" in errors else None
-        ),
+        "correlation_tip_confidence_base_error": correlation,
     }
 
 
