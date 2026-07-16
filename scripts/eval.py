@@ -28,6 +28,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--joint-source", choices=["mano_vertices", "model_keypoints", "anyhand_keypoints"], default=None)
     parser.add_argument("--ho3d-root", type=Path, default=None)
     parser.add_argument("--freihand-root", type=Path, default=None)
+    parser.add_argument("--root", type=Path, default=None, help="Root for manifest-backed adapters such as EgoDex.")
     parser.add_argument("--protocol-check-samples", type=int, default=None)
     parser.add_argument("--protocol-tolerance-m", type=float, default=None)
     parser.add_argument("--wilor-ckpt", type=Path, default=None)

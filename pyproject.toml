@@ -5,7 +5,7 @@ description = "Bench-first wrist hand tracking repo with rope-distance experimen
 requires-python = ">=3.10"
 # core package imports; torch/scipy/matplotlib/Pillow/opencv come from the
 # backend conda envs on HPC (see AGENTS.md), not from this metadata
-dependencies = ["numpy", "pyyaml"]
+dependencies = ["h5py", "numpy", "pyyaml"]
 
 [tool.setuptools.packages.find]
 where = ["."]

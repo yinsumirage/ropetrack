@@ -72,9 +72,25 @@ def point_distances(gt, pred):
 
 
 def evaluate_sample(sample):
-    xyz, verts, xyz_pred, verts_pred = [np.asarray(x, dtype=np.float64) for x in sample]
+    xyz_raw, verts_raw, xyz_pred_raw, verts_pred_raw = sample
+    xyz = np.asarray(xyz_raw, dtype=np.float64)
+    xyz_pred = np.asarray(xyz_pred_raw, dtype=np.float64)
+    verts_pred = np.asarray(verts_pred_raw, dtype=np.float64)
     xyz_pred_sc_tr = align_sc_tr(xyz, xyz_pred)
     xyz_pred_pa = align_w_scale(xyz, xyz_pred)
+
+    if verts_raw is None:
+        return {
+            "xyz": point_distances(xyz, xyz_pred),
+            "xyz_pa": point_distances(xyz, xyz_pred_pa),
+            "xyz_st": point_distances(xyz, xyz_pred_sc_tr),
+            "mesh": None,
+            "mesh_pa": None,
+            "f_scores": None,
+            "f_scores_aligned": None,
+        }
+
+    verts = np.asarray(verts_raw, dtype=np.float64)
 
     if verts_pred.shape[0] == verts.shape[0]:
         verts_pred_pa = align_w_scale(verts, verts_pred)
@@ -113,7 +129,8 @@ def load_inputs(pred_dir, gt_dir=None, pred_file_name="pred.json", set_name="eva
     pred_dir = Path(pred_dir)
     gt_dir = Path(gt_dir) if gt_dir is not None else pred_dir
     xyz = read_json(gt_dir / f"{set_name}_xyz.json")
-    verts = read_json(gt_dir / f"{set_name}_verts.json")
+    verts_path = gt_dir / f"{set_name}_verts.json"
+    verts = read_json(verts_path) if verts_path.exists() else [None] * len(xyz)
     pred = read_json(pred_dir / pred_file_name)
     if len(pred) != 2:
         raise ValueError("Expected pred.json to contain [xyz_predictions, vertex_predictions].")
@@ -155,8 +172,8 @@ def summarize_results(results):
         mesh_mean, mesh_auc, _, _ = measure_distances(mesh)
         mesh_pa_mean, mesh_pa_auc, _, _ = measure_distances(mesh_pa)
 
-    f_scores = np.array([result["f_scores"] for result in results], dtype=np.float64)
-    f_scores_aligned = np.array([result["f_scores_aligned"] for result in results], dtype=np.float64)
+    f_scores = stack_results(results, "f_scores")
+    f_scores_aligned = stack_results(results, "f_scores_aligned")
 
     scores = {
         "xyz_mean3d": xyz_mean * 100.0,
@@ -165,14 +182,14 @@ def summarize_results(results):
         "xyz_procrustes_al_auc3d": xyz_pa_auc,
         "xyz_scale_trans_al_mean3d": xyz_st_mean * 100.0,
         "xyz_scale_trans_al_auc3d": xyz_st_auc,
-        "mesh_mean3d": mesh_mean * 100.0,
+        "mesh_mean3d": mesh_mean * 100.0 if mesh is not None else -1.0,
         "mesh_auc3d": mesh_auc,
-        "mesh_al_mean3d": mesh_pa_mean * 100.0,
+        "mesh_al_mean3d": mesh_pa_mean * 100.0 if mesh is not None else -1.0,
         "mesh_al_auc3d": mesh_pa_auc,
-        "f_score_5": float(f_scores[:, 0].mean()),
-        "f_al_score_5": float(f_scores_aligned[:, 0].mean()),
-        "f_score_15": float(f_scores[:, 1].mean()),
-        "f_al_score_15": float(f_scores_aligned[:, 1].mean()),
+        "f_score_5": float(f_scores[:, 0].mean()) if f_scores is not None else -1.0,
+        "f_al_score_5": float(f_scores_aligned[:, 0].mean()) if f_scores_aligned is not None else -1.0,
+        "f_score_15": float(f_scores[:, 1].mean()) if f_scores is not None else -1.0,
+        "f_al_score_15": float(f_scores_aligned[:, 1].mean()) if f_scores_aligned is not None else -1.0,
     }
     return scores
 

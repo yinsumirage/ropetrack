@@ -54,6 +54,13 @@ def optional_path_str(path: Path | None) -> str | None:
     return str(path) if path is not None else None
 
 
+def focal_length_for_sample(sample, cfg, image_shape) -> float:
+    intrinsic = getattr(sample, "intrinsic", None)
+    if intrinsic is not None:
+        return float(np.asarray(intrinsic, dtype=np.float32)[0, 0])
+    return float(cfg.EXTRA.FOCAL_LENGTH / cfg.MODEL.IMAGE_SIZE * max(image_shape[:2]))
+
+
 def predictor_kwargs(args: argparse.Namespace) -> dict:
     return {
         "backend": args.backend,
@@ -112,6 +119,7 @@ class CrossImageBBoxDataset:
         bbox_size = self.utils.expand_to_aspect_ratio(scale * 200, target_aspect_ratio=bbox_shape).max()
         right = np.float32(1.0 if candidate.is_right else 0.0)
         flip = not candidate.is_right
+        focal_length = focal_length_for_sample(candidate.sample, self.cfg, img.shape)
 
         cvimg = img.copy()
         downsampling_factor = (float(bbox_size) / float(self.img_size)) / 2.0
@@ -141,6 +149,7 @@ class CrossImageBBoxDataset:
             "box_size": np.float32(bbox_size),
             "img_size": np.asarray([cvimg.shape[1], cvimg.shape[0]], dtype=np.float32),
             "right": right,
+            "focal_length": np.float32(focal_length),
             "candidate_index": np.int64(idx),
         }
 
@@ -195,7 +204,7 @@ def run_bbox_batch_predictions(predictor, backend: str, candidates: list[BBoxIte
             pred_cam = out["pred_cam"].clone()
             pred_cam[:, 1] = multiplier * pred_cam[:, 1]
             img_size = batch["img_size"].float()
-            focal = cfg.EXTRA.FOCAL_LENGTH / cfg.MODEL.IMAGE_SIZE * img_size.max(dim=1).values
+            focal = batch["focal_length"].float()
             cam_t = cam_crop_to_full(pred_cam, batch["box_center"].float(), batch["box_size"].float(), img_size, focal)
             mano_params = out["pred_mano_params"]
 
@@ -276,7 +285,12 @@ def run_export(args: argparse.Namespace) -> Path:
     repo = Path(__file__).resolve().parents[2]
     from ropetrack.backends.hand_predictor import HandPredictor
 
-    root = args.freihand_root if args.adapter == "freihand" else args.ho3d_root
+    if args.adapter == "freihand":
+        root = args.freihand_root
+    elif args.adapter == "ho3d":
+        root = args.ho3d_root
+    else:
+        root = args.root
     split = getattr(args, "split", "evaluation")
     if split != "evaluation" and getattr(args, "run_eval", False):
         raise ValueError("--run-eval only supports the evaluation split")

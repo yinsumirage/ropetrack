@@ -19,6 +19,7 @@ from ropetrack.datasets.hand_pose import (
     read_ho3d_train_ids,
     read_json,
     resolve_image_path,
+    iter_egodex_samples,
 )
 from ropetrack.io import write_jsonl
 from ropetrack.rope import FINGER_CHAINS, FINGER_COLORS, FINGER_ORDER, build_rope_row, canonical_rope_dataset
@@ -93,10 +94,26 @@ def ho3d_train_items(root: Path, limit: int | None, stride: int = 1, split_dir: 
         }
 
 
+def egodex_items(root: Path, limit: int | None, split: str):
+    xyz = read_json(root / f"{split}_xyz.json")
+    samples = list(iter_egodex_samples(root, limit, split))
+    if len(xyz) < len(samples):
+        raise ValueError(f"EgoDex {split} GT shorter than manifest: xyz={len(xyz)} samples={len(samples)}")
+    for idx, sample in enumerate(samples):
+        yield {
+            "sample_id": sample.sample_id,
+            "joints": xyz[idx],
+            "image_path": sample.image_path,
+            "K": sample.intrinsic,
+        }
+
+
 def iter_rope_items(dataset: str, root: Path, limit: int | None, sample_order_file: Path | None = None, split: str = "evaluation", stride: int = 1):
     name = canonical_rope_dataset(dataset)
     if name == "freihand":
         return freihand_items(root, limit, split=split)
+    if name == "egodex":
+        return egodex_items(root, limit, split)
     if split == "evaluation":
         return ho3d_items(root, limit, sample_order_file)
     if split == "training":
@@ -183,7 +200,7 @@ def write_visualization(path: Path, dataset: str, item: dict, row: dict) -> None
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate fingertip-to-wrist rope labels from evaluation GT joints.")
-    parser.add_argument("--dataset", choices=["freihand", "ho3d"], required=True)
+    parser.add_argument("--dataset", choices=["freihand", "ho3d", "egodex"], required=True)
     parser.add_argument("--input-root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--limit", type=int, default=0, help="Number of samples; <=0 means all.")

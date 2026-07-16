@@ -2,11 +2,17 @@ import importlib.util
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 
 from ropetrack.datasets.hand_pose import BBoxItem, Ho3dSample
-from ropetrack.eval.pipeline import BatchHandPrediction, format_prediction, select_sample_predictions
+from ropetrack.eval.pipeline import (
+    BatchHandPrediction,
+    focal_length_for_sample,
+    format_prediction,
+    select_sample_predictions,
+)
 
 
 class EvalPipelineTest(unittest.TestCase):
@@ -93,6 +99,23 @@ class EvalPipelineTest(unittest.TestCase):
         self.assertFalse((scripts / "bench_freihand.py").exists())
         self.assertFalse((scripts / "bench_eval.py").exists())
         self.assertFalse((scripts / "eval_parallel.py").exists())
+
+
+class FocalLengthProtocolTest(unittest.TestCase):
+    def test_manifest_intrinsic_overrides_model_default(self):
+        sample = SimpleNamespace(intrinsic=np.asarray([[736.6, 0, 960], [0, 736.6, 540], [0, 0, 1]]))
+        cfg = SimpleNamespace(EXTRA=SimpleNamespace(FOCAL_LENGTH=5000), MODEL=SimpleNamespace(IMAGE_SIZE=224))
+
+        self.assertAlmostEqual(focal_length_for_sample(sample, cfg, (1080, 1920, 3)), 736.6, places=3)
+
+    def test_legacy_adapter_keeps_existing_scaled_default(self):
+        sample = SimpleNamespace()
+        cfg = SimpleNamespace(EXTRA=SimpleNamespace(FOCAL_LENGTH=5000), MODEL=SimpleNamespace(IMAGE_SIZE=224))
+
+        self.assertAlmostEqual(
+            focal_length_for_sample(sample, cfg, (480, 640, 3)),
+            5000 / 224 * 640,
+        )
 
 
 if __name__ == "__main__":

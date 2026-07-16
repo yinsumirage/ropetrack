@@ -78,6 +78,24 @@ class ParallelEvalTest(unittest.TestCase):
         self.assertEqual(pred_xyz, [[[0, 0, 0]]])
         self.assertEqual(pred_verts, [[[0, 0, 0]]])
 
+    def test_joint_only_gt_skips_mesh_metrics(self):
+        scorer = load_script()
+        xyz = np.asarray([
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [1.0, 1.0, 0.0],
+        ])
+
+        scores = scorer.summarize_results([
+            scorer.evaluate_sample((xyz, None, xyz.copy(), np.zeros((778, 3))))
+        ])
+
+        self.assertAlmostEqual(scores["xyz_mean3d"], 0.0)
+        self.assertEqual(scores["mesh_mean3d"], -1.0)
+        self.assertEqual(scores["f_score_5"], -1.0)
+
 
 if __name__ == "__main__":
     unittest.main()

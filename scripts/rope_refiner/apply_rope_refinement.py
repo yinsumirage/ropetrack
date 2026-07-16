@@ -519,7 +519,7 @@ def _ema_decay(value: str) -> float:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Apply a cached rope refiner or rope/oracle optimizer to eval MANO cache.")
-    parser.add_argument("--dataset", choices=["freihand", "ho3d"], default="freihand")
+    parser.add_argument("--dataset", choices=["freihand", "ho3d", "egodex"], default="freihand")
     parser.add_argument("--rope-labels", type=Path, required=True)
     parser.add_argument("--pred-dir", type=Path, required=True)
     parser.add_argument("--run-meta", type=Path, required=True)

@@ -18,6 +18,7 @@ from ropetrack.refine.oracle import (
 class OracleJointIdsTest(unittest.TestCase):
     def test_tip_ids_per_dataset(self):
         self.assertEqual(oracle_joint_ids("freihand", "oracle_tip"), list(FREIHAND_TIP_JOINT_IDS))
+        self.assertEqual(oracle_joint_ids("egodex", "oracle_tip"), list(FREIHAND_TIP_JOINT_IDS))
         self.assertEqual(oracle_joint_ids("ho3d", "oracle_tip"), list(HO3D_TIP_JOINT_IDS))
         self.assertEqual(oracle_joint_ids("ho3d_v2", "oracle_tip"), list(HO3D_TIP_JOINT_IDS))
 
@@ -41,7 +42,7 @@ class TorchProtocolParityTest(unittest.TestCase):
         self.j_regressor /= self.j_regressor.sum(axis=1, keepdims=True)
 
     def test_eval_points_parity(self):
-        for dataset in ("freihand", "ho3d"):
+        for dataset in ("freihand", "ho3d", "egodex"):
             with self.subTest(dataset=dataset):
                 expected = np.stack([
                     eval_points_from_model(dataset, self.verts[i], self.cam_t[i], "m")
@@ -53,7 +54,7 @@ class TorchProtocolParityTest(unittest.TestCase):
                 np.testing.assert_allclose(actual, expected, atol=1e-6)
 
     def test_eval_joints_parity(self):
-        for dataset in ("freihand", "ho3d"):
+        for dataset in ("freihand", "ho3d", "egodex"):
             with self.subTest(dataset=dataset):
                 verts_eval = np.stack([
                     eval_points_from_model(dataset, self.verts[i], self.cam_t[i], "m")

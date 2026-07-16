@@ -1,0 +1,7 @@
+name: egodex_test
+adapter: egodex
+remote_root: /data/wentao/ropetrack/processed/egodex/test_eval
+protocol:
+  units: m
+  joint_source: model_keypoints
+  benchmark_mode: gt_bbox

@@ -66,6 +66,31 @@ class HandPoseDatasetsTest(unittest.TestCase):
         self.assertEqual([c.bbox_index for c in candidates], [0, 1])
         self.assertEqual([c.is_right for c in candidates], [True, False])
 
+    def test_egodex_manifest_preserves_hand_side_and_temporal_id(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "evaluation" / "frames").mkdir(parents=True)
+            row = {
+                "sample_id": "task__0__left/000012",
+                "image_path": "evaluation/frames/000012.jpg",
+                "bbox_xyxy": [1, 2, 30, 40],
+                "is_right": False,
+                "episode_id": "task/0",
+                "frame_index": 12,
+                "intrinsic": [[100, 0, 10], [0, 100, 20], [0, 0, 1]],
+                "joint_confidence": [0.5] * 21,
+            }
+            (root / "evaluation.jsonl").write_text(json.dumps(row) + "\n")
+
+            sample = next(iter(iter_hand_pose_samples("egodex", root, limit=None)))
+            candidates = load_gt_bbox_candidates("egodex", [sample])
+
+        self.assertEqual(sample.sample_id, "task__0__left/000012")
+        self.assertFalse(candidates[0].is_right)
+        self.assertEqual(candidates[0].bbox_xyxy.tolist(), [1.0, 2.0, 30.0, 40.0])
+        self.assertEqual(sample.intrinsic.shape, (3, 3))
+        self.assertEqual(sample.joint_confidence.shape, (21,))
+
     def test_load_ho3d_gt_bbox_candidates_reads_meta(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

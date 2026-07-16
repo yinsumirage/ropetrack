@@ -26,6 +26,18 @@ class FreiHandSample:
 
 
 @dataclass(frozen=True)
+class EgoDexSample:
+    sample_id: str
+    image_path: Path
+    bbox_xyxy: np.ndarray
+    is_right: bool
+    episode_id: str
+    frame_index: int
+    intrinsic: np.ndarray
+    joint_confidence: np.ndarray
+
+
+@dataclass(frozen=True)
 class BBoxItem:
     sample_index: int
     bbox_index: int
@@ -71,7 +83,32 @@ def iter_hand_pose_samples(adapter: str, root: Path, limit: int | None, split: s
         if split in {"training", "train"}:
             return iter_ho3d_train_samples(root, limit)
         raise ValueError(f"unsupported HO3D split: {split}")
+    if adapter == "egodex":
+        return iter_egodex_samples(root, limit, split)
     raise ValueError(f"unsupported eval adapter: {adapter}")
+
+
+def iter_egodex_samples(root: Path, limit: int | None, split: str = "evaluation") -> Iterable[EgoDexSample]:
+    manifest_path = root / f"{split}.jsonl"
+    if not manifest_path.exists():
+        raise FileNotFoundError(f"EgoDex manifest missing: {manifest_path}")
+    if limit is not None and limit <= 0:
+        limit = None
+    with manifest_path.open("r", encoding="utf-8") as f:
+        for idx, line in enumerate(f):
+            if limit is not None and idx >= limit:
+                break
+            row = json.loads(line)
+            yield EgoDexSample(
+                sample_id=str(row["sample_id"]),
+                image_path=root / row["image_path"],
+                bbox_xyxy=np.asarray(row["bbox_xyxy"], dtype=np.float32),
+                is_right=bool(row["is_right"]),
+                episode_id=str(row["episode_id"]),
+                frame_index=int(row["frame_index"]),
+                intrinsic=np.asarray(row["intrinsic"], dtype=np.float32),
+                joint_confidence=np.asarray(row["joint_confidence"], dtype=np.float32),
+            )
 
 
 def iter_freihand_eval_samples(root: Path, limit: int | None, split: str = "evaluation") -> Iterable[FreiHandSample]:
@@ -315,6 +352,11 @@ def load_gt_bbox_candidates(adapter: str, samples: list) -> list[BBoxItem]:
                 "gt_bbox",
             ))
         return candidates
+    if adapter == "egodex":
+        return [
+            BBoxItem(idx, 0, sample, sample.bbox_xyxy, sample.is_right, 1.0, "gt_bbox")
+            for idx, sample in enumerate(samples)
+        ]
     raise ValueError(f"unsupported eval adapter: {adapter}")
 
 
@@ -331,14 +373,13 @@ def write_eval_gt_subset(adapter: str, root: Path, eval_input: Path, count: int,
 def validate_eval_protocol(adapter: str, root: Path, samples: list, count: int | None, tolerance_m: float | None) -> None:
     if count is None or count <= 0 or tolerance_m is None:
         return
+    if adapter != "ho3d":
+        return
     check_count = min(count, len(samples))
     xyz = read_json(root / "evaluation_xyz.json")
     verts = read_json(root / "evaluation_verts.json")
     if len(xyz) < check_count or len(verts) < check_count:
         raise ValueError(f"{adapter} GT shorter than protocol check count {check_count}")
-    if adapter != "ho3d":
-        return
-
     for idx, sample in enumerate(samples[:check_count]):
         with sample.meta_path.open("rb") as f:
             meta = pickle.load(f, encoding="latin1")

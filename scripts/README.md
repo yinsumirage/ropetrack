@@ -7,6 +7,7 @@ Current benchmark entrypoints:
 - `score_sliced_predictions.py`: occlusion/rope-residual sliced scorer (details below).
 - `make_hard_images.py`: hard-image split generator.
 - `make_rope_labels.py`: GT fingertip-to-wrist rope label generator.
+- `prepare_egodex.py`: EgoDex MP4/HDF5 exporter for image + camera-frame 21-joint manifests.
 - `audit_ho3d_train_split.py`: format audit before touching an HO3D train split.
 - `rope_refiner/apply_rope_refinement.py`: teacher optimization / student apply.
 - `rope_refiner/train_alpha_student.py`: P2 alpha-student distillation trainer.
@@ -22,6 +23,57 @@ Typical usage:
 ```powershell
 python scripts\eval.py --dataset ho3d_v2 --method wilor_anyhand --run-eval
 ```
+
+EgoDex uses paired MP4/HDF5 episodes. The source provides per-frame skeletal
+SE(3) transforms and confidence, but **not native MANO parameters or mesh
+vertices**. Keep raw data under `/data/wentao/datasets/egodex`; put decoded,
+project-specific subsets under `/data/wentao/ropetrack/processed/egodex`.
+
+```bash
+# CPU: decode a sampled evaluation subset. Each hand is one sample; the same
+# image can therefore appear in one left-hand row and one right-hand row.
+python scripts/prepare_egodex.py \
+  --input-root /data/wentao/datasets/egodex/test \
+  --output-root /data/wentao/ropetrack/processed/egodex/test_eval \
+  --split evaluation --hands both --frame-stride 10
+
+# CPU: build RopeTrack GT rope labels directly from EgoDex's 21 joints.
+python scripts/make_rope_labels.py --dataset egodex \
+  --input-root /data/wentao/ropetrack/processed/egodex/test_eval \
+  --output /data/wentao/ropetrack/processed/egodex/test_eval/rope_labels.jsonl \
+  --split evaluation --viz-dir /data/wentao/ropetrack/runs/egodex_viz --viz-count 16
+
+# GPU: predict WiLoR joints/vertices and a MANO cache, then score the joint GT.
+# EgoDex has no GT mesh, so mesh/F-score fields are reported as unavailable.
+python scripts/eval.py --dataset egodex_test \
+  --root /data/wentao/ropetrack/processed/egodex/test_eval \
+  --save-mano-cache --run-eval
+```
+
+For the current RopeTrack teacher/student training path, export a training
+root from `part1`, then omit `--run-eval` while generating its predicted MANO
+cache. The resulting run directory and rope labels are ordinary inputs to
+`apply_rope_refinement.py --dataset egodex` and `train_alpha_student.py`:
+
+```bash
+python scripts/prepare_egodex.py \
+  --input-root /data/wentao/datasets/egodex/part1 \
+  --output-root /data/wentao/ropetrack/processed/egodex/part1_train_s10 \
+  --split training --hands both --frame-stride 10
+python scripts/eval.py --dataset egodex_test --split training \
+  --root /data/wentao/ropetrack/processed/egodex/part1_train_s10 \
+  --out-dir /data/wentao/ropetrack/runs/egodex_part1_train_s10 \
+  --save-mano-cache
+```
+
+For temporal training use `--split training --frame-stride 1` on selected
+episodes. Both hands share the `<task>__<episode>` sequence key so an episode
+cannot leak across train/validation; right-hand frame numbers receive a fixed
+offset, making the two hand streams distinct contiguous segments.
+The exported `mano_cache.npz` is a model prediction. It must not be described
+as EgoDex GT MANO. Apple's own 2D visualization also warns that projected
+joints may be slightly displaced in the synthesized Vision Pro RGB, so inspect
+the generated overlays before trusting a projected-joint bbox margin.
 
 Hard split roots are generated as normal dataset roots and then selected by
 dataset config name:

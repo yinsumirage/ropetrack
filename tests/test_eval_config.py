@@ -50,6 +50,13 @@ class EvalConfigTest(unittest.TestCase):
         self.assertEqual(args.adapter, "ho3d")
         self.assertEqual(args.ho3d_root, Path("/data/wentao/ropetrack/hard/ho3d_v2/mask70"))
 
+    def test_egodex_uses_manifest_root_and_model_keypoints(self):
+        args = build_run_args("egodex_test", "wilor_anyhand")
+
+        self.assertEqual(args.adapter, "egodex")
+        self.assertEqual(args.root, Path("/data/wentao/ropetrack/processed/egodex/test_eval"))
+        self.assertEqual(args.joint_source, "model_keypoints")
+
     def test_finger_end_hard_split_dataset_config_keeps_base_protocol(self):
         args = build_run_args("ho3d_v2_finger_end80", "wilor_anyhand")
 
