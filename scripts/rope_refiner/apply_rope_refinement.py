@@ -138,6 +138,14 @@ def perturb_rope_cache(
     return cache
 
 
+def shuffle_input_rope_cache(cache: dict[str, np.ndarray], seed: int) -> dict[str, np.ndarray]:
+    """Destroy the sample-to-rope pairing for an inference control."""
+    perm = np.random.default_rng(seed).permutation(len(cache["sample_id"]))
+    for key in ("input_rope_norm", "rope_valid"):
+        cache[key] = np.asarray(cache[key])[perm]
+    return cache
+
+
 def mano_layer(device: str):
     sys.path.insert(0, str(REPO / "third_party" / "wilor"))
     from wilor.models.mano_wrapper import MANO
@@ -449,6 +457,8 @@ def mano_predictions(
                 xyz_rows.append(joints_from_vertices(dataset, verts_eval, j_regressor).tolist())
                 if keep_vertices:
                     vert_rows.append(verts_eval.tolist())
+    if not keep_vertices:
+        vert_rows = [None] * len(xyz_rows)
     return xyz_rows, vert_rows
 
 
@@ -564,12 +574,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="Simulated sensor dropout: per-finger probability of marking the rope reading invalid.")
     parser.add_argument("--rope-noise-seed", type=int, default=0,
                         help="Seed for the simulated sensor perturbation (deterministic reruns).")
+    parser.add_argument("--shuffle-rope-seed", type=int, default=None,
+                        help="Inference control: deterministically permute rope readings across samples.")
     parser.add_argument("--feature-cache", type=Path, default=None,
                         help="Student mode: frozen backbone feature_cache.npz for THIS eval split "
                              "(required iff the checkpoint was trained with image features).")
     parser.add_argument("--gt-xyz", type=Path, default=None,
                         help="GT xyz json ([N, 21, 3] eval-frame meters, same row order as run_meta sample_order). Required for oracle objectives.")
     parser.add_argument("--out-dir", type=Path, required=True)
+    parser.add_argument(
+        "--joint-only-output",
+        action="store_true",
+        help="Write null mesh rows in prediction JSONs when mesh GT is unavailable.",
+    )
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--batch-size", type=int, default=512)
     # Defaults are the published working recipe from experience/0027 (aggressive
@@ -604,6 +621,9 @@ def main(argv: list[str] | None = None) -> Path:
     build_inference_cache(args.dataset, args.rope_labels, args.pred_dir, args.run_meta, args.mano_cache, cache_path)
     with np.load(cache_path) as loaded:
         cache = {key: loaded[key] for key in loaded.files}
+    if args.shuffle_rope_seed is not None:
+        shuffle_input_rope_cache(cache, args.shuffle_rope_seed)
+        np.savez(cache_path, **cache)
     if (
         args.rope_noise_std > 0.0
         or args.rope_dropout > 0.0
@@ -635,7 +655,7 @@ def main(argv: list[str] | None = None) -> Path:
         )
         np.savez(cache_path, **cache)
 
-    base_xyz, base_verts = mano_predictions(
+    base_prediction_args = (
         args.dataset,
         cache["base_hand_pose"],
         cache["sample_id"],
@@ -643,6 +663,10 @@ def main(argv: list[str] | None = None) -> Path:
         args.device,
         args.batch_size,
     )
+    if args.joint_only_output:
+        base_xyz, base_verts = mano_predictions(*base_prediction_args, keep_vertices=False)
+    else:
+        base_xyz, base_verts = mano_predictions(*base_prediction_args)
     inference_started = time.perf_counter()
     alpha = None
     resolved_action_space = args.action_space
@@ -720,7 +744,18 @@ def main(argv: list[str] | None = None) -> Path:
             j_regressor=j_regressor,
             gate_threshold=args.gate_residual_threshold,
         )
-    refined_xyz, refined_verts = mano_predictions(args.dataset, refined, cache["sample_id"], args.mano_cache, args.device, args.batch_size)
+    refined_prediction_args = (
+        args.dataset,
+        refined,
+        cache["sample_id"],
+        args.mano_cache,
+        args.device,
+        args.batch_size,
+    )
+    if args.joint_only_output:
+        refined_xyz, refined_verts = mano_predictions(*refined_prediction_args, keep_vertices=False)
+    else:
+        refined_xyz, refined_verts = mano_predictions(*refined_prediction_args)
     inference_wall_seconds = max(0.0, time.perf_counter() - inference_started)
 
     np.save(args.out_dir / "alpha.npy", alpha)
@@ -740,6 +775,7 @@ def main(argv: list[str] | None = None) -> Path:
         "mode": args.mode,
         "objective": args.objective,
         "action_space": resolved_action_space,
+        "joint_only_output": args.joint_only_output,
         "rope_sensor": {
             "noise_std": args.rope_noise_std,
             "bias_std": args.rope_noise_bias_std,
@@ -747,6 +783,7 @@ def main(argv: list[str] | None = None) -> Path:
             "scale_range": args.rope_noise_scale_range,
             "dropout": args.rope_dropout,
             "seed": args.rope_noise_seed,
+            "shuffle_seed": args.shuffle_rope_seed,
             "frac_valid_after": float(np.asarray(cache["rope_valid"], dtype=bool).mean()),
         },
         "rope_residual": residual_summary,

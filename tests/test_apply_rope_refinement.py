@@ -144,6 +144,28 @@ def rope_residual_for_pose(script, pose_np: np.ndarray, target: np.ndarray) -> f
 
 
 class ApplyRopeRefinementTest(unittest.TestCase):
+    def test_mano_predictions_can_omit_vertices(self):
+        script = load_apply_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp) / "mano_cache.npz"
+            write_toy_mano_cache(cache, 2)
+            with mock.patch.object(
+                script, "load_mano_j_regressor", return_value=np.zeros((16, 778), dtype=np.float32)
+            ):
+                xyz, verts = script.mano_predictions(
+                    "freihand",
+                    toy_pose(2, 0.0),
+                    ["00000000", "00000001"],
+                    cache,
+                    "cpu",
+                    2,
+                    mano_module=FakeMano(),
+                    keep_vertices=False,
+                )
+
+        self.assertEqual(len(xyz), 2)
+        self.assertEqual(verts, [None, None])
+
     def test_mano_predictions_rejects_bad_beta_override_before_decode(self):
         script = load_apply_script()
         with tempfile.TemporaryDirectory() as tmp:
@@ -296,6 +318,7 @@ class ParseArgsTest(unittest.TestCase):
         self.assertAlmostEqual(args.opt_alpha_l2, 0.001)
         self.assertAlmostEqual(args.opt_max_alpha, 0.5)
         self.assertIsNone(args.gate_residual_threshold)
+        self.assertIsNone(args.shuffle_rope_seed)
 
     def test_pose45_and_bias_scale_cli_parse(self):
         script = load_apply_script()
@@ -908,6 +931,19 @@ class PerturbRopeCacheTest(unittest.TestCase):
         self.assertGreater(frac, 0.3)
         self.assertLess(frac, 0.7)
         self.assertTrue(np.all(cache["input_rope_norm"][~valid] == 0.0))
+
+    def test_shuffle_control_is_seeded_and_keeps_clean_targets(self):
+        script = load_apply_script()
+        cache = self._cache(num=16)
+        cache["sample_id"] = np.asarray([str(i) for i in range(16)])
+        clean_input = cache["input_rope_norm"].copy()
+        clean_target = cache["gt_rope_norm"].copy()
+        expected_perm = np.random.default_rng(19).permutation(16)
+
+        script.shuffle_input_rope_cache(cache, 19)
+
+        np.testing.assert_array_equal(cache["input_rope_norm"], clean_input[expected_perm])
+        np.testing.assert_array_equal(cache["gt_rope_norm"], clean_target)
 
     def test_dropped_fingers_are_never_gated(self):
         script = load_apply_script()

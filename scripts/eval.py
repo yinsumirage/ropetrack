@@ -35,6 +35,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--wilor-cfg", type=Path, default=None)
     parser.add_argument("--hamer-ckpt", type=Path, default=None)
     parser.add_argument("--save-mano-cache", action="store_true", default=False)
+    parser.add_argument(
+        "--joint-only-output",
+        action="store_true",
+        default=False,
+        help="Write null mesh rows in pred.json; useful when the dataset has no mesh GT.",
+    )
     parser.add_argument("--run-eval", action="store_true")
     parser.add_argument("--eval-num-workers", type=int, default=None)
     return parser.parse_args(argv)
@@ -45,6 +51,7 @@ def main(argv: list[str] | None = None) -> Path:
     args = build_run_args(**{k: v for k, v in vars(cli).items() if v is not None})
     args.split = cli.split
     args.save_mano_cache = cli.save_mano_cache
+    args.joint_only_output = cli.joint_only_output
     return run_export(args)
 
 

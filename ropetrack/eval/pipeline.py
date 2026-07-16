@@ -314,6 +314,7 @@ def run_export(args: argparse.Namespace) -> Path:
     if getattr(args, "save_mano_cache", False):
         write_mano_cache(out_dir / "mano_cache.npz", samples, hands_by_sample)
     xyz_pred, verts_pred = [], []
+    joint_only_output = bool(getattr(args, "joint_only_output", False))
 
     for idx, (sample, hand) in enumerate(zip(samples, hands_by_sample)):
         try:
@@ -326,7 +327,7 @@ def run_export(args: argparse.Namespace) -> Path:
             xyz = np.zeros((21, 3), dtype=np.float32)
             verts = np.zeros((778, 3), dtype=np.float32)
         xyz_pred.append(xyz.tolist())
-        verts_pred.append(verts.tolist())
+        verts_pred.append(None if joint_only_output else verts.tolist())
 
     (eval_input / "pred.json").write_text(json.dumps([xyz_pred, verts_pred]))
     gt_dir = root
@@ -351,6 +352,7 @@ def run_export(args: argparse.Namespace) -> Path:
         "num_workers": args.num_workers,
         "units": args.units,
         "joint_source": args.joint_source,
+        "joint_only_output": joint_only_output,
         "wilor_ckpt": optional_path_str(args.wilor_ckpt),
         "wilor_cfg": optional_path_str(args.wilor_cfg),
         "hamer_ckpt": optional_path_str(args.hamer_ckpt),

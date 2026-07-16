@@ -89,12 +89,26 @@ class ParallelEvalTest(unittest.TestCase):
         ])
 
         scores = scorer.summarize_results([
-            scorer.evaluate_sample((xyz, None, xyz.copy(), np.zeros((778, 3))))
+            scorer.evaluate_sample((xyz, None, xyz.copy(), None))
         ])
 
         self.assertAlmostEqual(scores["xyz_mean3d"], 0.0)
         self.assertEqual(scores["mesh_mean3d"], -1.0)
         self.assertEqual(scores["f_score_5"], -1.0)
+
+    def test_joint_only_prediction_rows_are_accepted(self):
+        scorer = load_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "evaluation_xyz.json").write_text(json.dumps([[[0, 0, 0]] * 5]))
+            (root / "pred.json").write_text(json.dumps([[[[0, 0, 0]] * 5], [None]]))
+
+            xyz, verts, pred_xyz, pred_verts = scorer.load_inputs(root)
+
+        self.assertEqual(len(xyz), 1)
+        self.assertEqual(verts, [None])
+        self.assertEqual(len(pred_xyz), 1)
+        self.assertEqual(pred_verts, [None])
 
 
 if __name__ == "__main__":

@@ -16,11 +16,17 @@ def write_json(path: Path, value) -> None:
 
 
 class RefinerManoCacheTest(unittest.TestCase):
-    def test_build_run_args_propagates_split_and_mano_cache_flag(self):
-        args = build_run_args(dataset="freihand", split="training", save_mano_cache=True)
+    def test_build_run_args_propagates_output_flags(self):
+        args = build_run_args(
+            dataset="freihand",
+            split="training",
+            save_mano_cache=True,
+            joint_only_output=True,
+        )
 
         self.assertEqual(args.split, "training")
         self.assertTrue(args.save_mano_cache)
+        self.assertTrue(args.joint_only_output)
 
     def test_iter_freihand_training_samples_uses_training_files(self):
         with tempfile.TemporaryDirectory() as tmp:

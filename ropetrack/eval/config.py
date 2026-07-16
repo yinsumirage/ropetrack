@@ -73,6 +73,7 @@ def build_run_args(
         "eval_num_workers": value("eval_num_workers", defaults.get("eval_num_workers")),
         "run_eval": bool(value("run_eval", False)),
         "save_mano_cache": bool(value("save_mano_cache", False)),
+        "joint_only_output": bool(value("joint_only_output", False)),
         "wilor_ckpt": repo_path(value("wilor_ckpt", method_cfg.get("wilor_ckpt"))),
         "wilor_cfg": repo_path(value("wilor_cfg", method_cfg.get("wilor_cfg"))),
         "hamer_ckpt": repo_path(value("hamer_ckpt", method_cfg.get("hamer_ckpt"))),
