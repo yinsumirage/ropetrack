@@ -130,3 +130,43 @@ Before training on the five parts:
    observable deployment signal; native ARKit confidence is only available as
    an offline audit/training signal.
 
+## Centered confidence-stratum visual audit
+
+A follow-up CPU run, Slurm job `183663`, rendered six different episodes near
+the center of each fingertip-confidence interval rather than only the extrema:
+
+```text
+/data/wentao/ropetrack/runs/egodex_quality_audit_20260717_v3
+tip_000_025, tip_025_050, tip_050_075, tip_075_090, tip_090_100
+confidence_missing
+```
+
+The images refine the threshold interpretation:
+
+- `0.00-0.25` contains real projection/tracking failures and hands at the image
+  boundary, but also some visually plausible skeletons. Low confidence is an
+  uncertainty flag, not a deterministic proof that every joint is wrong.
+- `0.25-0.50` is mostly plausible, but still contains occasional catastrophic
+  single-finger failures. It is suitable for weighted training or a separate
+  diagnostic slice, not equal-weight trusted evaluation.
+- `>=0.50` is visually much more stable across the sampled tasks.
+- Missing-confidence files are mixed: some visible hands have plausible
+  skeletons and some hands are out of frame. They must remain `unknown`; neither
+  automatic acceptance nor automatic rejection is justified by absence alone.
+
+The first frozen protocol should therefore preserve raw data and create only
+manifest views:
+
+1. `clean`: native confidence available, fingertip mean at least 0.5, finite
+   joints, and all required joints in front of the camera. This has 67,202 rows
+   before the geometric filter and measures clean cross-domain preservation.
+2. `uncertain`: native fingertip mean in `[0.25, 0.5)`, reported separately.
+3. `invalid_or_unknown`: below 0.25 or missing confidence. Keep for qualitative
+   inspection and optional image-only training, but do not use its numeric
+   delta as evidence that a refiner improves hand pose.
+
+This is a new internal confidence-filtered protocol, not the official full
+EgoDex benchmark. It must store the immutable selection manifest, thresholds,
+counts, and hash. Evaluation labels must not be manually repaired or replaced
+with predictions. Training manifests may use confidence-weighted supervision
+or derived MANO pseudo-labels, but those remain distinct from evaluation GT.
