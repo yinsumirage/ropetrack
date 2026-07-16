@@ -146,11 +146,13 @@ def make_contact_sheet(paths: list[Path], output: Path) -> None:
     sheet.save(output)
 
 
-def score_by_confidence(errors: dict[str, np.ndarray], tip_mean: np.ndarray) -> dict:
+def score_by_confidence(
+    errors: dict[str, np.ndarray], tip_mean: np.ndarray, has_native_confidence: np.ndarray
+) -> dict:
     bounds = (0.0, 0.25, 0.5, 0.75, 0.9, 1.000001)
     rows = []
     for low, high in zip(bounds, bounds[1:]):
-        mask = (tip_mean >= low) & (tip_mean < high)
+        mask = has_native_confidence & (tip_mean >= low) & (tip_mean < high)
         item = {"tip_confidence": f"[{low:.2f},{min(high, 1.0):.2f})", "count": int(mask.sum())}
         for name, values in errors.items():
             item[f"{name}_pa_mm"] = float(values[mask].mean()) if mask.any() else None
@@ -159,7 +161,23 @@ def score_by_confidence(errors: dict[str, np.ndarray], tip_mean: np.ndarray) -> 
                 if name != "base":
                     item[f"{name}_delta_vs_base_mm"] = float((values[mask] - errors["base"][mask]).mean()) if mask.any() else None
         rows.append(item)
-    return {"bins": rows, "correlation_tip_confidence_base_error": float(np.corrcoef(tip_mean, errors["base"])[0, 1]) if "base" in errors else None}
+    missing = ~has_native_confidence
+    if missing.any():
+        item = {"tip_confidence": "missing", "count": int(missing.sum())}
+        for name, values in errors.items():
+            item[f"{name}_pa_mm"] = float(values[missing].mean())
+        if "base" in errors:
+            for name, values in errors.items():
+                if name != "base":
+                    item[f"{name}_delta_vs_base_mm"] = float((values[missing] - errors["base"][missing]).mean())
+        rows.append(item)
+    return {
+        "bins": rows,
+        "correlation_tip_confidence_base_error": (
+            float(np.corrcoef(tip_mean[has_native_confidence], errors["base"][has_native_confidence])[0, 1])
+            if "base" in errors else None
+        ),
+    }
 
 
 def parse_prediction(value: str) -> tuple[str, Path]:
@@ -208,6 +226,10 @@ def run(args: argparse.Namespace) -> Path:
             with h5py.File(args.raw_root / source, "r") as h5:
                 if "confidences" not in h5:
                     missing_confidence_files.append(source)
+    missing_confidence_sources = set(missing_confidence_files)
+    has_native_confidence = np.asarray(
+        [row["source_hdf5"] not in missing_confidence_sources for row in rows], dtype=bool
+    )
 
     prediction_errors = {}
     for name, path in args.prediction:
@@ -228,7 +250,12 @@ def run(args: argparse.Namespace) -> Path:
             "fraction_joint_below": {str(t): float((confidence < t).mean()) for t in (0.01, 0.25, 0.5, 0.75)},
             "fraction_tip_below": {str(t): float((confidence[:, TIP_IDS] < t).mean()) for t in (0.01, 0.25, 0.5, 0.75)},
             "fraction_samples_all_one": float(np.all(confidence == 1.0, axis=1).mean()),
+            "fraction_native_samples_all_one": float(
+                np.all(confidence[has_native_confidence] == 1.0, axis=1).mean()
+            ),
             "missing_confidence_hdf5": len(missing_confidence_files),
+            "rows_missing_native_confidence": int((~has_native_confidence).sum()),
+            "fraction_rows_missing_native_confidence": float((~has_native_confidence).mean()),
             "missing_confidence_sources": missing_confidence_files,
         },
         "geometry": {
@@ -242,14 +269,19 @@ def run(args: argparse.Namespace) -> Path:
             "fraction_bone_change_over_10pct": float((temporal_bone_change[valid_bone_change] > 0.10).mean()),
             "fraction_bone_change_over_25pct": float((temporal_bone_change[valid_bone_change] > 0.25).mean()),
         },
-        "prediction": score_by_confidence(prediction_errors, tip_mean) if prediction_errors else None,
+        "prediction": (
+            score_by_confidence(prediction_errors, tip_mean, has_native_confidence)
+            if prediction_errors else None
+        ),
     }
 
     selections = {
         "low_tip": select_diverse(np.argsort(tip_mean), rows, args.low_count),
         "low_mean": select_diverse(np.argsort(mean_conf), rows, args.low_count),
         "temporal_jump": select_diverse(np.argsort(np.nan_to_num(temporal_speed, nan=-1.0))[::-1], rows, args.jump_count),
-        "high_tip": select_diverse(np.argsort(tip_mean)[::-1], rows, args.high_count),
+        "high_tip": select_diverse(
+            np.argsort(np.where(has_native_confidence, tip_mean, -np.inf))[::-1], rows, args.high_count
+        ),
     }
     visual_manifest = []
     for category, indices in selections.items():

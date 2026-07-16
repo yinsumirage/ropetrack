@@ -33,6 +33,17 @@ class EgoDexQualityAuditTest(unittest.TestCase):
 
         self.assertEqual(audit.select_diverse(np.asarray([0, 1, 2, 3]), rows, 3), [0, 2, 3])
 
+    def test_confidence_bins_separate_missing_native_values(self):
+        audit = load_script()
+        errors = {"base": np.asarray([10.0, 20.0]), "student": np.asarray([9.0, 24.0])}
+        result = audit.score_by_confidence(
+            errors, np.asarray([0.1, 1.0]), np.asarray([True, False])
+        )
+
+        self.assertEqual(result["bins"][0]["count"], 1)
+        self.assertEqual(result["bins"][-1]["tip_confidence"], "missing")
+        self.assertEqual(result["bins"][-1]["student_delta_vs_base_mm"], 4.0)
+
 
 if __name__ == "__main__":
     unittest.main()
