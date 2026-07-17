@@ -7,19 +7,28 @@ import argparse
 import hashlib
 import json
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
+import torch
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
 from ropetrack.io import read_jsonl  # noqa: E402
+from ropetrack.refine.actions import apply_action_np  # noqa: E402
+from ropetrack.refine.alpha_student import student_alpha  # noqa: E402
 from ropetrack.refine.cache import load_sample_order, validate_cache  # noqa: E402
-from scripts.rope_refiner.apply_rope_refinement import load_mano_globals, mano_layer  # noqa: E402
+from scripts.rope_refiner.apply_rope_refinement import (  # noqa: E402
+    compute_flex_directions,
+    expand_gate_to_alpha,
+    gate_from_cache,
+    load_mano_globals,
+    mano_layer,
+)
 from scripts.temporal_oracle_state import (  # noqa: E402
     _prepare_state,
-    _refine_masked,
     _write_method,
 )
 
@@ -89,6 +98,39 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def refine_low_student(
+    cache: dict[str, np.ndarray],
+    state_pose: np.ndarray,
+    baseline_pose: np.ndarray,
+    baseline_alpha: np.ndarray,
+    low_rows: np.ndarray,
+    betas: np.ndarray,
+    global_orient: np.ndarray,
+    checkpoint: Path,
+    device: str,
+    batch_size: int,
+    mano,
+) -> tuple[np.ndarray, np.ndarray, float]:
+    started = time.perf_counter()
+    alpha, config = student_alpha(cache, checkpoint, device)
+    if config["action_space"] != "flex15" or config.get("gate_threshold") is None:
+        raise ValueError("state screen requires the frozen gated Flex15 student")
+    directions = compute_flex_directions(
+        torch.from_numpy(state_pose[low_rows]).to(device),
+        torch.from_numpy(global_orient[low_rows]).to(device),
+        torch.from_numpy(betas[low_rows]).to(device),
+        mano,
+        batch_size,
+    ).cpu().numpy().astype(np.float32)
+    gate = gate_from_cache(cache, float(config["gate_threshold"]))
+    alpha = alpha * expand_gate_to_alpha(gate, "flex15")
+    refined = np.asarray(baseline_pose, dtype=np.float32).copy()
+    refined[low_rows] = apply_action_np(state_pose[low_rows], alpha[low_rows], "flex15", directions)
+    emitted_alpha = np.asarray(baseline_alpha, dtype=np.float32).copy()
+    emitted_alpha[low_rows] = alpha[low_rows]
+    return refined, emitted_alpha, time.perf_counter() - started
+
+
 def run(args: argparse.Namespace) -> Path:
     if args.out_dir.exists() and any(args.out_dir.iterdir()):
         raise FileExistsError(f"refusing to overwrite non-empty output: {args.out_dir}")
@@ -136,7 +178,7 @@ def run(args: argparse.Namespace) -> Path:
         ("last_context_k1", state_cache, False),
         ("last_context_k1_rope_shuffled", shuffled, True),
     ):
-        refined, alpha, elapsed = _refine_masked(
+        refined, alpha, elapsed = refine_low_student(
             method_cache, state_pose, baseline_pose, baseline_alpha, low_rows, betas,
             global_orient, args.k1_checkpoint, args.device, args.batch_size, mano,
         )
