@@ -26,6 +26,7 @@ class Hot3dProtocolTest(unittest.TestCase):
         script = load_script()
         self.assertEqual(sorted(script.OPENPOSE_ORDER.tolist()), list(range(21)))
         self.assertEqual(len(script.SKELETON), 20)
+        self.assertIn("mask_hand_pose_available.csv", script.REQUIRED_MASKS)
 
     def test_selection_filters_sequence_and_rejects_duplicates(self):
         script = load_script()

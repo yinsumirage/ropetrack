@@ -13,6 +13,12 @@ import numpy as np
 
 
 RGB_STREAM_ID = "214-1"
+REQUIRED_MASKS = (
+    "mask_qa_pass.csv",
+    "mask_good_exposure.csv",
+    "mask_headset_pose_available.csv",
+    "mask_hand_pose_available.csv",
+)
 OPENPOSE_ORDER = np.asarray(
     [0, 13, 14, 15, 16, 1, 2, 3, 17, 4, 5, 6, 18, 10, 11, 12, 19, 7, 8, 9, 20],
     dtype=np.int64,
@@ -146,8 +152,7 @@ def prepare(args: argparse.Namespace) -> Path:
     if mano_betas.shape != (10,):
         raise ValueError(f"expected 10 MANO betas, got {mano_betas.shape}")
 
-    required_masks = ["mask_qa_pass.csv", "mask_good_exposure.csv", "mask_headset_pose_available.csv"]
-    masks = [load_mask(args.sequence_root / "masks" / name) for name in required_masks]
+    masks = [load_mask(args.sequence_root / "masks" / name) for name in REQUIRED_MASKS]
     timestamps = boxes.get_timestamp_ns_list(stream_id)
     if not timestamps:
         raise ValueError(f"no RGB hand boxes for {args.sequence_root.name}")
@@ -279,7 +284,7 @@ def prepare(args: argparse.Namespace) -> Path:
         "manifest_intrinsic": "focal_and_principal_point_only_for_current_pinhole_model_interface",
         "coordinate_frame": "opencv_camera_m",
         "bbox_source": "official_box2d_hands_clamped",
-        "masks": required_masks,
+        "masks": list(REQUIRED_MASKS),
         "min_visibility": args.min_visibility,
         "frame_stride_after_masks": args.frame_stride,
         "joint_source": "native_left_right_mano_kinematic_joints_reordered_openpose",
