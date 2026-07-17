@@ -1,0 +1,7 @@
+name: arctic_p2_train
+adapter: arctic
+remote_root: /data/wentao/ropetrack/processed/arctic/p2_train
+protocol:
+  units: m
+  joint_source: model_keypoints
+  benchmark_mode: gt_bbox

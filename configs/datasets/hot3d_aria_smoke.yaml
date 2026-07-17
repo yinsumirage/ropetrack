@@ -1,0 +1,7 @@
+name: hot3d_aria_smoke
+adapter: hot3d
+remote_root: /data/wentao/ropetrack/processed/hot3d/aria_smoke
+protocol:
+  units: m
+  joint_source: model_keypoints
+  benchmark_mode: gt_bbox

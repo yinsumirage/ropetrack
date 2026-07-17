@@ -57,6 +57,19 @@ class EvalConfigTest(unittest.TestCase):
         self.assertEqual(args.root, Path("/data/wentao/ropetrack/processed/egodex/test_eval"))
         self.assertEqual(args.joint_source, "model_keypoints")
 
+    def test_arctic_p2_val_uses_side_aware_manifest_and_kinematic_joints(self):
+        args = build_run_args("arctic_p2_val", "wilor_original")
+
+        self.assertEqual(args.adapter, "arctic")
+        self.assertEqual(args.root, Path("/data/wentao/ropetrack/processed/arctic/p2_val"))
+
+    def test_arctic_p2_train_reuses_manifest_adapter(self):
+        args = build_run_args("arctic_p2_train", "wilor_original", split="training")
+        self.assertEqual(args.adapter, "arctic")
+        self.assertEqual(args.split, "training")
+        self.assertEqual(args.root, Path("/data/wentao/ropetrack/processed/arctic/p2_train"))
+        self.assertEqual(args.joint_source, "model_keypoints")
+
     def test_finger_end_hard_split_dataset_config_keeps_base_protocol(self):
         args = build_run_args("ho3d_v2_finger_end80", "wilor_anyhand")
 

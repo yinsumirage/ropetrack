@@ -75,6 +75,24 @@ as EgoDex GT MANO. Apple's own 2D visualization also warns that projected
 joints may be slightly displaced in the synthesized Vision Pro RGB, so inspect
 the generated overlays before trusting a projected-joint bbox margin.
 
+ARCTIC P2 uses the same manifest-backed path. The raw dataset root is the
+innermost `arctic_data/data`; full training exports joints and rope labels but
+not the unused GT meshes:
+
+```bash
+python scripts/prepare_arctic.py --split train --skip-image-check
+python scripts/make_rope_labels.py --dataset arctic --split training \
+  --input-root /data/wentao/ropetrack/processed/arctic/p2_train \
+  --output /data/wentao/ropetrack/processed/arctic/p2_train/rope_labels.jsonl
+python scripts/eval.py --dataset arctic_p2_train --split training \
+  --out-dir /data/wentao/ropetrack/runs/arctic_p2_train_wilor --save-mano-cache
+```
+
+Use `--skip-image-check` only after an external image-tree integrity audit;
+omit it for small mapping smokes. The resulting WiLoR run, MANO cache, and rope
+labels are ordinary inputs to `apply_rope_refinement.py` and
+`train_alpha_student.py`.
+
 Hard split roots are generated as normal dataset roots and then selected by
 dataset config name:
 

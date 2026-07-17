@@ -91,6 +91,27 @@ class HandPoseDatasetsTest(unittest.TestCase):
         self.assertEqual(sample.intrinsic.shape, (3, 3))
         self.assertEqual(sample.joint_confidence.shape, (21,))
 
+    def test_arctic_reuses_the_side_aware_manifest_contract(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            row = {
+                "sample_id": "s05/box_use_01/left/00010",
+                "image_path": "/data/arctic/s05/box_use_01/0/00010.jpg",
+                "bbox_xyxy": [10, 20, 30, 40],
+                "is_right": False,
+                "episode_id": "s05/box_use_01/left",
+                "frame_index": 10,
+                "intrinsic": np.eye(3).tolist(),
+                "joint_confidence": [1.0] * 21,
+            }
+            (root / "evaluation.jsonl").write_text(json.dumps(row) + "\n")
+
+            sample = next(iter(iter_hand_pose_samples("arctic", root, limit=None)))
+            candidate = load_gt_bbox_candidates("arctic", [sample])[0]
+
+        self.assertFalse(candidate.is_right)
+        self.assertEqual(candidate.bbox_xyxy.tolist(), [10.0, 20.0, 30.0, 40.0])
+
     def test_load_ho3d_gt_bbox_candidates_reads_meta(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

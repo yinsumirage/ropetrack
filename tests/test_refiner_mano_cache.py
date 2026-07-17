@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -62,7 +63,7 @@ class RefinerManoCacheTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             samples = [
                 FreiHandSample("00000000", Path("a.jpg"), np.zeros(4, dtype=np.float32)),
-                FreiHandSample("00000001", Path("b.jpg"), np.zeros(4, dtype=np.float32)),
+                SimpleNamespace(sample_id="00000001", is_right=False),
             ]
             hand = BatchHandPrediction(
                 candidate=BBoxItem(0, 0, samples[0], np.zeros(4, dtype=np.float32), True, 1.0, "gt_bbox"),
@@ -79,6 +80,7 @@ class RefinerManoCacheTest(unittest.TestCase):
 
             with np.load(path) as data:
                 self.assertEqual(data["sample_id"].tolist(), ["00000000", "00000001"])
+                self.assertEqual(data["is_right"].tolist(), [True, False])
                 np.testing.assert_allclose(data["base_global_orient"][0], [0.1, 0.2, 0.3])
                 np.testing.assert_array_equal(data["base_hand_pose"][0], np.full(45, 4.0, dtype=np.float32))
                 np.testing.assert_array_equal(data["base_betas"][0], np.full(10, 5.0, dtype=np.float32))

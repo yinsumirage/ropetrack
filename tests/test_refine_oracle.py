@@ -19,6 +19,7 @@ class OracleJointIdsTest(unittest.TestCase):
     def test_tip_ids_per_dataset(self):
         self.assertEqual(oracle_joint_ids("freihand", "oracle_tip"), list(FREIHAND_TIP_JOINT_IDS))
         self.assertEqual(oracle_joint_ids("egodex", "oracle_tip"), list(FREIHAND_TIP_JOINT_IDS))
+        self.assertEqual(oracle_joint_ids("arctic", "oracle_tip"), list(FREIHAND_TIP_JOINT_IDS))
         self.assertEqual(oracle_joint_ids("ho3d", "oracle_tip"), list(HO3D_TIP_JOINT_IDS))
         self.assertEqual(oracle_joint_ids("ho3d_v2", "oracle_tip"), list(HO3D_TIP_JOINT_IDS))
 
@@ -69,6 +70,12 @@ class TorchProtocolParityTest(unittest.TestCase):
                 ).numpy()
                 self.assertEqual(actual.shape, (3, 21, 3))
                 np.testing.assert_allclose(actual, expected, atol=1e-6)
+
+    def test_arctic_vertex_regression_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "kinematic model_keypoints"):
+            torch_eval_joints_from_vertices(
+                "arctic", torch.from_numpy(self.verts), torch.from_numpy(self.j_regressor)
+            )
 
 
 class OracleLossTest(unittest.TestCase):

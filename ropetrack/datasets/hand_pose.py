@@ -83,7 +83,7 @@ def iter_hand_pose_samples(adapter: str, root: Path, limit: int | None, split: s
         if split in {"training", "train"}:
             return iter_ho3d_train_samples(root, limit)
         raise ValueError(f"unsupported HO3D split: {split}")
-    if adapter == "egodex":
+    if adapter in {"egodex", "arctic", "hot3d"}:
         return iter_egodex_samples(root, limit, split)
     raise ValueError(f"unsupported eval adapter: {adapter}")
 
@@ -91,7 +91,7 @@ def iter_hand_pose_samples(adapter: str, root: Path, limit: int | None, split: s
 def iter_egodex_samples(root: Path, limit: int | None, split: str = "evaluation") -> Iterable[EgoDexSample]:
     manifest_path = root / f"{split}.jsonl"
     if not manifest_path.exists():
-        raise FileNotFoundError(f"EgoDex manifest missing: {manifest_path}")
+        raise FileNotFoundError(f"hand-pose manifest missing: {manifest_path}")
     if limit is not None and limit <= 0:
         limit = None
     with manifest_path.open("r", encoding="utf-8") as f:
@@ -352,7 +352,7 @@ def load_gt_bbox_candidates(adapter: str, samples: list) -> list[BBoxItem]:
                 "gt_bbox",
             ))
         return candidates
-    if adapter == "egodex":
+    if adapter in {"egodex", "arctic", "hot3d"}:
         return [
             BBoxItem(idx, 0, sample, sample.bbox_xyxy, sample.is_right, 1.0, "gt_bbox")
             for idx, sample in enumerate(samples)

@@ -178,6 +178,10 @@ def write_mano_cache(path: Path, samples: list, hands_by_sample: list[BatchHandP
     np.savez(
         path,
         sample_id=np.asarray([sample.sample_id for sample in samples]),
+        is_right=np.asarray([
+            hand.candidate.is_right if hand is not None else getattr(sample, "is_right", True)
+            for sample, hand in zip(samples, hands_by_sample, strict=True)
+        ], dtype=bool),
         base_global_orient=np.stack([row(hand, "base_global_orient", (3,)) for hand in hands_by_sample], axis=0),
         base_hand_pose=np.stack([row(hand, "base_hand_pose", (45,)) for hand in hands_by_sample], axis=0),
         base_betas=np.stack([row(hand, "base_betas", (10,)) for hand in hands_by_sample], axis=0),
@@ -271,9 +275,14 @@ def select_sample_predictions(samples: list, predictions: list[BatchHandPredicti
 
 
 def format_prediction(dataset: str, hand: BatchHandPrediction, j_regressor: np.ndarray, joint_source: str, units: str):
-    verts = eval_points_from_model(dataset, hand.vertices, hand.cam_t, units)
+    vertices = np.asarray(hand.vertices, dtype=np.float32).copy()
+    keypoints = np.asarray(hand.keypoints_3d, dtype=np.float32).copy()
+    if not hand.candidate.is_right:
+        vertices[:, 0] *= -1.0
+        keypoints[:, 0] *= -1.0
+    verts = eval_points_from_model(dataset, vertices, hand.cam_t, units)
     if joint_source in {"model_keypoints", "anyhand_keypoints"}:
-        xyz = eval_points_from_model(dataset, hand.keypoints_3d, hand.cam_t, units)
+        xyz = eval_points_from_model(dataset, keypoints, hand.cam_t, units)
     elif joint_source == "mano_vertices":
         xyz = joints_from_vertices(dataset, verts, j_regressor)
     else:

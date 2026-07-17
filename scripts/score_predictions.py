@@ -194,6 +194,18 @@ def summarize_results(results):
     return scores
 
 
+def summarize_by_side(results, manifest_path):
+    with Path(manifest_path).open("r", encoding="utf-8") as handle:
+        rows = [json.loads(line) for line in handle if line.strip()]
+    if len(rows) != len(results):
+        raise ValueError(f"manifest/results length mismatch: manifest={len(rows)} results={len(results)}")
+    grouped = {}
+    for label, is_right in (("right", True), ("left", False)):
+        selected = [result for result, row in zip(results, rows, strict=True) if bool(row["is_right"]) == is_right]
+        grouped[label] = {"count": len(selected), **summarize_results(selected)}
+    return grouped
+
+
 def write_scores(output_dir, scores):
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -228,6 +240,7 @@ def parse_args():
     parser.add_argument("--pred_file_name", default="pred.json", help="Prediction JSON filename.")
     parser.add_argument("--num-workers", type=int, default=max(1, min(8, os.cpu_count() or 1)))
     parser.add_argument("--chunksize", type=int, default=16)
+    parser.add_argument("--manifest", type=Path, default=None, help="Optional JSONL manifest for right/left scores.")
     return parser.parse_args()
 
 
@@ -242,6 +255,9 @@ def main():
     )
     scores = summarize_results(results)
     write_scores(args.output_dir, scores)
+    if args.manifest is not None:
+        grouped = summarize_by_side(results, args.manifest)
+        (Path(args.output_dir) / "scores_by_side.json").write_text(json.dumps(grouped, indent=2, sort_keys=True))
     print(f"Evaluated {len(results)} samples with {args.num_workers} worker(s).")
     print(f"Scores written to: {Path(args.output_dir) / 'scores.txt'}")
 

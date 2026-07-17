@@ -110,6 +110,23 @@ class ParallelEvalTest(unittest.TestCase):
         self.assertEqual(len(pred_xyz), 1)
         self.assertEqual(pred_verts, [None])
 
+    def test_manifest_groups_scores_by_hand_side(self):
+        scorer = load_script()
+        xyz = np.asarray([
+            [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0], [1.0, 1.0, 0.0],
+        ])
+        results = [scorer.evaluate_sample((xyz, None, xyz.copy(), None)) for _ in range(2)]
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = Path(tmp) / "evaluation.jsonl"
+            manifest.write_text('\n'.join([
+                json.dumps({"is_right": True}), json.dumps({"is_right": False}),
+            ]))
+            grouped = scorer.summarize_by_side(results, manifest)
+
+        self.assertEqual(grouped["right"]["count"], 1)
+        self.assertEqual(grouped["left"]["count"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

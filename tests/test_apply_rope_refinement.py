@@ -166,6 +166,47 @@ class ApplyRopeRefinementTest(unittest.TestCase):
         self.assertEqual(len(xyz), 2)
         self.assertEqual(verts, [None, None])
 
+    def test_mano_predictions_mirrors_only_left_cached_hand(self):
+        script = load_apply_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp) / "mano_cache.npz"
+            write_toy_mano_cache(cache, 2)
+            with np.load(cache) as old:
+                values = {name: old[name] for name in old.files}
+            np.savez(cache, **values, is_right=np.asarray([True, False]))
+            with mock.patch.object(
+                script, "load_mano_j_regressor", return_value=np.zeros((16, 778), dtype=np.float32)
+            ):
+                xyz, _ = script.mano_predictions(
+                    "freihand", toy_pose(2, 0.0), ["00000000", "00000001"], cache,
+                    "cpu", 2, mano_module=FakeMano(), keep_vertices=False,
+                )
+
+        self.assertGreater(xyz[0][4][0], 0.0)
+        self.assertLess(xyz[1][4][0], 0.0)
+
+    def test_arctic_mano_predictions_use_kinematic_joints(self):
+        script = load_apply_script()
+
+        class KinematicMano:
+            def __call__(self, global_orient=None, hand_pose=None, betas=None, pose2rot=False):
+                joints = torch.zeros(hand_pose.shape[0], 21, 3)
+                joints[:, 1, 0] = 0.123
+                return SimpleNamespace(joints=joints, vertices=torch.zeros(hand_pose.shape[0], 778, 3))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp) / "mano_cache.npz"
+            write_toy_mano_cache(cache, 1)
+            with mock.patch.object(
+                script, "load_mano_j_regressor", return_value=np.zeros((16, 778), dtype=np.float32)
+            ):
+                xyz, _ = script.mano_predictions(
+                    "arctic", toy_pose(1, 0.0), ["00000000"], cache,
+                    "cpu", 1, mano_module=KinematicMano(), keep_vertices=False,
+                )
+
+        self.assertAlmostEqual(xyz[0][1][0], 0.123, places=6)
+
     def test_mano_predictions_rejects_bad_beta_override_before_decode(self):
         script = load_apply_script()
         with tempfile.TemporaryDirectory() as tmp:

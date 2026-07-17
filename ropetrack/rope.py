@@ -32,6 +32,8 @@ FINGER_CHAINS = {
         (0, 17, 18, 19, 20),
     ),
 }
+FINGER_CHAINS["arctic"] = FINGER_CHAINS["freihand"]
+FINGER_CHAINS["hot3d"] = FINGER_CHAINS["freihand"]
 
 
 def canonical_rope_dataset(dataset: str) -> str:
@@ -40,8 +42,8 @@ def canonical_rope_dataset(dataset: str) -> str:
         return "ho3d"
     if name == "freihand":
         return "freihand"
-    if name == "egodex":
-        return "egodex"
+    if name in {"egodex", "arctic", "hot3d"}:
+        return name
     raise ValueError(f"unsupported rope dataset: {dataset}")
 
 

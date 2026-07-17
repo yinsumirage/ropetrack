@@ -69,6 +69,8 @@ class ProtocolTest(unittest.TestCase):
         self.assertEqual(joints[8].tolist(), [320.0, 321.0, 322.0])
         self.assertEqual(joints[20].tolist(), [672.0, 673.0, 674.0])
         np.testing.assert_allclose(joints_from_vertices("egodex", verts, regressor), joints)
+        with self.assertRaisesRegex(ValueError, "kinematic model_keypoints"):
+            joints_from_vertices("arctic", verts, regressor)
 
     def test_unknown_dataset_is_rejected(self):
         with self.assertRaises(ValueError):

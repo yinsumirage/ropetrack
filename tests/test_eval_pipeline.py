@@ -54,6 +54,22 @@ class EvalPipelineTest(unittest.TestCase):
         self.assertEqual(xyz[4].tolist(), [14.0, 0.0, 0.0])
         self.assertEqual(verts.shape, (778, 3))
 
+    def test_left_hand_output_is_mirrored_back_before_camera_translation(self):
+        sample = Ho3dSample("A/0000", Path("a.png"), Path("a.pkl"))
+        hand = BatchHandPrediction(
+            candidate=BBoxItem(0, 0, sample, np.zeros(4, dtype=np.float32), False, 1.0, "gt_bbox"),
+            vertices=np.tile([2.0, 1.0, 0.0], (778, 1)).astype(np.float32),
+            keypoints_3d=np.tile([3.0, 1.0, 0.0], (21, 1)).astype(np.float32),
+            cam_t=np.asarray([10.0, 0.0, 0.0], dtype=np.float32),
+        )
+
+        xyz, verts = format_prediction(
+            "freihand", hand, np.zeros((16, 778), dtype=np.float32), "model_keypoints", "m"
+        )
+
+        self.assertEqual(xyz[0].tolist(), [7.0, 1.0, 0.0])
+        self.assertEqual(verts[0].tolist(), [8.0, 1.0, 0.0])
+
     def test_ho3d_mano_vertices_policy_uses_ho3d_camera_and_tips(self):
         sample = Ho3dSample("A/0000", Path("a.png"), Path("a.pkl"))
         verts = np.asarray([[float(i), float(i + 1), float(i + 2)] for i in range(778)], dtype=np.float32)

@@ -12,7 +12,7 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from ropetrack.eval.pipeline import load_mano_j_regressor
-from ropetrack.eval.protocols import eval_points_from_model, joints_from_vertices
+from ropetrack.eval.protocols import canonical_dataset, eval_points_from_model, joints_from_vertices
 from ropetrack.io import read_json, read_jsonl
 from ropetrack.refine.actions import (
     ACTION_SPACES,
@@ -211,6 +211,14 @@ def load_mano_globals(mano_cache: Path, sample_ids) -> tuple[np.ndarray, np.ndar
             np.asarray(loaded["base_betas"], dtype=np.float32)[perm],
             np.asarray(loaded["base_cam_t"], dtype=np.float32)[perm],
         )
+
+
+def load_mano_is_right(mano_cache: Path, sample_ids) -> np.ndarray:
+    with np.load(mano_cache) as loaded:
+        if "is_right" not in loaded.files:
+            return np.ones(len(sample_ids), dtype=bool)
+        perm = align_rows_by_sample_id(sample_ids, loaded["sample_id"])
+        return np.asarray(loaded["is_right"], dtype=bool)[perm]
 
 
 def torch_rope_norm(joints: torch.Tensor, chains, chain_m: torch.Tensor, fist_ratio: torch.Tensor) -> torch.Tensor:
@@ -435,6 +443,7 @@ def mano_predictions(
     keep_vertices: bool = True,
 ) -> tuple[list, list]:
     global_orient, betas, cam_t = load_mano_globals(mano_cache, sample_ids)
+    is_right = load_mano_is_right(mano_cache, sample_ids)
     if betas_override is not None:
         betas = np.asarray(betas_override, dtype=np.float32)
         if betas.shape != (len(hand_pose), 10) or not np.isfinite(betas).all():
@@ -452,9 +461,20 @@ def mano_predictions(
                 pose2rot=False,
             )
             verts_model = out.vertices.cpu().numpy().astype(np.float32)
-            for verts, trans in zip(verts_model, cam_t[start:end], strict=True):
+            joints_model = out.joints.cpu().numpy().astype(np.float32)
+            for verts, joints, trans, right in zip(
+                verts_model, joints_model, cam_t[start:end], is_right[start:end], strict=True
+            ):
+                if not right:
+                    verts = verts.copy()
+                    verts[:, 0] *= -1.0
+                    joints = joints.copy()
+                    joints[:, 0] *= -1.0
                 verts_eval = eval_points_from_model(dataset, verts, trans, "m")
-                xyz_rows.append(joints_from_vertices(dataset, verts_eval, j_regressor).tolist())
+                if canonical_dataset(dataset) in {"arctic", "hot3d"}:
+                    xyz_rows.append(eval_points_from_model(dataset, joints, trans, "m").tolist())
+                else:
+                    xyz_rows.append(joints_from_vertices(dataset, verts_eval, j_regressor).tolist())
                 if keep_vertices:
                     vert_rows.append(verts_eval.tolist())
     if not keep_vertices:
@@ -529,7 +549,7 @@ def _ema_decay(value: str) -> float:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Apply a cached rope refiner or rope/oracle optimizer to eval MANO cache.")
-    parser.add_argument("--dataset", choices=["freihand", "ho3d", "egodex"], default="freihand")
+    parser.add_argument("--dataset", choices=["freihand", "ho3d", "egodex", "arctic", "hot3d"], default="freihand")
     parser.add_argument("--rope-labels", type=Path, required=True)
     parser.add_argument("--pred-dir", type=Path, required=True)
     parser.add_argument("--run-meta", type=Path, required=True)
