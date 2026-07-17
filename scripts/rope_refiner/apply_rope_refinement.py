@@ -350,9 +350,11 @@ def optimize_alpha(
         raise ValueError(f"unsupported objective: {objective}")
     validate_cache(cache)
     orient_np, betas_np, cam_t_np = load_mano_globals(mano_cache, cache["sample_id"])
+    is_right_np = load_mano_is_right(mano_cache, cache["sample_id"])
     global_orient = torch.from_numpy(orient_np).to(device)
     betas = torch.from_numpy(betas_np).to(device)
     cam_t = torch.from_numpy(cam_t_np).to(device)
+    is_right = torch.from_numpy(is_right_np).to(device)
     base_pose = torch.from_numpy(np.asarray(cache["base_hand_pose"], dtype=np.float32)).to(device)
     target_rope = torch.from_numpy(np.asarray(cache["input_rope_norm"], dtype=np.float32)).to(device)
     chain = torch.from_numpy(np.asarray(cache["rope_chain_m"], dtype=np.float32)).to(device).clamp_min(1e-8)
@@ -415,8 +417,15 @@ def optimize_alpha(
                 denom = weight.sum().clamp_min(1.0)
                 data_loss = (diff * diff).sum() / denom
             else:
-                verts_eval = torch_eval_points_from_model(dataset, out.vertices, cam_t[start:end])
-                pred_joints = torch_eval_joints_from_vertices(dataset, verts_eval, j_regressor_t)
+                if canonical_dataset(dataset) in {"arctic", "hot3d"}:
+                    mirror = torch.ones((end - start, 1, 3), device=device, dtype=out.joints.dtype)
+                    mirror[:, 0, 0] = torch.where(is_right[start:end], 1.0, -1.0)
+                    pred_joints = torch_eval_points_from_model(
+                        dataset, out.joints * mirror, cam_t[start:end]
+                    )
+                else:
+                    verts_eval = torch_eval_points_from_model(dataset, out.vertices, cam_t[start:end])
+                    pred_joints = torch_eval_joints_from_vertices(dataset, verts_eval, j_regressor_t)
                 data_loss = oracle_loss_cm2(pred_joints, gt_joints[start:end], joint_ids)
             reg_loss = alpha_l2 * (alpha_batch * alpha_batch).mean()
             loss = data_loss + reg_loss

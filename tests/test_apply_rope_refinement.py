@@ -696,11 +696,15 @@ class OptimizeAlphaToyTest(unittest.TestCase):
     # Toy lr is much larger than the published real-data recipe (lr=2.0)
     # because the loss is a batch mean: per-sample gradients scale with
     # 1/(batch * 5 fingers), and the toy batch is tiny.
-    def _run(self, script, tmp, action_space, objective="rope", gt_xyz=None, j_regressor=None, lr=20.0, steps=120, dataset="freihand", gate_threshold=None, cache=None):
+    def _run(self, script, tmp, action_space, objective="rope", gt_xyz=None, j_regressor=None, lr=20.0, steps=120, dataset="freihand", gate_threshold=None, cache=None, is_right=None):
         if cache is None:
             cache = toy_cache(self.NUM, self.BASE_THETA, self.TARGET_THETA)
         mano_cache = Path(tmp) / "mano_cache.npz"
         write_toy_mano_cache(mano_cache, self.NUM)
+        if is_right is not None:
+            with np.load(mano_cache) as loaded:
+                values = {name: loaded[name] for name in loaded.files}
+            np.savez(mano_cache, **values, is_right=np.asarray(is_right, dtype=bool))
         return script.optimize_alpha(
             cache,
             mano_cache,
@@ -911,6 +915,37 @@ class OptimizeAlphaToyTest(unittest.TestCase):
             base_err = mean_tip_error(cache["base_hand_pose"])
             refined_err = mean_tip_error(refined)
             self.assertLess(refined_err, 0.7 * base_err)
+
+    def test_arctic_oracle_uses_mirrored_kinematic_joints(self):
+        script = load_apply_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            theta_t = self.TARGET_THETA
+            tip_target = np.asarray(
+                [-(BONE + BONE * math.cos(theta_t)), BONE * math.sin(theta_t), 0.0], dtype=np.float32
+            )
+            gt = np.zeros((self.NUM, 21, 3), dtype=np.float32)
+            for tip_joint in (4, 8, 12, 16, 20):
+                gt[:, tip_joint] = tip_target
+            (refined, _, _), cache = self._run(
+                script,
+                tmp,
+                "mult5",
+                objective="oracle_tip",
+                gt_xyz=gt,
+                j_regressor=np.zeros((16, 778), dtype=np.float32),
+                lr=50.0,
+                steps=100,
+                dataset="arctic",
+                is_right=[False] * self.NUM,
+            )
+
+            def error(pose_np):
+                with torch.no_grad():
+                    joints = FakeMano()(hand_pose=script.torch_aa_to_rotmat(torch.from_numpy(pose_np).reshape(-1, 15, 3))).joints
+                joints[:, :, 0] *= -1.0
+                return float(np.linalg.norm(joints[:, [4, 8, 12, 16, 20]].numpy() - gt[:, [4, 8, 12, 16, 20]], axis=2).mean())
+
+            self.assertLess(error(refined), 0.7 * error(cache["base_hand_pose"]))
 
     def test_unknown_action_space_raises(self):
         script = load_apply_script()

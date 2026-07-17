@@ -1,5 +1,7 @@
 import importlib.util
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -24,6 +26,20 @@ class Hot3dProtocolTest(unittest.TestCase):
         script = load_script()
         self.assertEqual(sorted(script.OPENPOSE_ORDER.tolist()), list(range(21)))
         self.assertEqual(len(script.SKELETON), 20)
+
+    def test_selection_filters_sequence_and_rejects_duplicates(self):
+        script = load_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "selection.jsonl"
+            rows = [
+                {"sequence": "seq0", "timestamp_ns": 1, "hand_index": 0},
+                {"sequence": "seq1", "timestamp_ns": 2, "hand_index": 1},
+            ]
+            path.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            self.assertEqual(list(script.load_selection(path, "seq0")), [(1, 0)])
+            path.write_text("\n".join(json.dumps(rows[0]) for _ in range(2)) + "\n")
+            with self.assertRaisesRegex(ValueError, "duplicate HOT3D selection"):
+                script.load_selection(path, "seq0")
 
 
 if __name__ == "__main__":

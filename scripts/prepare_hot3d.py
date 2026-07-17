@@ -64,6 +64,22 @@ def load_mask(path: Path, stream_id: str = RGB_STREAM_ID) -> dict[int, bool]:
     return values
 
 
+def load_selection(path: Path | None, sequence: str) -> dict[tuple[int, int], dict] | None:
+    if path is None:
+        return None
+    selected = {}
+    with path.open(encoding="utf-8") as handle:
+        for line in handle:
+            row = json.loads(line)
+            if row["sequence"] != sequence:
+                continue
+            key = (int(row["timestamp_ns"]), int(row["hand_index"]))
+            if key in selected:
+                raise ValueError(f"duplicate HOT3D selection row: {sequence} {key}")
+            selected[key] = row
+    return selected
+
+
 def file_sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -135,6 +151,8 @@ def prepare(args: argparse.Namespace) -> Path:
     timestamps = boxes.get_timestamp_ns_list(stream_id)
     if not timestamps:
         raise ValueError(f"no RGB hand boxes for {args.sequence_root.name}")
+    selection = load_selection(args.selection, args.sequence_root.name)
+    selected_timestamps = {key[0] for key in selection} if selection is not None else None
 
     args.output_root.mkdir(parents=True, exist_ok=True)
     image_dir = args.output_root / "images"
@@ -146,6 +164,8 @@ def prepare(args: argparse.Namespace) -> Path:
     counts = Counter()
     kept_frames = 0
     for source_frame_index, timestamp_ns in enumerate(timestamps):
+        if selected_timestamps is not None and timestamp_ns not in selected_timestamps:
+            continue
         if not all(mask.get(timestamp_ns, False) for mask in masks):
             continue
         if kept_frames % args.frame_stride:
@@ -177,6 +197,9 @@ def prepare(args: argparse.Namespace) -> Path:
             (1, Handedness.Right, "right"),
             (0, Handedness.Left, "left"),
         ):
+            selected = selection.get((timestamp_ns, hand_index)) if selection is not None else None
+            if selection is not None and selected is None:
+                continue
             hand_box = bbox_with_dt.box2d_collection.box2ds.get(hand_index)
             hand_pose = pose_with_dt.pose3d_collection.poses.get(handedness)
             if hand_box is None or hand_box.box2d is None or hand_pose is None:
@@ -200,8 +223,9 @@ def prepare(args: argparse.Namespace) -> Path:
                 "image_path": image_rel.as_posix(),
                 "bbox_xyxy": bbox.tolist(),
                 "is_right": side == "right",
-                "episode_id": f"{args.sequence_root.name}/{side}",
-                "frame_index": source_frame_index,
+                "episode_id": selected["episode_id"] if selected is not None else f"{args.sequence_root.name}/{side}",
+                "frame_index": int(selected["frame_index"]) if selected is not None else source_frame_index,
+                "source_frame_index": source_frame_index,
                 "intrinsic": intrinsic.tolist(),
                 "joint_confidence": [float(hand_box.visibility_ratio)] * 21,
                 "stream_id": RGB_STREAM_ID,
@@ -213,6 +237,12 @@ def prepare(args: argparse.Namespace) -> Path:
                 "mano_betas10": mano_betas.tolist(),
                 "mano_wrist_world_matrix": np.asarray(hand_pose.wrist_pose.to_matrix()).tolist(),
             }
+            if selected is not None:
+                record.update({
+                    "phase": selected["phase"],
+                    "phase_index": int(selected["phase_index"]),
+                    "selection_visibility_ratio": float(selected["visibility_ratio"]),
+                })
             records.append(record)
             xyz_rows.append(joints_camera)
             vert_rows.append(vertices_camera)
@@ -276,6 +306,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--frame-stride", type=int, default=30)
     parser.add_argument("--limit", type=int, default=16)
     parser.add_argument("--projection-count", type=int, default=6)
+    parser.add_argument("--selection", type=Path, default=None,
+                        help="Optional JSONL of exact sequence/hand_index/timestamp rows for natural episodes.")
     args = parser.parse_args()
     if not 0.0 <= args.min_visibility <= 1.0 or args.frame_stride < 1 or args.limit < 0 or args.projection_count < 0:
         parser.error("visibility must be in [0,1]; stride >=1; limit and projection count >=0")
