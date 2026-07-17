@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import torch
@@ -70,6 +71,13 @@ class CandidateSelectionTest(unittest.TestCase):
         script = load_script()
         with self.assertRaises(ValueError):
             script.first_candidate_per_sample(3, [FakeCandidate(0), FakeCandidate(2)])
+
+    def test_generic_adapter_uses_root(self):
+        script = load_script()
+        args = SimpleNamespace(
+            adapter="hot3d", root=Path("hot3d"), freihand_root=None, ho3d_root=None
+        )
+        self.assertEqual(script.dataset_root(args), Path("hot3d"))
 
 
 class PoolingTest(unittest.TestCase):

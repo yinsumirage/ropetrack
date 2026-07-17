@@ -52,6 +52,14 @@ def first_candidate_per_sample(num_samples: int, candidates: list) -> list:
     return [first[idx] for idx in range(num_samples)]
 
 
+def dataset_root(args) -> Path:
+    if args.adapter == "freihand":
+        return args.freihand_root
+    if args.adapter == "ho3d":
+        return args.ho3d_root
+    return args.root
+
+
 def select_feature_tensor(output):
     """Select the image-feature tensor from common backbone output containers."""
     import torch
@@ -183,6 +191,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--freihand-root", type=Path, default=None,
                         help="Override the dataset config root (e.g. the mask70 TRAIN hard root).")
     parser.add_argument("--ho3d-root", type=Path, default=None)
+    parser.add_argument("--root", type=Path, default=None,
+                        help="Override the root for generic adapters such as HOT3D.")
     parser.add_argument("--pooling", choices=["mean", "meanmax"], default="mean")
     parser.add_argument("--save-tokens", action="store_true",
                         help="Also store the full fp16 token grid (large: ~16 GB for a 32.5k split).")
@@ -202,7 +212,7 @@ def main(argv: list[str] | None = None) -> Path:
     from ropetrack.backends.hand_predictor import HandPredictor
     from ropetrack.eval.pipeline import CrossImageBBoxDataset, backend_model_and_cfg, predictor_kwargs
 
-    root = args.freihand_root if args.adapter == "freihand" else args.ho3d_root
+    root = dataset_root(args)
     samples = list(iter_hand_pose_samples(args.adapter, root, args.limit, cli.split))
     candidates = first_candidate_per_sample(len(samples), load_gt_bbox_candidates(args.adapter, samples))
 
