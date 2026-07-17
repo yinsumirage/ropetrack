@@ -40,10 +40,10 @@ def natural_episode_rows(manifest: list[dict]) -> tuple[np.ndarray, ...]:
         )
         if len(context) != 30 or not (1 <= len(low) <= 60):
             raise ValueError(f"episode {episode_id} requires 30 context and 1..60 low rows")
-        if [int(manifest[idx]["phase_index"]) for idx in context] != list(range(30)):
-            raise ValueError(f"episode {episode_id} context phase_index must be 0..29")
-        if [int(manifest[idx]["phase_index"]) for idx in low] != list(range(len(low))):
-            raise ValueError(f"episode {episode_id} low phase_index must be contiguous from zero")
+        if [int(manifest[idx]["phase_index"]) for idx in context] != list(range(1, 31)):
+            raise ValueError(f"episode {episode_id} context phase_index must be 1..30")
+        if [int(manifest[idx]["phase_index"]) for idx in low] != list(range(1, len(low) + 1)):
+            raise ValueError(f"episode {episode_id} low phase_index must be contiguous from one")
         if len(context) + len(low) != len(rows):
             raise ValueError(f"episode {episode_id} contains an unsupported phase")
         episodes.append(np.asarray(context + low, dtype=np.int64))

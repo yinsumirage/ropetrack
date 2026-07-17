@@ -23,10 +23,10 @@ class Hot3DNaturalStateTest(unittest.TestCase):
 
     def manifest(self, low_count=3):
         return [
-            {"episode_id": "ep", "phase": "context", "phase_index": index}
+            {"episode_id": "ep", "phase": "context", "phase_index": index + 1}
             for index in range(30)
         ] + [
-            {"episode_id": "ep", "phase": "low_visibility", "phase_index": index}
+            {"episode_id": "ep", "phase": "low_visibility", "phase_index": index + 1}
             for index in range(low_count)
         ]
 
@@ -41,7 +41,7 @@ class Hot3DNaturalStateTest(unittest.TestCase):
     def test_protocol_rejects_noncontiguous_low_phase(self):
         manifest = self.manifest(2)
         manifest[-1]["phase_index"] = 3
-        with self.assertRaisesRegex(ValueError, "contiguous from zero"):
+        with self.assertRaisesRegex(ValueError, "contiguous from one"):
             self.script.natural_episode_rows(manifest)
 
     def test_shuffle_stays_inside_low_rows(self):
