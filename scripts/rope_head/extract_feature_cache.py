@@ -91,14 +91,18 @@ def select_feature_tensor(output):
     raise ValueError(f"no 3D/4D tensor feature found in backbone output type {type(output).__name__}")
 
 
-def pool_feature_map(feat, pooling: str):
+def pool_feature_map(feat, pooling: str, token_grid: tuple[int, int] | None = None):
     """Pool a backbone output to [B, C]; accepts [B, C, H, W] or [B, T, C]."""
     import torch
 
     feat = select_feature_tensor(feat)
     if feat.dim() == 4:  # [B, C, H, W]
+        if token_grid is not None:
+            feat = torch.nn.functional.adaptive_avg_pool2d(feat, token_grid)
         tokens = feat.flatten(2).transpose(1, 2)  # [B, T, C]
     elif feat.dim() == 3:  # [B, T, C]
+        if token_grid is not None:
+            raise ValueError("--token-grid requires a 4D spatial feature map")
         tokens = feat
     else:
         raise ValueError(f"unsupported backbone feature shape: {tuple(feat.shape)}")
@@ -118,6 +122,7 @@ def run_extraction(
     device: str,
     pooling: str = "mean",
     save_tokens: bool = False,
+    token_grid: tuple[int, int] | None = None,
 ):
     """Feature harvest loop; model must expose a hookable `.backbone`."""
     import torch
@@ -138,7 +143,7 @@ def run_extraction(
                 model(batch)
                 if "feat" not in captured:
                     raise RuntimeError("backbone hook captured nothing; is model.backbone the right module?")
-                pooled, tokens = pool_feature_map(captured["feat"], pooling)
+                pooled, tokens = pool_feature_map(captured["feat"], pooling, token_grid)
                 indices = batch["candidate_index"].detach().cpu().numpy().astype(int).tolist()
                 pooled_np = pooled.detach().float().cpu().numpy()
                 tokens_np = tokens.detach().half().cpu().numpy() if save_tokens else None
@@ -196,6 +201,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--pooling", choices=["mean", "meanmax"], default="mean")
     parser.add_argument("--save-tokens", action="store_true",
                         help="Also store the full fp16 token grid (large: ~16 GB for a 32.5k split).")
+    parser.add_argument("--token-grid", type=int, nargs=2, metavar=("H", "W"), default=None,
+                        help="Adaptive-pool a spatial map before --save-tokens (e.g. 4 3).")
     parser.add_argument("--output", type=Path, required=True, help="feature_cache.npz path.")
     return parser.parse_args(argv)
 
@@ -205,7 +212,7 @@ def main(argv: list[str] | None = None) -> Path:
 
     cli = parse_args(argv)
     args = build_run_args(**{k: v for k, v in vars(cli).items()
-                             if v is not None and k not in {"pooling", "save_tokens", "output", "split"}})
+                             if v is not None and k not in {"pooling", "save_tokens", "token_grid", "output", "split"}})
     if args.mode != "gt_bbox":
         raise ValueError("feature extraction currently supports gt_bbox datasets only")
 
@@ -222,7 +229,8 @@ def main(argv: list[str] | None = None) -> Path:
     loader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
 
     features, tokens = run_extraction(
-        model, loader, len(samples), args.device, pooling=cli.pooling, save_tokens=cli.save_tokens
+        model, loader, len(samples), args.device, pooling=cli.pooling,
+        save_tokens=cli.save_tokens, token_grid=tuple(cli.token_grid) if cli.token_grid else None,
     )
     meta = {
         "dataset": args.dataset,
@@ -233,6 +241,7 @@ def main(argv: list[str] | None = None) -> Path:
         "feature_dim": int(features.shape[1]),
         "num_samples": int(len(samples)),
         "save_tokens": bool(cli.save_tokens),
+        "token_grid": cli.token_grid,
         "mode": "gt_bbox",
     }
     write_feature_cache(cli.output, [sample.sample_id for sample in samples], features, tokens, meta)

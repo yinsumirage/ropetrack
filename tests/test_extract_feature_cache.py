@@ -95,6 +95,18 @@ class PoolingTest(unittest.TestCase):
         pooled, _ = script.pool_feature_map(feat, "meanmax")
         self.assertEqual(pooled.shape, (3, 10))
 
+    def test_spatial_token_grid_is_pooled_before_flattening(self):
+        script = load_script()
+        feat = torch.randn(2, 8, 16, 12)
+        pooled, tokens = script.pool_feature_map(feat, "mean", (4, 3))
+        self.assertEqual(pooled.shape, (2, 8))
+        self.assertEqual(tokens.shape, (2, 12, 8))
+
+    def test_token_grid_rejects_already_flat_tokens(self):
+        script = load_script()
+        with self.assertRaises(ValueError):
+            script.pool_feature_map(torch.randn(2, 12, 8), "mean", (4, 3))
+
     def test_token_layout_input(self):
         script = load_script()
         feat = torch.randn(2, 7, 8)  # [B, T, C]
