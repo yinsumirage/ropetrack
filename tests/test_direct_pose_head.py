@@ -1,5 +1,6 @@
 import importlib.util
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -60,6 +61,23 @@ class DirectPoseHeadTest(unittest.TestCase):
         script.apply_rope_mode(arrays, "shuffle", 1, (np.arange(3), np.arange(3, 6)))
         self.assertEqual(set(arrays["input_rope_norm"][:3, 0]), set(original[:3, 0]))
         self.assertEqual(set(arrays["input_rope_norm"][3:, 0]), set(original[3:, 0]))
+
+    def test_append_bundle_is_strict_and_preserves_rows(self):
+        script = load_script()
+        arrays = {
+            "sample_id": np.asarray(["arctic/a/0"]),
+            "value": np.asarray([[1.0, 2.0]], dtype=np.float32),
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            good = Path(tmp) / "good.npz"
+            np.savez(good, sample_id=np.asarray(["hot3d/b/0"]), value=np.asarray([[3.0, 4.0]], dtype=np.float32))
+            merged = script.append_bundles(arrays, [good])
+            self.assertEqual(merged["sample_id"].tolist(), ["arctic/a/0", "hot3d/b/0"])
+            np.testing.assert_array_equal(merged["value"], [[1.0, 2.0], [3.0, 4.0]])
+            overlap = Path(tmp) / "overlap.npz"
+            np.savez(overlap, sample_id=np.asarray(["arctic/a/0"]), value=np.asarray([[5.0, 6.0]], dtype=np.float32))
+            with self.assertRaisesRegex(ValueError, "overlap"):
+                script.append_bundles({key: value[:1].copy() for key, value in merged.items()}, [overlap])
 
 
 if __name__ == "__main__":

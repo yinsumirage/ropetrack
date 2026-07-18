@@ -184,6 +184,24 @@ def load_arrays(
     return arrays
 
 
+def append_bundles(arrays: dict[str, np.ndarray], paths: list[Path]) -> dict[str, np.ndarray]:
+    """Append pre-aligned training arrays without adding a second data loader."""
+    for path in paths:
+        extra = read_npz(path)
+        if set(extra) != set(arrays):
+            missing = sorted(set(arrays) - set(extra))
+            surplus = sorted(set(extra) - set(arrays))
+            raise ValueError(f"bundle keys differ: missing={missing} surplus={surplus}")
+        overlap = set(np.asarray(arrays["sample_id"]).astype(str)) & set(np.asarray(extra["sample_id"]).astype(str))
+        if overlap:
+            raise ValueError(f"bundle sample ids overlap: {sorted(overlap)[:5]}")
+        for key in arrays:
+            if arrays[key].shape[1:] != extra[key].shape[1:]:
+                raise ValueError(f"bundle shape differs for {key}: {arrays[key].shape} vs {extra[key].shape}")
+            arrays[key] = np.concatenate((arrays[key], extra[key]), axis=0)
+    return arrays
+
+
 def episode_split(sample_ids: np.ndarray, val_fraction: float, seed: int) -> tuple[np.ndarray, np.ndarray]:
     episodes = np.asarray([str(sid).replace("\\", "/").rsplit("/", 1)[0] for sid in sample_ids])
     unique = np.asarray(sorted(set(episodes.tolist())))
@@ -269,6 +287,7 @@ def evaluate(model, mano, arrays, rows, batch_size, device, weights):
 
 def train(args) -> Path:
     arrays = load_arrays(args.cache, args.mano_cache, args.gt_xyz, args.run_meta, args.feature_cache)
+    arrays = append_bundles(arrays, args.extra_bundle)
     train_idx, val_idx = episode_split(arrays["sample_id"], args.val_fraction, args.seed)
     apply_rope_mode(arrays, args.rope_mode, args.seed + 1, (train_idx, val_idx))
     token_dim = int(arrays["tokens"].shape[2]) if "tokens" in arrays else 0
@@ -367,6 +386,7 @@ def parse_args(argv=None):
     common(train_p)
     train_p.add_argument("--gt-xyz", type=Path, required=True)
     train_p.add_argument("--run-meta", type=Path, default=None)
+    train_p.add_argument("--extra-bundle", type=Path, action="append", default=[])
     train_p.add_argument("--out-dir", type=Path, required=True)
     train_p.add_argument("--hidden-dim", type=int, default=128)
     train_p.add_argument("--max-delta", type=float, default=0.5)
