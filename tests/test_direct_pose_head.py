@@ -79,6 +79,25 @@ class DirectPoseHeadTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "overlap"):
                 script.append_bundles({key: value[:1].copy() for key, value in merged.items()}, [overlap])
 
+    def test_sensor_perturbation_is_seeded_and_clamped(self):
+        script = load_script()
+        arrays = {
+            "input_rope_norm": np.full((4, 5), 0.5, dtype=np.float32),
+            "rope_valid": np.ones((4, 5), dtype=bool),
+        }
+        args = type("Args", (), {
+            "rope_gain_fixed": 2.0,
+            "rope_noise_std": 0.0,
+            "rope_dropout": 0.0,
+            "rope_bias_std": 0.0,
+            "rope_bias_fixed": -0.1,
+            "rope_scale_range": 0.0,
+            "seed": 7,
+        })()
+        script.apply_sensor_perturbation(arrays, args)
+        np.testing.assert_allclose(arrays["input_rope_norm"], 0.9)
+        self.assertTrue(arrays["rope_valid"].all())
+
 
 if __name__ == "__main__":
     unittest.main()

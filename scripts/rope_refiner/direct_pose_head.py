@@ -22,6 +22,7 @@ from torch import nn
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from ropetrack.refine.actions import FINGER_POSE_GROUPS
+from ropetrack.refine.analysis import perturb_rope_reading
 from ropetrack.refine.cache import align_rows_by_sample_id
 from ropetrack.rope import FINGER_CHAINS
 from scripts.rope_refiner.apply_rope_refinement import (
@@ -238,6 +239,23 @@ def apply_rope_mode(arrays: dict[str, np.ndarray], mode: str, seed: int, groups=
         arrays["rope_valid"][rows] = valid[perm]
 
 
+def apply_sensor_perturbation(arrays: dict[str, np.ndarray], args) -> None:
+    gain = float(args.rope_gain_fixed)
+    if gain <= 0.0:
+        raise ValueError("rope_gain_fixed must be positive")
+    rope, valid = perturb_rope_reading(
+        np.asarray(arrays["input_rope_norm"], dtype=np.float32) * gain,
+        arrays["rope_valid"],
+        args.rope_noise_std,
+        args.rope_dropout,
+        np.random.default_rng(args.seed),
+        bias_std=args.rope_bias_std,
+        bias_fixed=args.rope_bias_fixed,
+        scale_range=args.rope_scale_range,
+    )
+    arrays["input_rope_norm"], arrays["rope_valid"] = rope, valid
+
+
 def tensor_batch(arrays: dict[str, np.ndarray], rows: np.ndarray, device: str) -> dict[str, torch.Tensor]:
     keys = ("base_hand_pose", "base_rope_norm", "input_rope_norm", "rope_valid",
             "rope_chain_m", "fist_ratio", "global_orient", "betas", "is_right", "gt_xyz")
@@ -346,6 +364,7 @@ def load_model(path: Path, device: str):
 def apply(args) -> Path:
     arrays = load_arrays(args.cache, args.mano_cache, feature_cache_path=args.feature_cache)
     apply_rope_mode(arrays, args.rope_mode, args.seed)
+    apply_sensor_perturbation(arrays, args)
     model, config = load_model(args.checkpoint, args.device)
     if ("tokens" in arrays) != bool(config["token_dim"]):
         raise ValueError("feature-cache presence does not match checkpoint")
@@ -358,12 +377,16 @@ def apply(args) -> Path:
                                       batch["rope_valid"], batch.get("tokens")).cpu().numpy())
     refined = np.concatenate(refined_rows).astype(np.float32)
     xyz, verts = mano_predictions(args.dataset, refined, arrays["sample_id"], args.mano_cache,
-                                  args.device, args.batch_size)
+                                  args.device, args.batch_size, keep_vertices=not args.no_vertices)
     args.out_dir.mkdir(parents=True, exist_ok=True)
     (args.out_dir / "pred.json").write_text(json.dumps([xyz, verts], separators=(",", ":")), encoding="utf-8")
     np.save(args.out_dir / "sample_id.npy", arrays["sample_id"])
     np.save(args.out_dir / "refined_hand_pose.npy", refined)
     summary = {"checkpoint": str(args.checkpoint), "rope_mode": args.rope_mode,
+               "rope_sensor": {"noise_std": args.rope_noise_std, "dropout": args.rope_dropout,
+                               "bias_std": args.rope_bias_std, "bias_fixed": args.rope_bias_fixed,
+                               "scale_range": args.rope_scale_range, "gain_fixed": args.rope_gain_fixed,
+                               "seed": args.seed},
                "num_samples": len(refined), "mean_abs_delta": float(np.mean(np.abs(refined - arrays["base_hand_pose"]))) }
     (args.out_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     return args.out_dir
@@ -404,6 +427,13 @@ def parse_args(argv=None):
     apply_p.add_argument("--checkpoint", type=Path, required=True)
     apply_p.add_argument("--dataset", required=True)
     apply_p.add_argument("--out-dir", type=Path, required=True)
+    apply_p.add_argument("--rope-noise-std", type=float, default=0.0)
+    apply_p.add_argument("--rope-dropout", type=float, default=0.0)
+    apply_p.add_argument("--rope-bias-std", type=float, default=0.0)
+    apply_p.add_argument("--rope-bias-fixed", type=float, default=0.0)
+    apply_p.add_argument("--rope-scale-range", type=float, default=0.0)
+    apply_p.add_argument("--rope-gain-fixed", type=float, default=1.0)
+    apply_p.add_argument("--no-vertices", action="store_true")
     return parser.parse_args(argv)
 
 
