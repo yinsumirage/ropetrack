@@ -110,6 +110,18 @@ class ParallelEvalTest(unittest.TestCase):
         self.assertEqual(len(pred_xyz), 1)
         self.assertEqual(pred_verts, [None])
 
+    def test_joint_only_prediction_skips_available_gt_mesh(self):
+        scorer = load_script()
+        xyz = np.asarray([
+            [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0], [1.0, 1.0, 0.0],
+        ])
+        scores = scorer.summarize_results([
+            scorer.evaluate_sample((xyz, xyz.copy(), xyz.copy(), None))
+        ])
+        self.assertLess(scores["xyz_procrustes_al_mean3d"], 1e-6)
+        self.assertEqual(scores["mesh_mean3d"], -1.0)
+
     def test_manifest_groups_scores_by_hand_side(self):
         scorer = load_script()
         xyz = np.asarray([

@@ -75,11 +75,11 @@ def evaluate_sample(sample):
     xyz_raw, verts_raw, xyz_pred_raw, verts_pred_raw = sample
     xyz = np.asarray(xyz_raw, dtype=np.float64)
     xyz_pred = np.asarray(xyz_pred_raw, dtype=np.float64)
-    verts_pred = np.asarray(verts_pred_raw, dtype=np.float64)
+    verts_pred = None if verts_pred_raw is None else np.asarray(verts_pred_raw, dtype=np.float64)
     xyz_pred_sc_tr = align_sc_tr(xyz, xyz_pred)
     xyz_pred_pa = align_w_scale(xyz, xyz_pred)
 
-    if verts_raw is None:
+    if verts_raw is None or verts_pred is None:
         return {
             "xyz": point_distances(xyz, xyz_pred),
             "xyz_pa": point_distances(xyz, xyz_pred_pa),

@@ -12,6 +12,8 @@ from pathlib import Path
 
 import numpy as np
 
+from ropetrack.eval.protocols import HO3D_TIP_VERTEX_IDS
+
 
 OPENPOSE_ORDER = np.asarray(
     [0, 13, 14, 15, 16, 1, 2, 3, 17, 4, 5, 6, 18, 10, 11, 12, 19, 7, 8, 9, 20],
@@ -61,6 +63,55 @@ def gt_openpose_opencv(joints: np.ndarray) -> np.ndarray:
     return (value * HO3D_TO_OPENCV)[OPENPOSE_ORDER]
 
 
+def evaluation_convention_training_joints(
+    raw_joints: np.ndarray,
+    hand_pose: np.ndarray,
+    hand_beta: np.ndarray,
+    mano_root: Path,
+    batch_size: int = 512,
+) -> tuple[np.ndarray, dict]:
+    """Replace train-meta tips with the fixed HO3D evaluation vertex convention."""
+    import torch
+    from smplx import MANO
+
+    raw = np.asarray(raw_joints, dtype=np.float32)
+    pose = np.asarray(hand_pose, dtype=np.float32)
+    beta = np.asarray(hand_beta, dtype=np.float32)
+    if raw.ndim != 3 or raw.shape[1:] != (21, 3):
+        raise ValueError(f"raw_joints must be [N,21,3], got {raw.shape}")
+    if pose.shape != (len(raw), 48) or beta.shape != (len(raw), 10):
+        raise ValueError(f"MANO GT shapes differ: joints={raw.shape} pose={pose.shape} beta={beta.shape}")
+    layer = MANO(str(mano_root), use_pca=False, flat_hand_mean=True, is_rhand=True).eval()
+    converted = raw.copy()
+    decode_joint_error, raw_tip_shift = [], []
+    with torch.no_grad():
+        for start in range(0, len(raw), batch_size):
+            end = min(start + batch_size, len(raw))
+            output = layer(
+                global_orient=torch.from_numpy(pose[start:end, :3]),
+                hand_pose=torch.from_numpy(pose[start:end, 3:]),
+                betas=torch.from_numpy(beta[start:end]),
+            )
+            joints16 = output.joints[:, :16].numpy()
+            translation = raw[start:end, :1] - joints16[:, :1]
+            evaluation_tips = output.vertices[:, HO3D_TIP_VERTEX_IDS.tolist()].numpy() + translation
+            decode_joint_error.append(np.linalg.norm(joints16 + translation - raw[start:end, :16], axis=2))
+            raw_tip_shift.append(np.linalg.norm(evaluation_tips - raw[start:end, 16:], axis=2))
+            converted[start:end, 16:] = evaluation_tips
+    joint_error = np.concatenate(decode_joint_error) * 1000.0
+    tip_shift = np.concatenate(raw_tip_shift) * 1000.0
+    stats = {
+        "decoded_first16_mean_error_mm": float(joint_error.mean()),
+        "decoded_first16_max_error_mm": float(joint_error.max()),
+        "raw_tip_to_evaluation_tip_mean_mm": float(tip_shift.mean()),
+        "raw_tip_to_evaluation_tip_max_mm": float(tip_shift.max()),
+        "evaluation_tip_vertex_ids": HO3D_TIP_VERTEX_IDS.tolist(),
+    }
+    if stats["decoded_first16_max_error_mm"] > 0.01:
+        raise ValueError(f"official MANO decode is inconsistent with train meta joints: {stats}")
+    return converted, stats
+
+
 def resolve_image(root: Path, sample_id: str) -> Path:
     sequence, frame = sample_id.split("/")
     for suffix in (".jpg", ".png", ".jpeg"):
@@ -80,7 +131,7 @@ def write_json_array(path: Path, rows) -> None:
         handle.write("]\n")
 
 
-def prepare(input_root: Path, output_root: Path, count: int, seed: int) -> Path:
+def prepare(input_root: Path, output_root: Path, count: int, seed: int, mano_root: Path) -> Path:
     train_file = input_root / "train.txt"
     eval_file = input_root / "evaluation.txt"
     train_ids, eval_ids = read_ids(train_file), read_ids(eval_file)
@@ -93,13 +144,15 @@ def prepare(input_root: Path, output_root: Path, count: int, seed: int) -> Path:
     (output_root / "train").symlink_to(input_root / "train", target_is_directory=True)
     (output_root / "train.txt").write_text("".join(f"{value}\n" for value in selected), encoding="utf-8")
 
-    xyz_rows, manifest_rows = [], []
+    raw_xyz, poses, betas, manifest_rows = [], [], [], []
     for sample_id in selected:
         sequence, frame = sample_id.split("/")
         meta_path = input_root / "train" / sequence / "meta" / f"{frame}.pkl"
         with meta_path.open("rb") as handle:
             meta = pickle.load(handle, encoding="latin1")
-        xyz_rows.append(gt_openpose_opencv(meta["handJoints3D"]))
+        raw_xyz.append(np.asarray(meta["handJoints3D"], dtype=np.float32))
+        poses.append(np.asarray(meta["handPose"], dtype=np.float32))
+        betas.append(np.asarray(meta["handBeta"], dtype=np.float32))
         manifest_rows.append({
             "sample_id": sample_id,
             "sequence": sequence,
@@ -108,7 +161,10 @@ def prepare(input_root: Path, output_root: Path, count: int, seed: int) -> Path:
             "source_split": "train",
             "image_transform": "none",
         })
-    write_json_array(output_root / "training_xyz.json", xyz_rows)
+    evaluation_xyz, decode_stats = evaluation_convention_training_joints(
+        np.asarray(raw_xyz), np.asarray(poses), np.asarray(betas), mano_root
+    )
+    write_json_array(output_root / "training_xyz.json", map(gt_openpose_opencv, evaluation_xyz))
     with (output_root / "selection.jsonl").open("w", encoding="utf-8") as handle:
         for row in manifest_rows:
             handle.write(json.dumps(row, separators=(",", ":")) + "\n")
@@ -130,8 +186,9 @@ def prepare(input_root: Path, output_root: Path, count: int, seed: int) -> Path:
         "sequence_count_min_max": [min(counts.values()), max(counts.values())],
         "images": "official unmodified train RGB via symlink",
         "visibility": "official natural visibility; no artificial mask or occlusion",
-        "gt_source": "official train meta handJoints3D",
-        "gt_transform": "HO3D/MANO order -> OpenPose order; [x,y,z] -> [x,-y,-z] OpenCV camera metres",
+        "gt_source": "official train meta handJoints3D plus official train MANO pose/beta",
+        "gt_transform": "first 16 native joints plus fixed HO3D evaluation-convention fingertip vertices; MANO -> OpenPose order; [x,y,z] -> [x,-y,-z] OpenCV camera metres",
+        "mano_decode_gate": decode_stats,
         "sha256": {
             "source_train_txt": file_sha256(train_file),
             "source_evaluation_txt": file_sha256(eval_file),
@@ -151,6 +208,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--count", type=int, default=27000)
     parser.add_argument("--seed", type=int, default=20260719)
+    parser.add_argument("--mano-root", type=Path, default=Path(__file__).resolve().parents[1] / "mano_data")
     args = parser.parse_args(argv)
     if args.count < 1:
         parser.error("--count must be positive")
@@ -159,4 +217,4 @@ def parse_args(argv=None) -> argparse.Namespace:
 
 if __name__ == "__main__":
     args = parse_args()
-    prepare(args.input_root, args.output_root, args.count, args.seed)
+    prepare(args.input_root, args.output_root, args.count, args.seed, args.mano_root)
