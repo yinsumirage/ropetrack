@@ -7,10 +7,13 @@ import argparse
 import hashlib
 import json
 import pickle
+import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
 import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from ropetrack.eval.protocols import HO3D_TIP_VERTEX_IDS
 
