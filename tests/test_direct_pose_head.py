@@ -79,6 +79,27 @@ class DirectPoseHeadTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "overlap"):
                 script.append_bundles({key: value[:1].copy() for key, value in merged.items()}, [overlap])
 
+    def test_training_provenance_records_protocol_and_split_hashes(self):
+        script = load_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            protocol = Path(tmp) / "protocol.json"
+            protocol.write_text('{"fold":2,"held_out":["P0012"]}', encoding="utf-8")
+            args = type("Args", (), {
+                "protocol_json": protocol,
+                "cache": Path("cache.npz"),
+                "mano_cache": Path("mano.npz"),
+                "gt_xyz": Path("gt.json"),
+                "run_meta": Path("meta.json"),
+                "feature_cache": Path("features.npz"),
+                "extra_bundle": [Path("hot.npz"), Path("ho3d.npz")],
+            })()
+            arrays = {"sample_id": np.asarray(["a/0", "b/0", "c/0"])}
+            provenance = script.training_provenance(args, arrays, np.asarray([0, 2]), np.asarray([1]))
+            self.assertEqual(provenance["protocol"]["fold"], 2)
+            self.assertEqual(provenance["inputs"]["extra_bundles"], ["hot.npz", "ho3d.npz"])
+            self.assertEqual(provenance["sample_id_sha256"], script.sample_id_sha256(arrays["sample_id"]))
+            self.assertNotEqual(provenance["train_sample_id_sha256"], provenance["val_sample_id_sha256"])
+
     def test_sensor_perturbation_is_seeded_and_clamped(self):
         script = load_script()
         arrays = {

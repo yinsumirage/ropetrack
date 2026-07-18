@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import json
 import math
+import subprocess
 import sys
 from pathlib import Path
 
@@ -219,6 +221,42 @@ def episode_split(sample_ids: np.ndarray, val_fraction: float, seed: int) -> tup
     return train, val
 
 
+def sample_id_sha256(sample_ids) -> str:
+    values = np.asarray(sample_ids).astype(str)
+    return hashlib.sha256("\n".join(values.tolist()).encode()).hexdigest()
+
+
+def training_provenance(args, arrays, train_idx, val_idx) -> dict:
+    protocol = None
+    protocol_sha256 = None
+    if args.protocol_json is not None:
+        raw = args.protocol_json.read_bytes()
+        protocol = json.loads(raw)
+        protocol_sha256 = hashlib.sha256(raw).hexdigest()
+    try:
+        commit = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=Path(__file__).resolve().parents[2], text=True
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        commit = "unknown"
+    return {
+        "git_commit": commit,
+        "protocol": protocol,
+        "protocol_sha256": protocol_sha256,
+        "sample_id_sha256": sample_id_sha256(arrays["sample_id"]),
+        "train_sample_id_sha256": sample_id_sha256(arrays["sample_id"][train_idx]),
+        "val_sample_id_sha256": sample_id_sha256(arrays["sample_id"][val_idx]),
+        "inputs": {
+            "cache": str(args.cache),
+            "mano_cache": str(args.mano_cache),
+            "gt_xyz": str(args.gt_xyz),
+            "run_meta": str(args.run_meta) if args.run_meta is not None else None,
+            "feature_cache": str(args.feature_cache) if args.feature_cache is not None else None,
+            "extra_bundles": [str(path) for path in args.extra_bundle],
+        },
+    }
+
+
 def apply_rope_mode(arrays: dict[str, np.ndarray], mode: str, seed: int, groups=()) -> None:
     if mode == "correct":
         return
@@ -345,6 +383,7 @@ def train(args) -> Path:
         "token_dim": token_dim, "hidden_dim": args.hidden_dim, "max_delta": args.max_delta,
         "rope_mode": args.rope_mode, "weights": weights, "best_epoch": best_epoch,
         "best_val_pa_mpjpe_mm": best, "num_train": int(len(train_idx)), "num_val": int(len(val_idx)),
+        "provenance": training_provenance(args, arrays, train_idx, val_idx),
     }
     args.out_dir.mkdir(parents=True, exist_ok=True)
     torch.save({"model_state": model.state_dict(), "config": config}, args.out_dir / "model.pt")
@@ -410,6 +449,7 @@ def parse_args(argv=None):
     train_p.add_argument("--gt-xyz", type=Path, required=True)
     train_p.add_argument("--run-meta", type=Path, default=None)
     train_p.add_argument("--extra-bundle", type=Path, action="append", default=[])
+    train_p.add_argument("--protocol-json", type=Path, default=None)
     train_p.add_argument("--out-dir", type=Path, required=True)
     train_p.add_argument("--hidden-dim", type=int, default=128)
     train_p.add_argument("--max-delta", type=float, default=0.5)
