@@ -436,19 +436,47 @@ def verify_toolkit(toolkit_root: Path) -> dict:
     }
 
 
-def verify_bop(bop_manifest: Path, expected_unique_images: int) -> dict:
+def expected_bop_keyframes(frames: list[SyncFrame]) -> set[tuple[int, int]]:
+    sequence_indices = {}
+    result = set()
+    for frame in frames:
+        sequence_index = sequence_indices.setdefault(frame.episode_id, len(sequence_indices))
+        if frame.frame_index % 4 != 0:
+            continue
+        for camera_index, _ in enumerate(frame.serials):
+            result.add((sequence_index * len(SERIALS) + camera_index, frame.frame_index))
+    return result
+
+
+def verify_bop(bop_manifest: Path, toolkit_keyframes: set[tuple[int, int]]) -> dict:
     targets = json.loads(bop_manifest.read_text(encoding="utf-8"))
     images = {(int(row["scene_id"]), int(row["im_id"])) for row in targets}
-    if len(images) != expected_unique_images:
+    extras = sorted(images - toolkit_keyframes)
+    omitted = sorted(toolkit_keyframes - images)
+    if extras:
         raise ValueError(
-            f"BOP S1 unique target images {len(images)} != official every-fourth test count {expected_unique_images}"
+            f"BOP S1 target images are not a subset of official every-fourth keyframes: {extras[:5]}"
         )
+    omission_details = []
+    for scene_id, frame_index in omitted:
+        info_path = bop_manifest.parent / "test" / f"{scene_id:06d}" / "scene_gt_info.json"
+        info = json.loads(info_path.read_text(encoding="utf-8"))[str(frame_index)]
+        maximum = max(float(row["visib_fract"]) for row in info)
+        omission_details.append({
+            "scene_id": scene_id,
+            "im_id": frame_index,
+            "max_object_visible_fraction": maximum,
+        })
+    if not omission_details or any(row["max_object_visible_fraction"] >= 0.1 for row in omission_details):
+        raise ValueError(f"BOP omissions are not explained by the BOP19 10 percent visibility gate: {omission_details}")
     return {
         "path": str(bop_manifest),
         "sha256": file_sha256(bop_manifest),
         "target_rows": len(targets),
         "unique_scene_image_targets": len(images),
-        "crosscheck": f"equals sum over official test sequences/cameras of frame_index modulo 4 == 0 = {expected_unique_images}",
+        "official_toolkit_every_fourth_keyframes": len(toolkit_keyframes),
+        "omitted_keyframes_without_10pct_visible_object": omission_details,
+        "crosscheck": "BOP target images are a strict subset of official frame_index modulo 4 keyframes; every omitted image has all object visib_fract below 0.1",
         "boundary": "BOP target manifest independently checks test images only, not train/val",
     }
 
@@ -483,10 +511,7 @@ def audit_report(frames_by_split: dict[str, list[SyncFrame]], audit_summary: Pat
         "dataset": "DexYCB",
         "protocol": "official S1 unseen-subject",
         "toolkit": verify_toolkit(toolkit_root),
-        "bop_s1": verify_bop(
-            bop_manifest,
-            sum(1 for frame in frames_by_split["test"] if frame.frame_index % 4 == 0) * len(SERIALS),
-        ),
+        "bop_s1": verify_bop(bop_manifest, expected_bop_keyframes(frames_by_split["test"])),
         "existing_copy_audit": {
             "path": str(audit_summary),
             "sha256": file_sha256(audit_summary),

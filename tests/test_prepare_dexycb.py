@@ -36,6 +36,14 @@ class PrepareDexYcbTest(unittest.TestCase):
         self.assertFalse(left.is_right)
         self.assertEqual(left.sample_id("camera"), "subject/sequence/camera/000002")
 
+    def test_bop_keyframes_follow_toolkit_every_fourth_rule(self):
+        script = load_script()
+        frames = [
+            script.SyncFrame("test", "subject", "seq", index, ("c0", "c1"), "calib")
+            for index in range(6)
+        ]
+        self.assertEqual(script.expected_bop_keyframes(frames), {(0, 0), (1, 0), (0, 4), (1, 4)})
+
     def test_selection_balances_sequences_and_cameras_without_sync_duplicates(self):
         script = load_script()
         frames = []
