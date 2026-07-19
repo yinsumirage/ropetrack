@@ -34,6 +34,16 @@ class ScoreDexYcbTest(unittest.TestCase):
         target = np.zeros((2, 3))
         np.testing.assert_allclose(script.orientation_error_deg(predicted, target), [90.0, 0.0], atol=1e-6)
 
+    def test_palm_orientation_is_side_agnostic_geometry(self):
+        script = load_script()
+        target = np.zeros((1, 21, 3), dtype=np.float64)
+        target[0, 5] = [1.0, 0.0, 0.0]
+        target[0, 9] = [0.0, 1.0, 0.0]
+        target[0, 17] = [-1.0, 0.0, 0.0]
+        rotation = np.asarray([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
+        predicted = target @ rotation.T
+        np.testing.assert_allclose(script.palm_orientation_error_deg(predicted, target), [90.0], atol=1e-6)
+
     def test_bootstrap_is_episode_level_deterministic(self):
         script = load_script()
         candidate = np.asarray([1.0, 1.0, 3.0, 3.0])

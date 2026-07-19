@@ -30,6 +30,12 @@ class PrepareDexYcbTest(unittest.TestCase):
         self.assertFalse(sets["val"] & sets["test"])
         self.assertEqual(script.S1_COUNTS, {"train": 407088, "val": 58592, "test": 116288})
 
+    def test_sample_identity_keeps_official_hand_side(self):
+        script = load_script()
+        left = script.SyncFrame("val", "subject", "sequence", 2, ("camera",), "calib", False)
+        self.assertFalse(left.is_right)
+        self.assertEqual(left.sample_id("camera"), "subject/sequence/camera/000002")
+
     def test_selection_balances_sequences_and_cameras_without_sync_duplicates(self):
         script = load_script()
         frames = []

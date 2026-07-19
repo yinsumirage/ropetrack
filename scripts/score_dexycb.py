@@ -115,17 +115,36 @@ def orientation_error_deg(predicted: np.ndarray, target: np.ndarray) -> np.ndarr
     return np.degrees(np.arccos(cosine))
 
 
-def load_mano_diagnostics(path: Path, target_ids: list[str], target_pose_path: Path) -> tuple[np.ndarray, np.ndarray]:
+def load_mano_translation_diagnostic(path: Path, target_ids: list[str], target_pose_path: Path) -> np.ndarray:
     with np.load(path) as cache:
         ids = cache["sample_id"].astype(str).tolist()
-        orient = align_rows(target_ids, ids, np.asarray(cache["base_global_orient"], dtype=np.float32))
         cam_t = align_rows(target_ids, ids, np.asarray(cache["cam_t"], dtype=np.float32))
     with np.load(target_pose_path) as target:
         target_pose = align_rows(target_ids, target["sample_id"].astype(str).tolist(), np.asarray(target["pose_m"], dtype=np.float32))
-    return orientation_error_deg(orient, target_pose[:, :3]), np.linalg.norm(cam_t - target_pose[:, 48:51], axis=1) * 1000.0
+    return np.linalg.norm(cam_t - target_pose[:, 48:51], axis=1) * 1000.0
 
 
-def sample_metrics(gt: np.ndarray, pred: np.ndarray, global_orientation: np.ndarray, mano_translation: np.ndarray) -> dict[str, np.ndarray]:
+def palm_frames(joints: np.ndarray) -> np.ndarray:
+    value = np.asarray(joints, dtype=np.float64)
+    x_axis = value[:, 5] - value[:, 17]
+    y_hint = value[:, 9] - value[:, 0]
+    x_axis /= np.linalg.norm(x_axis, axis=1, keepdims=True).clip(min=1e-12)
+    z_axis = np.cross(x_axis, y_hint)
+    z_axis /= np.linalg.norm(z_axis, axis=1, keepdims=True).clip(min=1e-12)
+    y_axis = np.cross(z_axis, x_axis)
+    y_axis /= np.linalg.norm(y_axis, axis=1, keepdims=True).clip(min=1e-12)
+    return np.stack((x_axis, y_axis, z_axis), axis=2)
+
+
+def palm_orientation_error_deg(predicted: np.ndarray, target: np.ndarray) -> np.ndarray:
+    pred_frame = palm_frames(predicted)
+    target_frame = palm_frames(target)
+    relative = np.einsum("bij,bkj->bik", pred_frame, target_frame)
+    cosine = np.clip((np.trace(relative, axis1=1, axis2=2) - 1.0) / 2.0, -1.0, 1.0)
+    return np.degrees(np.arccos(cosine))
+
+
+def sample_metrics(gt: np.ndarray, pred: np.ndarray, mano_translation: np.ndarray) -> dict[str, np.ndarray]:
     pa = np.linalg.norm(procrustes_batch(pred, gt) - gt, axis=2).mean(axis=1) * 1000.0
     root_gt = gt - gt[:, :1]
     root_pred = pred - pred[:, :1]
@@ -134,7 +153,7 @@ def sample_metrics(gt: np.ndarray, pred: np.ndarray, global_orientation: np.ndar
         "root_relative_joint_mm": np.linalg.norm(root_pred - root_gt, axis=2).mean(axis=1) * 1000.0,
         "camera_joint_mm": np.linalg.norm(pred - gt, axis=2).mean(axis=1) * 1000.0,
         "root_translation_mm": np.linalg.norm(pred[:, 0] - gt[:, 0], axis=1) * 1000.0,
-        "global_orientation_deg": global_orientation,
+        "global_orientation_deg": palm_orientation_error_deg(pred, gt),
         "mano_translation_parameter_mm": mano_translation,
     }
 
@@ -233,8 +252,8 @@ def score(args) -> Path:
     for name, pred_path, order_path, mano_cache in parse_prediction_args(args.prediction):
         source_ids, prediction = read_predictions(pred_path, order_path)
         prediction = align_rows(target_ids, source_ids, prediction)
-        global_orientation, mano_translation = load_mano_diagnostics(mano_cache, target_ids, pose_path)
-        method_metrics[name] = sample_metrics(gt, prediction, global_orientation, mano_translation)
+        mano_translation = load_mano_translation_diagnostic(mano_cache, target_ids, pose_path)
+        method_metrics[name] = sample_metrics(gt, prediction, mano_translation)
 
     visibility = visibility_labels(rows, visibility_thresholds)
     report = {
@@ -251,6 +270,10 @@ def score(args) -> Path:
             "measure": "official seg==255 visible hand pixels; lower is treated as more occluded",
             "tercile_thresholds": list(visibility_thresholds),
             "threshold_source": visibility_source,
+        },
+        "metric_definitions": {
+            "global_orientation_deg": "geodesic angle between camera-frame palm bases built from wrist and index/middle/little MCP joints; defined identically for official left and right hands",
+            "mano_translation_parameter_mm": "diagnostic distance between WiLoR cam_t and official pose_m translation; not used for checkpoint selection",
         },
         "signed_deltas": {},
         "bootstrap_95ci": {},

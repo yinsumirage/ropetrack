@@ -16,7 +16,10 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 
-TIP_VERTEX_IDS = [745, 317, 444, 556, 673]
+TIP_VERTEX_IDS = {
+    "right": [745, 317, 444, 556, 673],
+    "left": [745, 317, 445, 556, 673],
+}
 OPENPOSE_ORDER = [0, 13, 14, 15, 16, 1, 2, 3, 17, 4, 5, 6, 18, 10, 11, 12, 19, 7, 8, 9, 20]
 TEST_SUBJECTS = {"20201002-subject-08", "20201015-subject-09"}
 THRESHOLDS = {
@@ -108,7 +111,7 @@ def patch_legacy_manopth_dependencies() -> None:
             setattr(np, name, value)
 
 
-def load_mano(manopth_root: Path, mano_root: Path):
+def load_mano(manopth_root: Path, mano_root: Path, side: str):
     patch_legacy_manopth_dependencies()
     sys.path.insert(0, str(manopth_root))
     from manopth.manolayer import ManoLayer
@@ -116,7 +119,7 @@ def load_mano(manopth_root: Path, mano_root: Path):
     layer = ManoLayer(
         flat_hand_mean=False,
         ncomps=45,
-        side="right",
+        side=side,
         mano_root=str(mano_root),
         use_pca=True,
     )
@@ -157,6 +160,23 @@ def decode_mano(layer, rows: list[dict], pose_by_id: dict[str, tuple[np.ndarray,
             joint_rows.append(joints.numpy() / 1000.0)
             vertex_rows.append(vertices.numpy() / 1000.0)
     return np.concatenate(joint_rows), np.concatenate(vertex_rows)
+
+
+def decode_mano_by_side(
+    layers: dict, rows: list[dict], pose_by_id: dict[str, tuple[np.ndarray, np.ndarray]], batch_size: int
+) -> tuple[np.ndarray, np.ndarray]:
+    joints = np.empty((len(rows), 21, 3), dtype=np.float32)
+    vertices = np.empty((len(rows), 778, 3), dtype=np.float32)
+    for side, is_right in (("right", True), ("left", False)):
+        indices = [index for index, row in enumerate(rows) if bool(row["is_right"]) == is_right]
+        if not indices:
+            continue
+        side_joints, side_vertices = decode_mano(
+            layers[side], [rows[index] for index in indices], pose_by_id, batch_size
+        )
+        joints[np.asarray(indices)] = side_joints
+        vertices[np.asarray(indices)] = side_vertices
+    return joints, vertices
 
 
 def label_rows(rows: list[dict]) -> tuple[np.ndarray, np.ndarray]:
@@ -218,8 +238,11 @@ def validate(args) -> Path:
             raise PermissionError("final gate requires frozen recipe and both official test subjects")
     selected = select_gate_rows(rows)
     pose_by_id = pose_rows_by_id(roots)
-    layer = load_mano(args.manopth_root, args.mano_root)
-    decoded, vertices = decode_mano(layer, selected, pose_by_id, args.batch_size)
+    layers = {
+        side: load_mano(args.manopth_root, args.mano_root, side)
+        for side in ("right", "left")
+    }
+    decoded, vertices = decode_mano_by_side(layers, selected, pose_by_id, args.batch_size)
     label_2d, label_3d = label_rows(selected)
     k = np.asarray([row["intrinsics"] for row in selected], dtype=np.float32)
     projected = project(label_3d, k)
@@ -271,6 +294,10 @@ def validate(args) -> Path:
             "sequences": len({row["episode_id"] for row in selected}),
             "camera_serials": sorted({row["camera_serial"] for row in selected}),
             "camera_count": len({row["camera_serial"] for row in selected}),
+            "hand_side_counts": {
+                side: sum(row["mano_side"] == side for row in selected)
+                for side in ("right", "left")
+            },
             "root_depth_m": stats(np.asarray([row["root_depth_m"] for row in selected])),
             "visible_hand_pixels": stats(np.asarray([row["hand_segmentation_pixels"] for row in selected])),
             "sampling": "per subject/camera: nearest, farthest, lowest and highest visible-hand segmentation area",
@@ -281,7 +308,7 @@ def validate(args) -> Path:
             "per_joint_mean_px": reprojection.mean(axis=0).tolist(),
         },
         "native_mano_gate": {
-            "implementation": "official manopth ManoLayer; flat_hand_mean=False; PCA45; right hand; output mm divided by 1000",
+            "implementation": "official right/left manopth ManoLayer; flat_hand_mean=False; PCA45; output mm divided by 1000",
             "pose_layout": "pose_m[0:3] global axis-angle; [3:48] articulated PCA45; [48:51] translation",
             "tip_vertex_ids": TIP_VERTEX_IDS,
             "joint_order": OPENPOSE_ORDER,

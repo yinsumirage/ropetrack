@@ -19,6 +19,11 @@ def load_script():
 
 
 class ValidateDexYcbCoordinatesTest(unittest.TestCase):
+    def test_official_tip_vertices_are_side_specific(self):
+        script = load_script()
+        self.assertEqual(script.TIP_VERTEX_IDS["right"], [745, 317, 444, 556, 673])
+        self.assertEqual(script.TIP_VERTEX_IDS["left"], [745, 317, 445, 556, 673])
+
     def test_projection_matches_opencv_intrinsics(self):
         script = load_script()
         joints = np.asarray([[[1.0, 2.0, 4.0], [0.0, 0.0, 2.0]]], dtype=np.float32)

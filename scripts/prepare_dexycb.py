@@ -63,6 +63,7 @@ class SyncFrame:
     frame_index: int
     serials: tuple[str, ...]
     mano_calibration_id: str
+    is_right: bool = True
 
     @property
     def episode_id(self) -> str:
@@ -117,11 +118,13 @@ def enumerate_s1(raw_root: Path) -> dict[str, list[SyncFrame]]:
                 if set(serials) != set(SERIALS) or len(serials) != len(SERIALS):
                     raise ValueError(f"unexpected cameras in {sequence_path}: {serials}")
                 mano_calib = tuple(map(str, meta["mano_calib"]))
-                if len(mano_calib) != 1 or tuple(meta["mano_sides"]) != ("right",):
-                    raise ValueError(f"expected one right hand in {sequence_path}")
+                mano_sides = tuple(map(str, meta["mano_sides"]))
+                if len(mano_calib) != 1 or len(mano_sides) != 1 or mano_sides[0] not in {"right", "left"}:
+                    raise ValueError(f"expected one declared left/right hand in {sequence_path}")
                 for frame_index in range(int(meta["num_frames"])):
                     result[split].append(SyncFrame(
-                        split, subject, sequence_path.name, frame_index, serials, mano_calib[0]
+                        split, subject, sequence_path.name, frame_index, serials, mano_calib[0],
+                        mano_sides[0] == "right",
                     ))
     return result
 
@@ -278,7 +281,8 @@ def manifest_row(raw_root: Path, frame: SyncFrame, serial: str, k: list[list[flo
         "sample_id": frame.sample_id(serial),
         "image_path": image_path.relative_to(raw_root).as_posix(),
         "bbox_xyxy": bbox_from_joints(joint_2d),
-        "is_right": True,
+        "is_right": frame.is_right,
+        "mano_side": "right" if frame.is_right else "left",
         "subject_id": frame.subject_id,
         "sequence_id": frame.sequence_id,
         "episode_id": frame.episode_id,
@@ -349,6 +353,7 @@ def export_subset(
         articulated_pose_pca=pose[:, 3:48],
         translation=pose[:, 48:51],
         betas=np.asarray(beta_rows, dtype=np.float32),
+        is_right=np.asarray([row["is_right"] for row in rows], dtype=bool),
     )
     protocol = {
         "dataset": "DexYCB",
@@ -374,7 +379,10 @@ def export_subset(
             "use_pca": True,
             "num_pca_comps": 45,
             "betas": "10 values from calibration/mano_<sequence mano_calib>/mano.yml",
-            "tip_vertex_ids": [745, 317, 444, 556, 673],
+            "tip_vertex_ids": {
+                "right": [745, 317, 444, 556, 673],
+                "left": [745, 317, 445, 556, 673],
+            },
         },
         "bbox": {
             "source": "official joint_2d",
@@ -504,6 +512,10 @@ def audit_report(frames_by_split: dict[str, list[SyncFrame]], audit_summary: Pat
             "sample_id_sha256": ids_sha256(ids),
             "per_subject": dict(sorted(Counter(frame.subject_id for frame in frames for _ in frame.serials).items())),
             "per_camera": dict(sorted(Counter(serial for frame in frames for serial in frame.serials).items())),
+            "per_hand_side": dict(sorted(Counter(
+                ("right" if frame.is_right else "left")
+                for frame in frames for _ in frame.serials
+            ).items())),
         }
     if any(subject_intersections.values()) or any(sample_intersections.values()):
         raise ValueError("official S1 overlap audit failed")
