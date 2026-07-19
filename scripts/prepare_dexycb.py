@@ -162,6 +162,65 @@ def select_balanced_views(frames: list[SyncFrame], count: int, seed: int) -> lis
     raise ValueError(f"requested {count} samples but only selected {len(selected)}")
 
 
+def valid_hand_label(raw_root: Path, frame: SyncFrame, serial: str) -> bool:
+    _, label_path = paths_for(raw_root, frame, serial)
+    with np.load(label_path) as label:
+        joint_3d = np.asarray(label["joint_3d"], dtype=np.float32)
+        pose_m = np.asarray(label["pose_m"], dtype=np.float32)
+    return bool(
+        np.isfinite(joint_3d).all()
+        and np.isfinite(pose_m).all()
+        and not np.all(joint_3d == -1)
+        and not np.all(pose_m == 0)
+    )
+
+
+def select_balanced_valid_views(
+    raw_root: Path, frames: list[SyncFrame], count: int, seed: int
+) -> tuple[list[tuple[SyncFrame, str]], dict]:
+    """Select exact valid rows while preserving round-robin episode balance."""
+    by_episode: dict[str, list[SyncFrame]] = defaultdict(list)
+    for frame in frames:
+        by_episode[frame.episode_id].append(frame)
+    pools = {
+        episode: sorted(rows, key=lambda row: stable_digest(seed, row.episode_id, row.frame_index))
+        for episode, rows in by_episode.items()
+    }
+    episodes = sorted(pools)
+    cursor = Counter()
+    camera_counts = Counter()
+    valid_counts = Counter()
+    rejected_invalid = 0
+    selected: list[tuple[SyncFrame, str]] = []
+    while len(selected) < count:
+        before = len(selected)
+        for episode in episodes:
+            while cursor[episode] < len(pools[episode]):
+                frame = pools[episode][cursor[episode]]
+                cursor[episode] += 1
+                minimum = min(camera_counts[serial] for serial in frame.serials)
+                candidates = [serial for serial in frame.serials if camera_counts[serial] == minimum]
+                serial = min(candidates, key=lambda value: stable_digest(
+                    seed, frame.episode_id, frame.frame_index, value
+                ))
+                if not valid_hand_label(raw_root, frame, serial):
+                    rejected_invalid += 1
+                    continue
+                selected.append((frame, serial))
+                camera_counts[serial] += 1
+                valid_counts[episode] += 1
+                break
+            if len(selected) == count:
+                return selected, {
+                    "invalid_candidates_skipped": rejected_invalid,
+                    "episodes_with_selected_rows": len(valid_counts),
+                    "episodes_without_selected_rows": sorted(set(episodes) - set(valid_counts)),
+                }
+        if len(selected) == before:
+            break
+    raise ValueError(f"requested {count} valid samples but only selected {len(selected)}")
+
+
 def internal_episode_split(rows: list[tuple[SyncFrame, str]], val_fraction: float, seed: int) -> tuple[list[str], list[str]]:
     episodes = np.asarray(sorted({frame.episode_id for frame, _ in rows}))
     rng = np.random.default_rng(seed)
@@ -300,6 +359,9 @@ def export_subset(
         "num_requested": len(selected),
         "num_samples": len(rows),
         "num_rejected": len(rejected),
+        "evaluation_population": "valid hand-pose rows only, matching the official HPE evaluator's sentinel skip",
+        "official_sentinel": "joint_3d all -1 and pose_m all 0 means no visible/annotated hand",
+        "rejected_reason_counts": dict(sorted(Counter(row["error"] for row in rejected).items())),
         "selection": selection,
         "sample_id": "subject/sequence/camera_serial/frame_index",
         "episode_id": "subject/sequence; camera deliberately excluded",
@@ -484,7 +546,9 @@ def export_all(args) -> Path:
 
     exports = {}
     if "train" in requested:
-        selected = select_balanced_views(frames_by_split["train"], args.train_count, args.seed)
+        selected, validity_selection = select_balanced_valid_views(
+            raw_root, frames_by_split["train"], args.train_count, args.seed
+        )
         train_episodes, val_episodes = internal_episode_split(selected, 0.1, 0)
         sequence_counts = Counter(frame.episode_id for frame, _ in selected)
         camera_counts = Counter(serial for _, serial in selected)
@@ -496,6 +560,8 @@ def export_all(args) -> Path:
             "rule": "episode round-robin; stable frame hash; globally least-used camera with stable hash tie-break",
             "seed": args.seed,
             "uses_val_or_test_error": False,
+            "validity_rule": "skip official joint_3d=-1 or pose_m=0 no-visible-hand sentinels before fixed-budget selection",
+            "validity_selection": validity_selection,
             "max_views_per_subject_sequence_frame": 1,
             "sequence_count": len(sequence_counts),
             "sequence_count_min_max": [min(sequence_counts.values()), max(sequence_counts.values())],

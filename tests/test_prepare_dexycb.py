@@ -46,6 +46,29 @@ class PrepareDexYcbTest(unittest.TestCase):
         cameras = Counter(serial for _, serial in selected)
         self.assertLessEqual(max(cameras.values()) - min(cameras.values()), 1)
 
+    def test_valid_selection_refills_official_no_hand_sentinels(self):
+        script = load_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            raw = Path(tmp)
+            frames = []
+            for sequence in range(2):
+                for frame_index in range(4):
+                    frame = script.SyncFrame("train", "subject", f"seq{sequence}", frame_index, ("c0", "c1"), "calib")
+                    frames.append(frame)
+                    for serial in frame.serials:
+                        directory = raw / frame.subject_id / frame.sequence_id / serial
+                        directory.mkdir(parents=True, exist_ok=True)
+                        invalid = frame_index == 0
+                        np.savez(
+                            directory / f"labels_{frame_index:06d}.npz",
+                            joint_3d=np.full((1, 21, 3), -1 if invalid else 0.1, dtype=np.float32),
+                            pose_m=np.zeros((1, 51), dtype=np.float32) if invalid else np.ones((1, 51), dtype=np.float32),
+                        )
+            selected, diagnostics = script.select_balanced_valid_views(raw, frames, 6, 9)
+        self.assertEqual(len(selected), 6)
+        self.assertEqual(Counter(row.episode_id for row, _ in selected), {"subject/seq0": 3, "subject/seq1": 3})
+        self.assertEqual(diagnostics["invalid_candidates_skipped"], 2)
+
     def test_bbox_has_fixed_margin_and_clipping(self):
         script = load_script()
         joints = np.tile([100.0, 100.0], (21, 1))
