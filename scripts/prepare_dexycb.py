@@ -211,23 +211,29 @@ def select_balanced_valid_views(
             while cursor[episode] < len(pools[episode]):
                 frame = pools[episode][cursor[episode]]
                 cursor[episode] += 1
-                minimum = min(camera_counts[serial] for serial in frame.serials)
-                candidates = [serial for serial in frame.serials if camera_counts[serial] == minimum]
-                serial = min(candidates, key=lambda value: stable_digest(
-                    seed, frame.episode_id, frame.frame_index, value
-                ))
-                rejection_reason = hand_label_rejection_reason(raw_root, frame, serial)
-                if rejection_reason is not None:
-                    rejected_invalid += 1
-                    rejected_by_reason[rejection_reason] += 1
-                    rejected_candidates.append({
-                        "sample_id": frame.sample_id(serial),
-                        "error": rejection_reason,
-                    })
+                candidates = sorted(
+                    frame.serials,
+                    key=lambda value: (
+                        camera_counts[value],
+                        stable_digest(seed, frame.episode_id, frame.frame_index, value),
+                    ),
+                )
+                for serial in candidates:
+                    rejection_reason = hand_label_rejection_reason(raw_root, frame, serial)
+                    if rejection_reason is not None:
+                        rejected_invalid += 1
+                        rejected_by_reason[rejection_reason] += 1
+                        rejected_candidates.append({
+                            "sample_id": frame.sample_id(serial),
+                            "error": rejection_reason,
+                        })
+                        continue
+                    selected.append((frame, serial))
+                    camera_counts[serial] += 1
+                    valid_counts[episode] += 1
+                    break
+                else:
                     continue
-                selected.append((frame, serial))
-                camera_counts[serial] += 1
-                valid_counts[episode] += 1
                 break
             if len(selected) == count:
                 return selected, {
@@ -615,12 +621,16 @@ def export_all(args) -> Path:
         train_episodes, val_episodes = internal_episode_split(selected, 0.1, 0)
         sequence_counts = Counter(frame.episode_id for frame, _ in selected)
         camera_counts = Counter(serial for _, serial in selected)
+        if max(sequence_counts.values()) - min(sequence_counts.values()) > 1:
+            raise ValueError(f"train27k sequence imbalance: {min(sequence_counts.values())}..{max(sequence_counts.values())}")
+        if max(camera_counts.values()) - min(camera_counts.values()) > 1:
+            raise ValueError(f"train27k camera imbalance: {min(camera_counts.values())}..{max(camera_counts.values())}")
         sync_ids = [f"{frame.episode_id}/{frame.frame_index:06d}" for frame, _ in selected]
         if len(sync_ids) != len(set(sync_ids)):
             raise ValueError("train27k selected more than one camera for a synchronized frame")
         selection = {
             "name": "dexycb_s1_train27k_v1",
-            "rule": "episode round-robin; stable frame hash; globally least-used camera with stable hash tie-break",
+            "rule": "episode round-robin; stable frame hash; first valid view ordered by globally least-used camera and stable hash tie-break",
             "seed": args.seed,
             "uses_val_or_test_error": False,
             "validity_rule": "skip official joint_3d=-1 or pose_m=0 no-visible-hand sentinels before fixed-budget selection",

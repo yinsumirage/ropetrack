@@ -82,10 +82,10 @@ class PrepareDexYcbTest(unittest.TestCase):
             selected, diagnostics = script.select_balanced_valid_views(raw, frames, 6, 9)
         self.assertEqual(len(selected), 6)
         self.assertEqual(Counter(row.episode_id for row, _ in selected), {"subject/seq0": 3, "subject/seq1": 3})
-        self.assertEqual(diagnostics["invalid_candidates_skipped"], 2)
+        self.assertEqual(diagnostics["invalid_candidates_skipped"], 4)
         self.assertEqual(
             diagnostics["invalid_candidates_by_reason"],
-            {"official invalid/no-visible-hand sentinel": 2},
+            {"official invalid/no-visible-hand sentinel": 4},
         )
 
     def test_valid_selection_refills_fully_off_image_bbox(self):
@@ -114,6 +114,27 @@ class PrepareDexYcbTest(unittest.TestCase):
             diagnostics["rejected_candidates"][0]["error"],
             "invalid bbox: bbox empty after clipping",
         )
+
+    def test_valid_selection_tries_another_camera_in_same_sync_frame(self):
+        script = load_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            raw = Path(tmp)
+            frame = script.SyncFrame("train", "subject", "seq", 0, ("c0", "c1"), "calib")
+            for serial in frame.serials:
+                directory = raw / frame.subject_id / frame.sequence_id / serial
+                directory.mkdir(parents=True, exist_ok=True)
+                joint_2d = np.stack((np.linspace(100, 200, 21), np.linspace(100, 200, 21)), axis=-1)
+                if serial == "c0":
+                    joint_2d[:, 1] += 600
+                np.savez(
+                    directory / "labels_000000.npz",
+                    joint_2d=joint_2d,
+                    joint_3d=np.full((1, 21, 3), 0.1, dtype=np.float32),
+                    pose_m=np.ones((1, 51), dtype=np.float32),
+                )
+            selected, diagnostics = script.select_balanced_valid_views(raw, [frame], 1, 12)
+        self.assertEqual(selected, [(frame, "c1")])
+        self.assertEqual(diagnostics["invalid_candidates_skipped"], 1)
 
     def test_bbox_has_fixed_margin_and_clipping(self):
         script = load_script()
