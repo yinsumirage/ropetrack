@@ -1,6 +1,6 @@
 # Current Code, Artifact, Branch, And Temporal Map
 
-Status: current as of 2026-07-19. Read this before dated plans. Dated
+Status: current as of 2026-07-20. Read this before dated plans. Dated
 `docs/` files and `experience/` notes remain the evidence trail; they are not
 all active instructions.
 
@@ -15,6 +15,11 @@ all active instructions.
 - **Not promoted:** the frozen ARCTIC+HOT3D+HO3D mixture improves HO3D but is
   statistically flat/slightly worse than the matched dual model on ARCTIC and
   HOT3D. Do not tune another mixture on the same final scores.
+- **DexYCB S1:** the outer adapter, official unseen-subject protocol, projection,
+  and native-MANO decode are validated. The matched 27k RGB-only head is
+  stopped because root-relative test error clearly regresses; GT-derived
+  ideal rope has a large paired effect, but does not justify full-S1 scaling,
+  mixture promotion, or a physical-sensor claim. See 0081.
 - **Stopped:** dense K16/K96 history, larger GRU/Transformer variants on the
   same signals, the tested natural-HOT3D visibility/usefulness gates, and the
   global-orientation head.
@@ -22,8 +27,9 @@ all active instructions.
   effect, but this is ideal simulated geometry. Physical sensor calibration,
   drift, latency, missing channels, and real deployment remain unproved.
 
-The authoritative no-leak and final-score record is
-`experience/0079_normal_joint_no_leak_final.md`.
+The authoritative normal-mixture no-leak record is
+`experience/0079_normal_joint_no_leak_final.md`; the DexYCB S1 first-round
+record is `experience/0081_dexycb_s1_first_round.md`.
 
 ## Active Code Paths
 
@@ -32,7 +38,8 @@ The authoritative no-leak and final-score record is
 | DirectPose normal training | `prepare_arctic.py` / `prepare_hot3d.py` / `prepare_ho3d_normal_train.py` -> `eval.py --save-mano-cache` -> `extract_feature_cache.py --save-tokens` -> `apply_rope_refinement.py` cache -> `direct_pose_head.py train --extra-bundle ...` | `test_prepare_*`, `test_eval_pipeline.py`, `test_extract_feature_cache.py`, `test_direct_pose_head.py`; 0075-0079 | Active experiment. Bundle/protocol/stitch Slurm glue is intentionally run-local under ignored `.local_checks/` and archived in the HPC run root, not a public package API. |
 | DirectPose apply/score | `direct_pose_head.py apply` -> MANO decode from `apply_rope_refinement.py` -> project `pred.json` -> `score_predictions.py` | `test_direct_pose_head.py`, `test_apply_rope_refinement.py`, `test_score_predictions.py`; 0078-0079 | Active. Perturbation flags are the normalized-rope robustness controls. |
 | P0-P2 teacher/release | `apply_rope_refinement.py --mode optimize|student`; `train_alpha_student.py`; core `refine/{actions,alpha_student,analysis,cache,oracle}.py` | release golden check in `RELEASE.md`; broad refiner tests; 0027-0052 | Frozen supported path. Do not replace the release checkpoint with DirectPose outputs. |
-| Dataset adapters/export | `ropetrack/datasets/hand_pose.py`, dataset YAMLs, `prepare_{arctic,egodex,hot3d}.py`, `prepare_ho3d_normal_train.py`, `make_hard_images.py`, `make_rope_labels.py` | adapter/export/hard/rope tests; 0018, 0040, 0060-0073, 0079 | Reusable. Dataset-specific coordinate and tip conventions remain explicit. |
+| Dataset adapters/export | `ropetrack/datasets/hand_pose.py`, dataset YAMLs, `prepare_{arctic,egodex,hot3d,dexycb}.py`, `prepare_ho3d_normal_train.py`, `make_hard_images.py`, `make_rope_labels.py` | adapter/export/hard/rope tests; 0018, 0040, 0060-0073, 0079, 0081 | Reusable. Dataset-specific coordinate, side, and tip conventions remain explicit. DexYCB test export requires a frozen recipe. |
+| DexYCB protocol/evaluation | `prepare_dexycb.py` -> `validate_dexycb_coordinates.py` -> standard WiLoR/token/DirectPose paths -> `score_dexycb.py`; `freeze_dexycb_recipe.py` and `verify_dexycb_artifacts.py` enforce one-shot test and raw-tree checks | `test_prepare_dexycb.py`, `test_validate_dexycb_coordinates.py`, `test_score_dexycb.py`, `test_freeze_dexycb_recipe.py`; 0081 | Validated adapter and evaluation path. The 27k RGB-only recipe, full-S1 scale-up, and addition to the frozen joint mixture are stopped. Ideal GT-derived rope remains an oracle/simulated observation. |
 | Benchmark export/eval | `eval.py` -> `ropetrack.eval.config` -> `ropetrack.eval.pipeline` -> `HandPredictor` + dataset adapter -> optional `score_predictions.py` | eval/config/pipeline/backend/protocol tests; 0017-0019, 0051 | Supported. `score_sliced_predictions.py` is the hard/rope slice scorer; temporal scoring is separate. |
 | Rope diagnostics/report | `rope_diagnostics/*`, `analyze_alpha_deadzone.py`, `summarize_runs.py`, `plot_report_figures.py`, `make_qualitative_panels.py` | dedicated tests except the thin visualization CLI; 0021-0023, 0029, 0042-0052 | Supported analysis. Generate tables; do not hand-copy metrics. |
 | Global orientation | `direct_global_orient_head.py` reuses `DirectPoseHead` and MANO decode | self-check plus `test_direct_global_orient_head.py`; 0078 | Experimental/rejected. HOT3D root-relative gain worsens camera error and fails ARCTIC transfer. |
@@ -64,6 +71,15 @@ Generated data and results are never committed.
   evidence is under `audit/`, `protocol/`, `scores/`, and
   `students/fold{0,1,2}/model.pt`. The corrected train-only HO3D export is
   `/data/wentao/ropetrack/processed/ho3d_v3/normal_train_27000_evaltips_20260719`.
+- DexYCB S1 first-round run:
+  `/data/wentao/ropetrack/runs/direct_pose_dexycb_s1_20260720`; processed
+  manifests/targets are under
+  `/data/wentao/ropetrack/processed/dexycb/s1_v1`. Durable evidence is
+  `protocol/artifact_verification.json`, `protocol/recipe_freeze.json`,
+  `coordinate/{pretrain,final}/`, `external_transfer/summary.json`,
+  `val/scores/scores.json`, and the one-shot `test/scores/scores.json`.
+  Checkpoints are `students/{rgb_only,rgb_rope}/model.pt`; neither is a release
+  replacement.
 - Earlier DirectPose runs are
   `direct_pose_head_20260718`, `direct_pose_transfer_20260718`,
   `direct_pose_scale_20260718`, and `direct_pose_ab_20260719` under the same
