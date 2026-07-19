@@ -73,8 +73,16 @@ class ProtocolTest(unittest.TestCase):
             joints_from_vertices("arctic", verts, regressor)
 
     def test_unknown_dataset_is_rejected(self):
-        with self.assertRaises(ValueError):
-            canonical_dataset("dexycb")
+        self.assertEqual(canonical_dataset("dexycb"), "dexycb")
+
+    def test_dexycb_uses_official_mano_tip_vertices_and_openpose_order(self):
+        verts = np.zeros((778, 3), dtype=np.float32)
+        regressor = np.zeros((16, 778), dtype=np.float32)
+        official_tip_ids = [745, 317, 444, 556, 673]
+        for value, vertex_id in enumerate(official_tip_ids, start=1):
+            verts[vertex_id, 0] = value
+        joints = joints_from_vertices("dexycb", verts, regressor)
+        self.assertEqual(joints[[4, 8, 12, 16, 20], 0].tolist(), [1, 2, 3, 4, 5])
 
 
 if __name__ == "__main__":

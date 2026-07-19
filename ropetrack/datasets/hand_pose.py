@@ -85,10 +85,26 @@ def iter_hand_pose_samples(adapter: str, root: Path, limit: int | None, split: s
         raise ValueError(f"unsupported HO3D split: {split}")
     if adapter in {"egodex", "arctic", "hot3d"}:
         return iter_egodex_samples(root, limit, split)
+    if adapter == "dexycb":
+        return iter_dexycb_samples(root, limit, split)
     raise ValueError(f"unsupported eval adapter: {adapter}")
 
 
 def iter_egodex_samples(root: Path, limit: int | None, split: str = "evaluation") -> Iterable[EgoDexSample]:
+    return iter_manifest_samples(root, root, limit, split)
+
+
+def iter_dexycb_samples(root: Path, limit: int | None, split: str = "evaluation") -> Iterable[EgoDexSample]:
+    protocol_path = root / "protocol.json"
+    if not protocol_path.exists():
+        raise FileNotFoundError(f"DexYCB protocol missing: {protocol_path}")
+    protocol = json.loads(protocol_path.read_text(encoding="utf-8"))
+    return iter_manifest_samples(root, Path(protocol["raw_root"]), limit, split)
+
+
+def iter_manifest_samples(
+    root: Path, image_root: Path, limit: int | None, split: str = "evaluation"
+) -> Iterable[EgoDexSample]:
     manifest_path = root / f"{split}.jsonl"
     if not manifest_path.exists():
         raise FileNotFoundError(f"hand-pose manifest missing: {manifest_path}")
@@ -101,13 +117,13 @@ def iter_egodex_samples(root: Path, limit: int | None, split: str = "evaluation"
             row = json.loads(line)
             yield EgoDexSample(
                 sample_id=str(row["sample_id"]),
-                image_path=root / row["image_path"],
+                image_path=image_root / row["image_path"],
                 bbox_xyxy=np.asarray(row["bbox_xyxy"], dtype=np.float32),
                 is_right=bool(row["is_right"]),
                 episode_id=str(row["episode_id"]),
                 frame_index=int(row["frame_index"]),
-                intrinsic=np.asarray(row["intrinsic"], dtype=np.float32),
-                joint_confidence=np.asarray(row["joint_confidence"], dtype=np.float32),
+                intrinsic=np.asarray(row.get("intrinsic", row.get("intrinsics")), dtype=np.float32),
+                joint_confidence=np.asarray(row.get("joint_confidence", [1.0] * 21), dtype=np.float32),
             )
 
 
@@ -352,7 +368,7 @@ def load_gt_bbox_candidates(adapter: str, samples: list) -> list[BBoxItem]:
                 "gt_bbox",
             ))
         return candidates
-    if adapter in {"egodex", "arctic", "hot3d"}:
+    if adapter in {"egodex", "arctic", "hot3d", "dexycb"}:
         return [
             BBoxItem(idx, 0, sample, sample.bbox_xyxy, sample.is_right, 1.0, "gt_bbox")
             for idx, sample in enumerate(samples)

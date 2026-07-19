@@ -1,0 +1,7 @@
+name: dexycb_s1_val
+adapter: dexycb
+remote_root: /data/wentao/ropetrack/processed/dexycb/s1_v1/val
+protocol:
+  units: m
+  joint_source: mano_vertices
+  benchmark_mode: gt_bbox

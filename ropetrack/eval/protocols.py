@@ -5,6 +5,7 @@ import numpy as np
 HAMER_MANO_TIP_VERTEX_IDS = np.asarray([744, 320, 443, 554, 671], dtype=np.int64)
 HO3D_TIP_VERTEX_IDS = HAMER_MANO_TIP_VERTEX_IDS
 FREIHAND_TIP_VERTEX_IDS = np.asarray([744, 320, 443, 555, 672], dtype=np.int64)
+DEXYCB_TIP_VERTEX_IDS = np.asarray([745, 317, 444, 556, 673], dtype=np.int64)
 FREIHAND_JOINT_ORDER = np.asarray(
     [0, 13, 14, 15, 16, 1, 2, 3, 17, 4, 5, 6, 18, 10, 11, 12, 19, 7, 8, 9, 20],
     dtype=np.int64,
@@ -17,7 +18,7 @@ def canonical_dataset(dataset: str) -> str:
         return "ho3d"
     if name == "freihand":
         return "freihand"
-    if name in {"egodex", "arctic", "hot3d"}:
+    if name in {"egodex", "arctic", "hot3d", "dexycb"}:
         return name
     raise ValueError(f"unsupported dataset: {dataset}")
 
@@ -41,7 +42,8 @@ def joints_from_vertices(dataset: str, vertices, j_regressor) -> np.ndarray:
     ds = canonical_dataset(dataset)
     if ds in {"arctic", "hot3d"}:
         raise ValueError(f"{ds.upper()} joints require MANO kinematic model_keypoints")
-    if ds in {"freihand", "egodex"}:
-        joints = np.concatenate([joints16, verts[FREIHAND_TIP_VERTEX_IDS]], axis=0)
+    if ds in {"freihand", "egodex", "dexycb"}:
+        tip_ids = DEXYCB_TIP_VERTEX_IDS if ds == "dexycb" else FREIHAND_TIP_VERTEX_IDS
+        joints = np.concatenate([joints16, verts[tip_ids]], axis=0)
         return joints[FREIHAND_JOINT_ORDER]
     return np.concatenate([joints16, verts[HO3D_TIP_VERTEX_IDS]], axis=0)

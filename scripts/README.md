@@ -245,5 +245,30 @@ correlates base finger curl with correction size and residual closure (H2).
 Dataset roots live in `configs/datasets/*.yaml`. Method/backend checkpoint
 settings live in `configs/experiments/clean_baseline.yaml`.
 
+DexYCB official S1 uses a guarded manifest workflow:
+
+```bash
+# CPU: audits official toolkit + BOP S1 + the prior copy report, then exports
+# train27k/smoke and S1 val. The raw root is read only.
+python scripts/prepare_dexycb.py --raw-root /data/wentao/datasets/dexycb \
+  --output-root /data/wentao/ropetrack/processed/dexycb/s1_v1 \
+  --audit-summary /data/wentao/ropetrack/runs/handdata_audit_20260719/dexycb/summary.json \
+  --toolkit-root .local_checks/dex-ycb-toolkit \
+  --bop-manifest /data/wentao/datasets/dexycb/bop/s1/test_targets_bop19.json \
+  --splits train,val
+
+# Test export is deliberately impossible until the matched checkpoints,
+# visibility thresholds, and evaluation recipe are frozen.
+python scripts/prepare_dexycb.py <same audit arguments> --splits test \
+  --test-freeze-file <run>/protocol/recipe_freeze.json
+```
+
+`validate_dexycb_coordinates.py` independently checks pinhole reprojection and
+the official manopth PCA45 decode. `score_dexycb.py` reports PA,
+root-relative, camera-frame, orientation/translation diagnostics, fixed
+subject/camera/visibility slices, and episode-bootstrap paired deltas.
+`verify_dexycb_artifacts.py` compares pre/post raw-tree signatures and closes
+the no-leak/artifact gate.
+
 Do not add empty script files. Add each script when it can run against local
 data or a tiny fixture.

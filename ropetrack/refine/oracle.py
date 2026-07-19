@@ -21,6 +21,7 @@ import torch
 from ropetrack.eval.protocols import (
     FREIHAND_JOINT_ORDER,
     FREIHAND_TIP_VERTEX_IDS,
+    DEXYCB_TIP_VERTEX_IDS,
     HO3D_TIP_VERTEX_IDS,
     canonical_dataset,
 )
@@ -36,7 +37,7 @@ ORACLE_OBJECTIVES = ("oracle_tip", "oracle_chain")
 def oracle_joint_ids(dataset: str, objective: str) -> list[int]:
     ds = canonical_dataset(dataset)
     if objective == "oracle_tip":
-        return list(FREIHAND_TIP_JOINT_IDS if ds in {"freihand", "egodex", "arctic", "hot3d"} else HO3D_TIP_JOINT_IDS)
+        return list(FREIHAND_TIP_JOINT_IDS if ds in {"freihand", "egodex", "arctic", "hot3d", "dexycb"} else HO3D_TIP_JOINT_IDS)
     if objective == "oracle_chain":
         return [joint for joint in range(21) if joint != WRIST_JOINT_ID]
     raise ValueError(f"unsupported oracle objective: {objective}")
@@ -63,10 +64,13 @@ def torch_eval_joints_from_vertices(dataset: str, verts_eval: torch.Tensor, j_re
     ds = canonical_dataset(dataset)
     if ds in {"arctic", "hot3d"}:
         raise ValueError(f"{ds.upper()} joints require MANO kinematic model_keypoints")
-    tip_ids = FREIHAND_TIP_VERTEX_IDS if ds in {"freihand", "egodex"} else HO3D_TIP_VERTEX_IDS
+    if ds == "dexycb":
+        tip_ids = DEXYCB_TIP_VERTEX_IDS
+    else:
+        tip_ids = FREIHAND_TIP_VERTEX_IDS if ds in {"freihand", "egodex"} else HO3D_TIP_VERTEX_IDS
     tips = verts_eval[:, torch.as_tensor(np.asarray(tip_ids), device=verts_eval.device)]
     joints = torch.cat([joints16, tips], dim=1)
-    if ds in {"freihand", "egodex"}:
+    if ds in {"freihand", "egodex", "dexycb"}:
         order = torch.as_tensor(np.asarray(FREIHAND_JOINT_ORDER), device=joints.device)
         joints = joints[:, order]
     return joints

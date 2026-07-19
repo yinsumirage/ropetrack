@@ -112,6 +112,29 @@ class HandPoseDatasetsTest(unittest.TestCase):
         self.assertFalse(candidate.is_right)
         self.assertEqual(candidate.bbox_xyxy.tolist(), [10.0, 20.0, 30.0, 40.0])
 
+    def test_dexycb_resolves_images_against_read_only_raw_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "processed"
+            raw = Path(tmp) / "raw"
+            root.mkdir()
+            raw.mkdir()
+            (root / "protocol.json").write_text(json.dumps({"raw_root": str(raw)}))
+            row = {
+                "sample_id": "subject/sequence/camera/000001",
+                "image_path": "subject/sequence/camera/color_000001.jpg",
+                "bbox_xyxy": [1, 2, 30, 40],
+                "is_right": True,
+                "episode_id": "subject/sequence",
+                "frame_index": 1,
+                "intrinsics": np.eye(3).tolist(),
+            }
+            (root / "evaluation.jsonl").write_text(json.dumps(row) + "\n")
+
+            sample = next(iter(iter_hand_pose_samples("dexycb", root, limit=None)))
+
+        self.assertEqual(sample.image_path, raw / row["image_path"])
+        self.assertEqual(sample.episode_id, "subject/sequence")
+
     def test_load_ho3d_gt_bbox_candidates_reads_meta(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

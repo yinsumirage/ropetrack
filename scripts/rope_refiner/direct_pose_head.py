@@ -27,6 +27,8 @@ from ropetrack.refine.actions import FINGER_POSE_GROUPS
 from ropetrack.refine.analysis import perturb_rope_reading
 from ropetrack.refine.cache import align_rows_by_sample_id
 from ropetrack.rope import FINGER_CHAINS
+from ropetrack.eval.pipeline import load_mano_j_regressor
+from ropetrack.eval.protocols import DEXYCB_TIP_VERTEX_IDS, FREIHAND_JOINT_ORDER, canonical_dataset
 from scripts.rope_refiner.apply_rope_refinement import (
     mano_layer,
     mano_predictions,
@@ -205,8 +207,19 @@ def append_bundles(arrays: dict[str, np.ndarray], paths: list[Path]) -> dict[str
     return arrays
 
 
-def episode_split(sample_ids: np.ndarray, val_fraction: float, seed: int) -> tuple[np.ndarray, np.ndarray]:
-    episodes = np.asarray([str(sid).replace("\\", "/").rsplit("/", 1)[0] for sid in sample_ids])
+def episode_split(
+    sample_ids: np.ndarray,
+    val_fraction: float,
+    seed: int,
+    episode_ids: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    episodes = (
+        np.asarray(episode_ids).astype(str)
+        if episode_ids is not None
+        else np.asarray([str(sid).replace("\\", "/").rsplit("/", 1)[0] for sid in sample_ids])
+    )
+    if episodes.shape != np.asarray(sample_ids).shape:
+        raise ValueError("episode_ids must match sample_ids")
     unique = np.asarray(sorted(set(episodes.tolist())))
     if len(unique) < 2:
         raise ValueError("need at least two episodes for train/validation split")
@@ -219,6 +232,18 @@ def episode_split(sample_ids: np.ndarray, val_fraction: float, seed: int) -> tup
     if not len(train) or not len(val):
         raise ValueError("episode split produced an empty side")
     return train, val
+
+
+def load_episode_ids(path: Path, sample_ids: np.ndarray) -> np.ndarray:
+    with path.open(encoding="utf-8") as handle:
+        rows = [json.loads(line) for line in handle if line.strip()]
+    by_id = {str(row["sample_id"]): str(row["episode_id"]) for row in rows}
+    if len(by_id) != len(rows):
+        raise ValueError("episode manifest has duplicate sample_id values")
+    missing = [str(sample_id) for sample_id in sample_ids if str(sample_id) not in by_id]
+    if missing:
+        raise ValueError(f"episode manifest missing sample ids: {missing[:5]}")
+    return np.asarray([by_id[str(sample_id)] for sample_id in sample_ids])
 
 
 def sample_id_sha256(sample_ids) -> str:
@@ -253,6 +278,7 @@ def training_provenance(args, arrays, train_idx, val_idx) -> dict:
             "run_meta": str(args.run_meta) if args.run_meta is not None else None,
             "feature_cache": str(args.feature_cache) if args.feature_cache is not None else None,
             "extra_bundles": [str(path) for path in args.extra_bundle],
+            "episode_manifest": str(args.episode_manifest) if getattr(args, "episode_manifest", None) is not None else None,
         },
     }
 
@@ -308,7 +334,7 @@ def tensor_batch(arrays: dict[str, np.ndarray], rows: np.ndarray, device: str) -
     return batch
 
 
-def decoded_batch(model, mano, batch):
+def decoded_batch(model, mano, batch, dataset: str = "freihand", j_regressor=None):
     refined = model(
         batch["base_hand_pose"], batch["base_rope_norm"], batch["input_rope_norm"],
         batch["rope_valid"], batch.get("tokens"),
@@ -319,6 +345,13 @@ def decoded_batch(model, mano, batch):
         betas=batch["betas"], pose2rot=False,
     )
     joints = output.joints
+    if canonical_dataset(dataset) == "dexycb":
+        if j_regressor is None:
+            raise ValueError("DexYCB training decode requires the MANO joint regressor")
+        joints16 = torch.einsum("jv,bvc->bjc", j_regressor, output.vertices)
+        tips = output.vertices[:, torch.as_tensor(DEXYCB_TIP_VERTEX_IDS, device=output.vertices.device)]
+        native = torch.cat((joints16, tips), dim=1)
+        joints = native[:, torch.as_tensor(FREIHAND_JOINT_ORDER, device=native.device)]
     mirror = torch.ones((len(joints), 1, 3), device=joints.device, dtype=joints.dtype)
     mirror[:, 0, 0] = torch.where(batch["is_right"], 1.0, -1.0)
     joints_eval = joints * mirror
@@ -326,14 +359,14 @@ def decoded_batch(model, mano, batch):
     return refined, joints_eval, pred_rope
 
 
-def evaluate(model, mano, arrays, rows, batch_size, device, weights):
+def evaluate(model, mano, arrays, rows, batch_size, device, weights, dataset="freihand", j_regressor=None):
     model.eval()
     totals = {key: 0.0 for key in ("loss", "pa_mpjpe_mm", "root_mpjpe_mm", "rope")}
     with torch.no_grad():
         for start in range(0, len(rows), batch_size):
             selected = rows[start:start + batch_size]
             batch = tensor_batch(arrays, selected, device)
-            refined, joints, pred_rope = decoded_batch(model, mano, batch)
+            refined, joints, pred_rope = decoded_batch(model, mano, batch, dataset, j_regressor)
             losses = direct_losses(joints, batch["gt_xyz"], pred_rope, batch["input_rope_norm"],
                                    batch["rope_valid"], refined, batch["base_hand_pose"], **weights)
             for key in totals:
@@ -344,12 +377,18 @@ def evaluate(model, mano, arrays, rows, batch_size, device, weights):
 def train(args) -> Path:
     arrays = load_arrays(args.cache, args.mano_cache, args.gt_xyz, args.run_meta, args.feature_cache)
     arrays = append_bundles(arrays, args.extra_bundle)
-    train_idx, val_idx = episode_split(arrays["sample_id"], args.val_fraction, args.seed)
+    episode_ids = load_episode_ids(args.episode_manifest, arrays["sample_id"]) if args.episode_manifest else None
+    train_idx, val_idx = episode_split(arrays["sample_id"], args.val_fraction, args.seed, episode_ids)
     apply_rope_mode(arrays, args.rope_mode, args.seed + 1, (train_idx, val_idx))
     token_dim = int(arrays["tokens"].shape[2]) if "tokens" in arrays else 0
     model = DirectPoseHead(token_dim, args.hidden_dim, args.max_delta).to(args.device)
     mano = mano_layer(args.device)
     mano.requires_grad_(False)
+    j_regressor = None
+    if canonical_dataset(args.dataset) == "dexycb":
+        j_regressor = torch.from_numpy(load_mano_j_regressor(
+            Path(__file__).resolve().parents[2] / "mano_data" / "MANO_RIGHT.pkl"
+        )).to(args.device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     rng = np.random.default_rng(args.seed)
     weights = {"root_weight": args.root_weight, "rope_weight": args.rope_weight, "delta_weight": args.delta_weight}
@@ -361,7 +400,7 @@ def train(args) -> Path:
         for start in range(0, len(order), args.batch_size):
             selected = order[start:start + args.batch_size]
             batch = tensor_batch(arrays, selected, args.device)
-            refined, joints, pred_rope = decoded_batch(model, mano, batch)
+            refined, joints, pred_rope = decoded_batch(model, mano, batch, args.dataset, j_regressor)
             losses = direct_losses(joints, batch["gt_xyz"], pred_rope, batch["input_rope_norm"],
                                    batch["rope_valid"], refined, batch["base_hand_pose"], **weights)
             optimizer.zero_grad()
@@ -369,7 +408,7 @@ def train(args) -> Path:
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
             train_loss += float(losses["loss"].detach()) * len(selected)
-        metrics = evaluate(model, mano, arrays, val_idx, args.batch_size, args.device, weights)
+        metrics = evaluate(model, mano, arrays, val_idx, args.batch_size, args.device, weights, args.dataset, j_regressor)
         row = {"epoch": epoch, "train_loss": train_loss / len(train_idx), **{f"val_{k}": v for k, v in metrics.items()}}
         log.append(row)
         print(json.dumps(row), flush=True)
@@ -449,6 +488,8 @@ def parse_args(argv=None):
     train_p.add_argument("--gt-xyz", type=Path, required=True)
     train_p.add_argument("--run-meta", type=Path, default=None)
     train_p.add_argument("--extra-bundle", type=Path, action="append", default=[])
+    train_p.add_argument("--dataset", default="freihand")
+    train_p.add_argument("--episode-manifest", type=Path, default=None)
     train_p.add_argument("--protocol-json", type=Path, default=None)
     train_p.add_argument("--out-dir", type=Path, required=True)
     train_p.add_argument("--hidden-dim", type=int, default=128)

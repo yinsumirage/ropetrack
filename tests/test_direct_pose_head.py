@@ -50,6 +50,16 @@ class DirectPoseHeadTest(unittest.TestCase):
         val_parents = {sid.rsplit("/", 1)[0] for sid in ids[val]}
         self.assertFalse(train_parents & val_parents)
 
+    def test_episode_split_accepts_explicit_multiview_episode_ids(self):
+        script = load_script()
+        ids = np.asarray([
+            "s01/seq/cam0/000001", "s01/seq/cam1/000001",
+            "s02/seq/cam0/000001", "s02/seq/cam1/000001",
+        ])
+        episodes = np.asarray(["s01/seq", "s01/seq", "s02/seq", "s02/seq"])
+        train, val = script.episode_split(ids, 0.5, 3, episodes)
+        self.assertFalse(set(episodes[train]) & set(episodes[val]))
+
     def test_shuffle_stays_inside_declared_groups(self):
         script = load_script()
         arrays = {
