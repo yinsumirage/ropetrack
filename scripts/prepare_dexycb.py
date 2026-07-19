@@ -165,17 +165,25 @@ def select_balanced_views(frames: list[SyncFrame], count: int, seed: int) -> lis
     raise ValueError(f"requested {count} samples but only selected {len(selected)}")
 
 
-def valid_hand_label(raw_root: Path, frame: SyncFrame, serial: str) -> bool:
+def hand_label_rejection_reason(raw_root: Path, frame: SyncFrame, serial: str) -> str | None:
     _, label_path = paths_for(raw_root, frame, serial)
     with np.load(label_path) as label:
+        joint_2d = np.asarray(label["joint_2d"], dtype=np.float32).reshape(21, 2)
         joint_3d = np.asarray(label["joint_3d"], dtype=np.float32)
         pose_m = np.asarray(label["pose_m"], dtype=np.float32)
-    return bool(
-        np.isfinite(joint_3d).all()
-        and np.isfinite(pose_m).all()
-        and not np.all(joint_3d == -1)
-        and not np.all(pose_m == 0)
-    )
+    if not np.isfinite(joint_2d).all() or not np.isfinite(joint_3d).all() or not np.isfinite(pose_m).all():
+        return "non-finite hand label"
+    if np.all(joint_3d == -1) or np.all(pose_m == 0):
+        return "official invalid/no-visible-hand sentinel"
+    try:
+        bbox_from_joints(joint_2d)
+    except ValueError as error:
+        return f"invalid bbox: {error}"
+    return None
+
+
+def valid_hand_label(raw_root: Path, frame: SyncFrame, serial: str) -> bool:
+    return hand_label_rejection_reason(raw_root, frame, serial) is None
 
 
 def select_balanced_valid_views(
@@ -194,6 +202,8 @@ def select_balanced_valid_views(
     camera_counts = Counter()
     valid_counts = Counter()
     rejected_invalid = 0
+    rejected_by_reason = Counter()
+    rejected_candidates = []
     selected: list[tuple[SyncFrame, str]] = []
     while len(selected) < count:
         before = len(selected)
@@ -206,8 +216,14 @@ def select_balanced_valid_views(
                 serial = min(candidates, key=lambda value: stable_digest(
                     seed, frame.episode_id, frame.frame_index, value
                 ))
-                if not valid_hand_label(raw_root, frame, serial):
+                rejection_reason = hand_label_rejection_reason(raw_root, frame, serial)
+                if rejection_reason is not None:
                     rejected_invalid += 1
+                    rejected_by_reason[rejection_reason] += 1
+                    rejected_candidates.append({
+                        "sample_id": frame.sample_id(serial),
+                        "error": rejection_reason,
+                    })
                     continue
                 selected.append((frame, serial))
                 camera_counts[serial] += 1
@@ -216,6 +232,8 @@ def select_balanced_valid_views(
             if len(selected) == count:
                 return selected, {
                     "invalid_candidates_skipped": rejected_invalid,
+                    "invalid_candidates_by_reason": dict(sorted(rejected_by_reason.items())),
+                    "rejected_candidates": rejected_candidates,
                     "episodes_with_selected_rows": len(valid_counts),
                     "episodes_without_selected_rows": sorted(set(episodes) - set(valid_counts)),
                 }
@@ -317,12 +335,14 @@ def export_subset(
     split_file: str,
     k_by_serial: dict[str, list[list[float]]],
     selection: dict,
+    selection_rejections: list[dict] | None = None,
 ) -> dict:
     output_root.mkdir(parents=True, exist_ok=False)
     manifest_path = output_root / f"{split_file}.jsonl"
     xyz_path = output_root / f"{split_file}_xyz.json"
     pose_path = output_root / f"{split_file}_mano.npz"
     rejected_path = output_root / "rejected_samples.jsonl"
+    selection_rejected_path = output_root / "selection_rejected_samples.jsonl"
     rows, xyz_rows, pose_rows, beta_rows, rejected = [], [], [], [], []
     beta_cache: dict[str, np.ndarray] = {}
     for frame, serial in selected:
@@ -342,6 +362,9 @@ def export_subset(
             handle.write(json.dumps(row, separators=(",", ":")) + "\n")
     with rejected_path.open("w", encoding="utf-8") as handle:
         for row in rejected:
+            handle.write(json.dumps(row, separators=(",", ":")) + "\n")
+    with selection_rejected_path.open("w", encoding="utf-8") as handle:
+        for row in selection_rejections or []:
             handle.write(json.dumps(row, separators=(",", ":")) + "\n")
     write_json_array(xyz_path, xyz_rows)
     pose = np.asarray(pose_rows, dtype=np.float32)
@@ -364,6 +387,7 @@ def export_subset(
         "num_requested": len(selected),
         "num_samples": len(rows),
         "num_rejected": len(rejected),
+        "num_selection_rejected": len(selection_rejections or []),
         "evaluation_population": "valid hand-pose rows only, matching the official HPE evaluator's sentinel skip",
         "official_sentinel": "joint_3d all -1 and pose_m all 0 means no visible/annotated hand",
         "rejected_reason_counts": dict(sorted(Counter(row["error"] for row in rejected).items())),
@@ -399,6 +423,7 @@ def export_subset(
             "xyz": file_sha256(xyz_path),
             "mano": file_sha256(pose_path),
             "rejected": file_sha256(rejected_path),
+            "selection_rejected": file_sha256(selection_rejected_path),
         },
     }
     (output_root / "protocol.json").write_text(json.dumps(protocol, indent=2) + "\n", encoding="utf-8")
@@ -586,6 +611,7 @@ def export_all(args) -> Path:
         selected, validity_selection = select_balanced_valid_views(
             raw_root, frames_by_split["train"], args.train_count, args.seed
         )
+        selection_rejections = validity_selection.pop("rejected_candidates")
         train_episodes, val_episodes = internal_episode_split(selected, 0.1, 0)
         sequence_counts = Counter(frame.episode_id for frame, _ in selected)
         camera_counts = Counter(serial for _, serial in selected)
@@ -612,7 +638,9 @@ def export_all(args) -> Path:
             },
         }
         train_root = output_root / "train27k"
-        exports["train27k"] = export_subset(raw_root, train_root, selected, "training", k_by_serial, selection)
+        exports["train27k"] = export_subset(
+            raw_root, train_root, selected, "training", k_by_serial, selection, selection_rejections
+        )
         smoke_selected = sorted(selected, key=lambda row: stable_digest(args.seed, "smoke", row[0].sample_id(row[1])))[:args.smoke_count]
         exports["smoke"] = export_subset(
             raw_root,
