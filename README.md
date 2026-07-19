@@ -46,11 +46,20 @@ Phases P0-P2 are closed: clean baselines reproduced, hard splits quantified,
 rope test-time optimization diagnosed and frozen, and the release
 alpha-student distilled and verified (train split -> held-out eval).
 
+- Current code/artifact/branch/temporal map:
+  `docs/current-code-and-artifact-map.md`.
 - Release model identity and provenance: `RELEASE.md`.
 - Report-ready numbers: `docs/2026-07-07-report-results-pack.md`.
 - Cross-conversation working rules: `CLAUDE.md` (Claude) / `AGENTS.md` (Codex).
 - The bootstrap milestone (tiny manifests, first 20+20 smoke) completed in
   week one; see `experience/0000`-`0013`.
+
+The active post-release experiment is `DirectPoseHead`: a trainable MANO
+hand-pose residual head over frozen localized WiLoR tokens plus normalized
+rope. `experience/0079_normal_joint_no_leak_final.md` is the current protocol
+boundary: the fixed ARCTIC+HOT3D+HO3D mixture improves HO3D but is not promoted
+because matched ARCTIC/HOT3D results are flat/slightly worse. It is not a new
+release, and GT-derived rope does not prove a physical sensor.
 
 Generated predictions, metrics, and figures stay out of git. Current full-run
 outputs live under the HPC data root, usually `/data/wentao/ropetrack/runs`.

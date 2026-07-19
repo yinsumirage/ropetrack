@@ -36,14 +36,15 @@ work. Treat `E:\Desktop\hand4D\now` as the external knowledge base and
 
 ## Current Research Line
 
-Phases P0-P2 are closed (see CLAUDE.md Project State and RELEASE.md): clean
-baselines (`docs/2026-07-03-clean-baseline-summary.md`), hard splits, the
-frozen rope test-time optimization teacher, and the released four-teacher
-alpha student are done and recorded in `experience/` 0000-0049. A
-teacher-facing progress report is drafted from
-`docs/2026-07-07-report-results-pack.md`. Next phase (advisor-steered):
-P3 token/localized image features vs dataset expansion (DexYCB) vs physical
-rope sensor hardware.
+Phases P0-P2 are closed and the formal release remains pinned by `RELEASE.md`.
+The active experimental line is the frozen-token `DirectPoseHead`; its current
+code/artifact/branch map is `docs/current-code-and-artifact-map.md` and its
+authoritative no-leak result is `experience/0079_normal_joint_no_leak_final.md`.
+Continue trusted data coverage, but do not promote the fixed triple mixture or
+tune another mixture on the same final scores. Dense K16/K96, larger generic
+temporal models, the tested simple natural-HOT3D state gates, and the global
+orientation head are stopped directions. Physical rope sensing remains
+unvalidated.
 
 ## HPC Rules
 

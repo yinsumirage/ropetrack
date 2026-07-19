@@ -4,6 +4,11 @@ Pins the identity, provenance, and reproduction path of the released model.
 Numbers cite `docs/2026-07-07-report-results-pack.md` (the only number
 source); details cite `experience/` notes.
 
+Scope boundary: this file pins the formal P2 release only. Later DirectPose,
+orientation, robustness, and temporal experiments do not replace it. Their
+current status and artifact roots are in
+`docs/current-code-and-artifact-map.md`.
+
 ## Model Identity
 
 **The 0044 four-teacher augmented multi alpha-student.**

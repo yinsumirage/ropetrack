@@ -17,6 +17,14 @@ Current benchmark entrypoints:
 - `rope_diagnostics/score_rope_predictions.py`: rope diagnostic scorer for exported `pred.json`.
 - `rope_diagnostics/analyze_rope_errors.py`: rope reliability analysis tables/figures.
 - `rope_diagnostics/visualize_mesh_comparison.py`: mesh/prediction visual check helper.
+- `prepare_ho3d_normal_train.py`: sequence-balanced, train-only HO3D v3 normal export with the evaluation tip convention.
+- `rope_refiner/direct_pose_head.py`: active experimental DirectPose train/apply CLI over frozen localized tokens and normalized rope.
+
+Status and replacement decisions live in
+`../docs/current-code-and-artifact-map.md`. In particular,
+`rope_refiner/direct_global_orient_head.py` and the temporal/state/gate CLIs
+remain reproducibility tools, not current release entrypoints. Do not restart
+K16/K96 or larger generic temporal models from their continued presence.
 
 Typical usage:
 

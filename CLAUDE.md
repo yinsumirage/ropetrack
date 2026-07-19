@@ -14,7 +14,7 @@ of it applies here too and is not repeated).
 - **User (guo.wentao)** relays between the two and owns GitHub credentials,
   advisor communication, and scope decisions.
 
-## Project State (as of 2026-07-08)
+## Project State (as of 2026-07-19)
 
 Wrist-RGB + 5 fingertip-to-wrist rope distances for occlusion-robust hand
 pose. Phases P0-P2 are **closed**; a teacher-facing progress report is being
@@ -39,6 +39,19 @@ source — never hand-copy metrics; regenerate via
   in an overlapping input region is targeted label noise. Teacher-quality
   parity is a precondition for diversity gains.
 
+- **Current DirectPose line** (0075-0079): a small 45D residual head trained
+  through MANO using frozen localized WiLoR tokens plus normalized rope gives
+  real PA hand-shape gains. The correctly paired rope contribution is about
+  0.404 mm on ARCTIC; this remains GT-derived ideal geometry, not a physical
+  sensor result.
+- **Frozen normal-joint result** (0079): historical ARCTIC-only and
+  participant-disjoint cells are valid, but the old 0076 `HOT3D all` cell is
+  contaminated. Triple versus dual is +0.020 mm ARCTIC, +0.019 mm HOT3D, and
+  -1.130 mm HO3D. Continue coverage research without promoting this fixed
+  mixture or tuning against the same scores.
+- Current entrypoint, artifact, branch, and temporal status:
+  `docs/current-code-and-artifact-map.md`.
+
 ## Hard-Won Technical Rules (violations have burned us)
 
 1. **Joint-order duality**: the WiLoR MANO wrapper's `out.joints` is ALWAYS
@@ -52,14 +65,18 @@ source — never hand-copy metrics; regenerate via
    comparisons use mesh/F metrics.
 3. **PA alignment absorbs translation** — synthetic test fixtures need
    non-rigid per-joint noise, not constant offsets (bit us twice).
-4. **Observability principle**: learned modules output only what rope can
-   determine (5/15 alphas, tanh-bounded, zero-init final layer). The 45-dim
-   pose-delta MLP failure (0026) is the canonical counterexample. The
-   residual gate is a hard rule, never learned.
-5. **Mandatory controls for any learned variant**: shuffled-rope control
-   (gain must collapse), validation split + early stopping, sensor-noise
-   augmentation, seed check. `train_log.json` must show
-   `beats_zero_baseline=True`.
+4. **Observability principle**: rope-only modules output only what rope can
+   determine (5/15 alphas, tanh-bounded, zero-init final layer). The cached
+   rope-only 45-dim pose-delta MLP failure (0026) is the canonical
+   counterexample. DirectPoseHead is different: it has direct GT supervision
+   and localized image tokens, so its tested 45D output is allowed. The P2
+   residual gate remains a hard rule, never learned.
+5. **Mandatory controls before promotion**: shuffled-rope control (gain must
+   collapse), validation split + early stopping, sensor perturbation checks,
+   and a seed check. P2 alpha-student release candidates additionally require
+   noise augmentation and `train_log.json` `beats_zero_baseline=True`;
+   experimental DirectPose cells may isolate clean training, but must pass the
+   frozen robustness matrix before release consideration.
 6. **Rope is a simulated sensor** derived from GT joints; the noise ablation
    (sigma 0.05 keeps ~82-93%) is the realism bound. State this in anything
    advisor-facing; the strong-oracle gap proves no trivial leakage.
@@ -115,5 +132,8 @@ source — never hand-copy metrics; regenerate via
 - Open decision: whether to commit the sub-MB release `student.pt` into git
   with a `.gitignore` exception (currently HPC releases/ + .local_checks
   mirror only).
-- Next-phase decision (advisor-steered, after report): P3 v1 token features
-  vs DexYCB data expansion vs physical rope sensor hardware.
+- Post-0079 decision: keep the P2 release frozen; continue trusted DirectPose
+  data coverage without final-score mixture search. Temporal work is stopped
+  except for the single sequence-disjoint localized-state gate in
+  `docs/current-code-and-artifact-map.md`; physical rope hardware still needs
+  its own calibration/dropout validation.
