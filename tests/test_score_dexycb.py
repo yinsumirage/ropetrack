@@ -1,5 +1,6 @@
 import importlib.util
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -58,6 +59,23 @@ class ScoreDexYcbTest(unittest.TestCase):
         script = load_script()
         rows = [{"hand_segmentation_pixels": value} for value in (10, 20, 30)]
         self.assertEqual(script.visibility_labels(rows, (10, 30)), ["low_visible", "mid_visible", "high_visible"])
+
+    def test_translation_diagnostic_uses_exported_base_cam_t_schema(self):
+        script = load_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            np.savez(
+                root / "mano_cache.npz",
+                sample_id=np.asarray(["b", "a"]),
+                base_cam_t=np.asarray([[0.2, 0.0, 1.0], [0.1, 0.0, 1.0]], dtype=np.float32),
+            )
+            pose = np.zeros((2, 51), dtype=np.float32)
+            pose[:, 48:51] = [[0.1, 0.0, 1.0], [0.2, 0.0, 1.0]]
+            np.savez(root / "target.npz", sample_id=np.asarray(["a", "b"]), pose_m=pose)
+            error = script.load_mano_translation_diagnostic(
+                root / "mano_cache.npz", ["a", "b"], root / "target.npz"
+            )
+        np.testing.assert_allclose(error, [0.0, 0.0])
 
 
 if __name__ == "__main__":

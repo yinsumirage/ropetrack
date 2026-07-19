@@ -118,7 +118,7 @@ def orientation_error_deg(predicted: np.ndarray, target: np.ndarray) -> np.ndarr
 def load_mano_translation_diagnostic(path: Path, target_ids: list[str], target_pose_path: Path) -> np.ndarray:
     with np.load(path) as cache:
         ids = cache["sample_id"].astype(str).tolist()
-        cam_t = align_rows(target_ids, ids, np.asarray(cache["cam_t"], dtype=np.float32))
+        cam_t = align_rows(target_ids, ids, np.asarray(cache["base_cam_t"], dtype=np.float32))
     with np.load(target_pose_path) as target:
         target_pose = align_rows(target_ids, target["sample_id"].astype(str).tolist(), np.asarray(target["pose_m"], dtype=np.float32))
     return np.linalg.norm(cam_t - target_pose[:, 48:51], axis=1) * 1000.0
