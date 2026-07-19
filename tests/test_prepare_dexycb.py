@@ -136,6 +136,30 @@ class PrepareDexYcbTest(unittest.TestCase):
         self.assertEqual(selected, [(frame, "c1")])
         self.assertEqual(diagnostics["invalid_candidates_skipped"], 1)
 
+    def test_sequence_balance_allows_only_exhausted_underfull_episodes(self):
+        script = load_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            raw = Path(tmp)
+            frames = []
+            for sequence in range(2):
+                for frame_index in range(3):
+                    frame = script.SyncFrame("train", "subject", f"seq{sequence}", frame_index, ("c0",), "calib")
+                    frames.append(frame)
+                    directory = raw / frame.subject_id / frame.sequence_id / "c0"
+                    directory.mkdir(parents=True, exist_ok=True)
+                    invalid = sequence == 0 and frame_index > 0
+                    np.savez(
+                        directory / f"labels_{frame_index:06d}.npz",
+                        joint_2d=np.stack((np.linspace(100, 200, 21), np.linspace(100, 200, 21)), axis=-1),
+                        joint_3d=np.full((1, 21, 3), -1 if invalid else 0.1, dtype=np.float32),
+                        pose_m=np.zeros((1, 51), dtype=np.float32) if invalid else np.ones((1, 51), dtype=np.float32),
+                    )
+            selected, diagnostics = script.select_balanced_valid_views(raw, frames, 4, 3)
+        counts = Counter(frame.episode_id for frame, _ in selected)
+        self.assertEqual(sorted(counts.values()), [1, 3])
+        self.assertEqual(diagnostics["underfull_non_exhausted_violations"], [])
+        self.assertEqual(diagnostics["exhausted_episode_selected_counts"]["subject/seq0"], 1)
+
     def test_bbox_has_fixed_margin_and_clipping(self):
         script = load_script()
         joints = np.tile([100.0, 100.0], (21, 1))

@@ -236,12 +236,29 @@ def select_balanced_valid_views(
                     continue
                 break
             if len(selected) == count:
+                episode_counts = {name: int(valid_counts[name]) for name in episodes}
+                maximum = max(episode_counts.values())
+                exhausted = {
+                    name: episode_counts[name]
+                    for name in episodes
+                    if cursor[name] >= len(pools[name])
+                }
+                balance_violations = [
+                    name for name, value in episode_counts.items()
+                    if value < maximum - 1 and name not in exhausted
+                ]
+                if balance_violations:
+                    raise ValueError(f"non-exhausted episodes violate water-fill balance: {balance_violations[:5]}")
                 return selected, {
                     "invalid_candidates_skipped": rejected_invalid,
                     "invalid_candidates_by_reason": dict(sorted(rejected_by_reason.items())),
                     "rejected_candidates": rejected_candidates,
                     "episodes_with_selected_rows": len(valid_counts),
                     "episodes_without_selected_rows": sorted(set(episodes) - set(valid_counts)),
+                    "sequence_balance": "capacity-constrained round-robin water-fill",
+                    "episode_selected_count_min_max": [min(episode_counts.values()), maximum],
+                    "exhausted_episode_selected_counts": dict(sorted(exhausted.items())),
+                    "underfull_non_exhausted_violations": balance_violations,
                 }
         if len(selected) == before:
             break
@@ -621,8 +638,6 @@ def export_all(args) -> Path:
         train_episodes, val_episodes = internal_episode_split(selected, 0.1, 0)
         sequence_counts = Counter(frame.episode_id for frame, _ in selected)
         camera_counts = Counter(serial for _, serial in selected)
-        if max(sequence_counts.values()) - min(sequence_counts.values()) > 1:
-            raise ValueError(f"train27k sequence imbalance: {min(sequence_counts.values())}..{max(sequence_counts.values())}")
         if max(camera_counts.values()) - min(camera_counts.values()) > 1:
             raise ValueError(f"train27k camera imbalance: {min(camera_counts.values())}..{max(camera_counts.values())}")
         sync_ids = [f"{frame.episode_id}/{frame.frame_index:06d}" for frame, _ in selected]
@@ -630,7 +645,7 @@ def export_all(args) -> Path:
             raise ValueError("train27k selected more than one camera for a synchronized frame")
         selection = {
             "name": "dexycb_s1_train27k_v1",
-            "rule": "episode round-robin; stable frame hash; first valid view ordered by globally least-used camera and stable hash tie-break",
+            "rule": "capacity-constrained episode round-robin water-fill; stable frame hash; first valid view ordered by globally least-used camera and stable hash tie-break",
             "seed": args.seed,
             "uses_val_or_test_error": False,
             "validity_rule": "skip official joint_3d=-1 or pose_m=0 no-visible-hand sentinels before fixed-budget selection",
