@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import math
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,6 +36,34 @@ def require_pass(path: Path) -> dict:
     return payload
 
 
+def repo_commit() -> str:
+    return subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=Path(__file__).resolve().parents[1], text=True,
+    ).strip()
+
+
+def verified_checkpoint(checkpoint: Path, rope_mode: str, verification: Path, kind: str) -> dict:
+    train_log = checkpoint.parent / "train_log.json"
+    config = load(train_log)["config"]
+    provenance = config["provenance"]
+    return {
+        "kind": kind,
+        "checkpoint": str(checkpoint),
+        "checkpoint_sha256": sha256(checkpoint),
+        "train_log": str(train_log),
+        "train_log_sha256": sha256(train_log),
+        "training_git_commit": provenance["git_commit"],
+        "training_protocol_sha256": provenance["protocol_sha256"],
+        "training_sample_id_sha256": provenance["sample_id_sha256"],
+        "checkpoint_selection": f"internal validation PA-MPJPE; best_epoch={config['best_epoch']}",
+        "rope_mode": rope_mode,
+        "verification": str(verification),
+        "verification_sha256": sha256(verification),
+        "input_mode": "localized 4x3 WiLoR tokens" + ("; rope disabled" if rope_mode == "zero" else " plus correct normalized five-rope"),
+        "apply_command": "python scripts/rope_refiner/direct_pose_head.py apply --dataset interhand26m --cache <CACHE> --mano-cache <MANO_CACHE> --feature-cache <TOKENS> --checkpoint <CHECKPOINT> --rope-mode " + rope_mode + " --out-dir <OUT>",
+    }
+
+
 def freeze_preval(args: argparse.Namespace) -> Path:
     if args.output.exists():
         raise FileExistsError(args.output)
@@ -42,34 +71,28 @@ def freeze_preval(args: argparse.Namespace) -> Path:
         raise ValueError(f"expected all three frozen normal folds, got {len(args.normal_fold)}")
     require_pass(args.normal_verification)
     require_pass(args.dexycb_verification)
-    methods = {
-        "wilor_base": {"kind": "base", "checkpoint": str(args.wilor_checkpoint), "checkpoint_sha256": sha256(args.wilor_checkpoint)},
-    }
+    methods = {"wilor_base": {
+        "kind": "base", "checkpoint": str(args.wilor_checkpoint), "checkpoint_sha256": sha256(args.wilor_checkpoint),
+        "model_config": str(args.wilor_config), "model_config_sha256": sha256(args.wilor_config),
+        "input_mode": "InterHand RGB with frozen GT-derived per-hand bbox; no rope",
+        "apply_command": "python scripts/eval.py --dataset interhand26m_<split>_oneview --method wilor_original --root <ROOT> --out-dir <OUT> --save-mano-cache",
+    }}
     for index, checkpoint in enumerate(args.normal_fold):
-        methods[f"normal_fold{index}"] = {
-            "kind": "frozen_direct_pose",
-            "checkpoint": str(checkpoint),
-            "checkpoint_sha256": sha256(checkpoint),
-            "input_mode": "localized 4x3 WiLoR tokens plus correct normalized five-rope",
-            "rope_mode": "correct",
-            "verification": str(args.normal_verification),
-        }
+        methods[f"normal_fold{index}"] = verified_checkpoint(
+            checkpoint, "correct", args.normal_verification, "frozen_normal_joint_direct_pose",
+        )
     for name, checkpoint, rope_mode in (
         ("dexycb_rgb_only", args.dexycb_rgb_only, "zero"),
         ("dexycb_rgb_rope", args.dexycb_rgb_rope, "correct"),
     ):
-        methods[name] = {
-            "kind": "verified_external_direct_pose",
-            "checkpoint": str(checkpoint),
-            "checkpoint_sha256": sha256(checkpoint),
-            "input_mode": "localized 4x3 WiLoR tokens" + ("; rope disabled" if rope_mode == "zero" else " plus correct normalized five-rope"),
-            "rope_mode": rope_mode,
-            "verification": str(args.dexycb_verification),
-        }
+        methods[name] = verified_checkpoint(
+            checkpoint, rope_mode, args.dexycb_verification, "verified_dexycb_direct_pose",
+        )
     payload = {
         "status": "frozen_before_interhand_val",
         "dataset": "interhand26m_v1_30fps",
         "frozen_at_utc": datetime.now(timezone.utc).isoformat(),
+        "evaluation_git_commit": repo_commit(),
         "selection_uses_interhand_val_or_test": False,
         "methods": methods,
         "apply_contract": "same InterHand manifest IDs, GT-derived per-side bbox, WiLoR base cache, normalized rope bundle, localized 4x3 tokens; every listed fold reported",
@@ -106,6 +129,23 @@ def matched_checkpoint_configs(rgb: Path, rope: Path) -> tuple[dict, dict]:
     return left, right
 
 
+def interhand_checkpoint(checkpoint: Path, config: dict, rope_mode: str) -> dict:
+    train_log = checkpoint.parent / "train_log.json"
+    return {
+        "kind": "interhand_train27k_direct_pose",
+        "checkpoint": str(checkpoint), "checkpoint_sha256": sha256(checkpoint),
+        "train_log": str(train_log), "train_log_sha256": sha256(train_log),
+        "training_git_commit": config["provenance"]["git_commit"],
+        "training_protocol_sha256": config["provenance"]["protocol_sha256"],
+        "training_sample_id_sha256": config["provenance"]["sample_id_sha256"],
+        "checkpoint_selection": f"internal validation PA-MPJPE; best_epoch={config['best_epoch']}",
+        "training_recipe": config["training_recipe"],
+        "rope_mode": rope_mode,
+        "input_mode": "localized 4x3 WiLoR tokens" + ("; rope disabled" if rope_mode == "zero" else " plus correct normalized five-rope"),
+        "apply_command": "python scripts/rope_refiner/direct_pose_head.py apply --dataset interhand26m --cache <CACHE> --mano-cache <MANO_CACHE> --feature-cache <TOKENS> --checkpoint <CHECKPOINT> --rope-mode " + rope_mode + " --out-dir <OUT>",
+    }
+
+
 def freeze_test(args: argparse.Namespace) -> Path:
     if args.output.exists():
         raise FileExistsError(args.output)
@@ -123,14 +163,8 @@ def freeze_test(args: argparse.Namespace) -> Path:
     rgb, rope = matched_checkpoint_configs(args.rgb_checkpoint, args.rope_checkpoint)
     methods = dict(preval["methods"])
     methods.update({
-        "rgb_only": {
-            "kind": "interhand_train27k_direct_pose", "checkpoint": str(args.rgb_checkpoint),
-            "checkpoint_sha256": sha256(args.rgb_checkpoint), "rope_mode": "zero",
-        },
-        "rgb_rope": {
-            "kind": "interhand_train27k_direct_pose", "checkpoint": str(args.rope_checkpoint),
-            "checkpoint_sha256": sha256(args.rope_checkpoint), "rope_mode": "correct",
-        },
+        "rgb_only": interhand_checkpoint(args.rgb_checkpoint, rgb, "zero"),
+        "rgb_rope": interhand_checkpoint(args.rope_checkpoint, rope, "correct"),
     })
     missing_val = sorted(set(methods) - set(val.get("metrics", {})))
     if missing_val:
@@ -140,6 +174,7 @@ def freeze_test(args: argparse.Namespace) -> Path:
         "dataset": "interhand26m_v1_30fps",
         "project_protocol": "interhand26m_v1_30fps_oneview_v1",
         "frozen_at_utc": datetime.now(timezone.utc).isoformat(),
+        "evaluation_git_commit": repo_commit(),
         "checkpoint_selection": "internal_validation_only",
         "test_score_reads_before_freeze": 0,
         "test_candidates": str(args.test_candidate_protocol),
@@ -271,6 +306,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     signature.add_argument("--output", type=Path, required=True)
     preval = sub.add_parser("freeze-preval")
     preval.add_argument("--wilor-checkpoint", type=Path, required=True)
+    preval.add_argument("--wilor-config", type=Path, required=True)
     preval.add_argument("--normal-fold", type=Path, action="append", required=True)
     preval.add_argument("--normal-verification", type=Path, required=True)
     preval.add_argument("--dexycb-rgb-only", type=Path, required=True)

@@ -98,6 +98,7 @@ def verify_official_source(root: Path) -> dict:
     commit = subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip()
     if commit != OFFICIAL_COMMIT:
         raise ValueError(f"official InterHand source commit {commit} != pinned {OFFICIAL_COMMIT}")
+    subprocess.run(["git", "-C", str(root), "diff", "--ignore-space-at-eol", "--quiet"], check=True)
     dataset = root / "data" / "InterHand2.6M" / "dataset.py"
     transforms = root / "common" / "utils" / "transforms.py"
     convert = root / "tool" / "MANO_world_to_camera" / "convert.py"
@@ -118,6 +119,7 @@ def verify_official_source(root: Path) -> dict:
     return {
         "repository": "https://github.com/facebookresearch/InterHand2.6M",
         "commit": commit,
+        "working_tree_diff_ignoring_platform_line_endings": False,
         "dataset_py_sha256": file_sha256(dataset),
         "transforms_py_sha256": file_sha256(transforms),
         "mano_convert_py_sha256": file_sha256(convert),
