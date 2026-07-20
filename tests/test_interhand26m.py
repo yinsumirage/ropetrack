@@ -48,7 +48,7 @@ class InterHand26MTest(unittest.TestCase):
                 })
                 annotations.append({
                     "image_id": image_id, "hand_type": "interacting", "hand_type_valid": 1,
-                    "joint_valid": [1] * 42,
+                    "joint_valid": [[1]] * 42,
                 })
             (directory / "InterHand2.6M_val_data.json").write_text(json.dumps({"images": images, "annotations": annotations}))
             first, _ = script.select_oneview(root, "val")

@@ -126,7 +126,7 @@ def select_oneview(raw_root: Path, split: str) -> tuple[list[dict], dict]:
                 "episode_id": episode_id(split, image),
                 "hand_type": str(annotation["hand_type"]),
                 "hand_type_valid": int(annotation["hand_type_valid"]),
-                "annotation_joint_valid": list(map(int, annotation["joint_valid"])),
+                "annotation_joint_valid": np.asarray(annotation["joint_valid"], dtype=np.int8).reshape(-1).tolist(),
                 "candidate_sides": sides,
             })
     candidates = [selected[key][1] for key in sorted(selected)]

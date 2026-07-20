@@ -18,6 +18,10 @@ Current benchmark entrypoints:
 - `rope_diagnostics/analyze_rope_errors.py`: rope reliability analysis tables/figures.
 - `rope_diagnostics/visualize_mesh_comparison.py`: mesh/prediction visual check helper.
 - `prepare_ho3d_normal_train.py`: sequence-balanced, train-only HO3D v3 normal export with the evaluation tip convention.
+- `prepare_interhand26m.py`: deterministic InterHand2.6M v1.0 30fps one-view manifests, train27k, and freeze-gated test export.
+- `validate_interhand26m_coordinates.py`: official-source, projection, native-MANO, and WiLoR/DirectPose left-hand gate.
+- `score_interhand26m.py`: side-aware joint/mesh diagnostics and frame-group bootstrap scoring.
+- `interhand26m_protocol.py`: pre-val/test freezes, raw-tree signatures, and final artifact verification.
 - `rope_refiner/direct_pose_head.py`: active experimental DirectPose train/apply CLI over frozen localized tokens and normalized rope.
 
 Status and replacement decisions live in
@@ -30,6 +34,25 @@ Typical usage:
 
 ```powershell
 python scripts\eval.py --dataset ho3d_v2 --method wilor_anyhand --run-eval
+```
+
+InterHand2.6M uses the project one-view protocol documented in
+`../docs/interhand26m-oneview-protocol.md`. Run its 3-4 GB annotation parsing
+on a high-memory CPU Slurm node, not a login node. Before freeze, `test_index`
+uses only data JSON identifiers/input metadata; the separate `test` export
+requires the matching `test_freeze.json`:
+
+```bash
+python scripts/prepare_interhand26m.py \
+  --raw-root /data/wentao/datasets/interhand2.6m_v1_30fps \
+  --output-root /data/wentao/ropetrack/processed/interhand2.6m_v1_30fps/oneview_v1 \
+  --splits train,val,test_index
+
+# Build the aligned DirectPose cache without running a teacher optimizer.
+python scripts/rope_refiner/apply_rope_refinement.py --dataset interhand26m \
+  --rope-labels <ROOT>/rope_labels.jsonl --pred-dir <BASE>/eval_input \
+  --run-meta <BASE>/run_meta.json --mano-cache <BASE>/mano_cache.npz \
+  --out-dir <RUN_SPLIT> --cache-only
 ```
 
 EgoDex uses paired MP4/HDF5 episodes. The source provides per-frame skeletal
