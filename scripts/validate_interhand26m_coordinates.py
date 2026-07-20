@@ -161,24 +161,41 @@ def verify_wilor_directpose_source() -> dict:
 
 def validate_wilor_directpose_roundtrip(records: list[dict], args: argparse.Namespace) -> tuple[dict, np.ndarray]:
     target_ids = [record["row"]["sample_id"] for record in records]
-    source_ids, base_xyz = read_predictions(args.base_prediction, args.base_order)
-    by_prediction = {sample_id: index for index, sample_id in enumerate(source_ids)}
-    if any(sample_id not in by_prediction for sample_id in target_ids):
-        raise ValueError("base prediction misses coordinate-gate samples")
-    base_selected = base_xyz[np.asarray([by_prediction[sample_id] for sample_id in target_ids])]
-    with np.load(args.base_mano_cache) as loaded:
-        cache_ids = loaded["sample_id"].astype(str).tolist()
-        by_cache = {sample_id: index for index, sample_id in enumerate(cache_ids)}
-        poses = np.asarray(loaded["base_hand_pose"])[np.asarray([by_cache[sample_id] for sample_id in target_ids])]
-    reconstructed, _ = mano_predictions(
-        "interhand26m", poses, np.asarray(target_ids), args.base_mano_cache,
-        args.device, args.batch_size, keep_vertices=False,
-    )
-    reconstructed = np.asarray(reconstructed, dtype=np.float32)
+    target_index = {sample_id: index for index, sample_id in enumerate(target_ids)}
+    base_selected = np.full((len(records), 21, 3), np.nan, dtype=np.float32)
+    reconstructed = np.full_like(base_selected, np.nan)
+    artifact_hashes = []
+    for pred_path, order_path, cache_path in args.base_artifact:
+        source_ids, base_xyz = read_predictions(pred_path, order_path)
+        source_index = {sample_id: index for index, sample_id in enumerate(source_ids)}
+        chosen_ids = [sample_id for sample_id in target_ids if sample_id in source_index]
+        if not chosen_ids:
+            continue
+        with np.load(cache_path) as loaded:
+            cache_ids = loaded["sample_id"].astype(str).tolist()
+            by_cache = {sample_id: index for index, sample_id in enumerate(cache_ids)}
+            if any(sample_id not in by_cache for sample_id in chosen_ids):
+                raise ValueError("base MANO cache misses coordinate-gate samples")
+            poses = np.asarray(loaded["base_hand_pose"])[np.asarray([by_cache[sample_id] for sample_id in chosen_ids])]
+        decoded, _ = mano_predictions(
+            "interhand26m", poses, np.asarray(chosen_ids), cache_path,
+            args.device, args.batch_size, keep_vertices=False,
+        )
+        destinations = np.asarray([target_index[sample_id] for sample_id in chosen_ids])
+        base_selected[destinations] = base_xyz[np.asarray([source_index[sample_id] for sample_id in chosen_ids])]
+        reconstructed[destinations] = np.asarray(decoded, dtype=np.float32)
+        artifact_hashes.append({
+            "prediction": {"path": str(pred_path), "sha256": file_sha256(pred_path)},
+            "order": {"path": str(order_path), "sha256": file_sha256(order_path)},
+            "mano_cache": {"path": str(cache_path), "sha256": file_sha256(cache_path)},
+        })
+    if not np.isfinite(base_selected).all() or not np.isfinite(reconstructed).all():
+        raise ValueError("base artifacts do not cover every coordinate-gate sample")
     error_mm = np.linalg.norm(reconstructed - base_selected, axis=2) * 1000.0
     by_side = grouped_stats(error_mm, records, lambda row: row["mano_side"])
     report = {
         "source_sha256": verify_wilor_directpose_source(),
+        "base_artifacts": artifact_hashes,
         "definition": "WiLoR exported model_keypoints versus DirectPose apply-path re-decode from the same cached pose/global/betas/camera translation",
         "error_mm": stats(error_mm),
         "by_side_mm": by_side,
@@ -413,9 +430,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--test-freeze-file", type=Path)
     parser.add_argument("--official-root", type=Path, required=True)
     parser.add_argument("--mano-root", type=Path, required=True)
-    parser.add_argument("--base-prediction", type=Path, required=True)
-    parser.add_argument("--base-order", type=Path, required=True)
-    parser.add_argument("--base-mano-cache", type=Path, required=True)
+    parser.add_argument("--base-artifact", nargs=3, action="append", type=Path, required=True, metavar=("PRED_JSON", "ORDER", "MANO_CACHE"))
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--overlay-count", type=int, default=32)
