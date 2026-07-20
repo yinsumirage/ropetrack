@@ -16,7 +16,7 @@ import numpy as np
 
 DATASET_VERSION = "InterHand2.6M v1.0 30fps"
 PROTOCOL_NAME = "interhand26m_v1_30fps_oneview_v1"
-TRAIN_NAME = "interhand26m_train27k_oneview_v1"
+TRAIN_NAME = "interhand26m_train27k_oneview_v2"
 TRAIN_COUNT = 27_000
 SMOKE_COUNT = 256
 SEED = 20260720
@@ -336,48 +336,113 @@ def group_records(records: list[dict]) -> dict[str, list[dict]]:
 
 def select_group_balanced(records: list[dict], count: int, seed: int) -> list[dict]:
     groups = group_records(records)
-    by_stratum = defaultdict(list)
+    by_episode_stratum = defaultdict(lambda: defaultdict(list))
+    episode_capture = {}
     for frame_group, rows in groups.items():
         row = rows[0]["row"]
+        episode = row["episode_id"]
+        capture = str(row.get("capture_id", episode.split("/Capture", 1)[1].split("/", 1)[0]))
         sides = "paired" if len(rows) == 2 else row.get("mano_side", row["sample_id"].rsplit("/", 1)[-1])
-        stratum = (row["episode_id"], row.get("camera_id", "unknown"), row.get("hand_type", sides), sides)
-        by_stratum[stratum].append((frame_group, rows))
-    pools = {
-        stratum: sorted(rows, key=lambda item: stable_digest(seed, item[0]))
-        for stratum, rows in by_stratum.items()
-    }
+        stratum = (row.get("camera_id", "unknown"), row.get("hand_type", sides), sides)
+        by_episode_stratum[episode][stratum].append((frame_group, rows))
+        episode_capture[episode] = capture
+
+    pools = {}
+    for episode, strata in by_episode_stratum.items():
+        ordered = []
+        strata = {
+            name: sorted(items, key=lambda item: stable_digest(seed, item[0]))
+            for name, items in strata.items()
+        }
+        for index in range(max(map(len, strata.values()))):
+            for name in sorted(strata, key=lambda value: stable_digest(seed, episode, *value)):
+                if index < len(strata[name]):
+                    ordered.append(strata[name][index])
+        pools[episode] = ordered
+
+    by_capture = defaultdict(list)
+    for episode, capture in episode_capture.items():
+        by_capture[capture].append(episode)
     cursors = Counter()
+    capture_counts = Counter()
+    episode_counts = Counter()
+    remaining_sizes = Counter(len(rows) for items in pools.values() for _, rows in items)
     selected = []
 
     def can_fill(remaining: int) -> bool:
-        sizes = [
-            len(pools[name][index][1])
-            for name in pools
-            for index in range(cursors[name], len(pools[name]))
-        ]
-        singles, pairs = sizes.count(1), sizes.count(2)
+        singles, pairs = remaining_sizes[1], remaining_sizes[2]
         minimum_singles = max(0, remaining - 2 * pairs)
         if minimum_singles % 2 != remaining % 2:
             minimum_singles += 1
         return minimum_singles <= min(singles, remaining)
 
     while len(selected) < count:
-        before = len(selected)
-        for stratum in sorted(pools):
-            while cursors[stratum] < len(pools[stratum]):
-                _, rows = pools[stratum][cursors[stratum]]
-                cursors[stratum] += 1
-                if len(selected) + len(rows) > count:
-                    continue
-                if not can_fill(count - len(selected) - len(rows)):
-                    continue
-                selected.extend(rows)
-                break
-            if len(selected) == count:
-                return selected
-        if len(selected) == before:
+        captures = [
+            capture for capture, episodes in by_capture.items()
+            if any(cursors[episode] < len(pools[episode]) for episode in episodes)
+        ]
+        if not captures:
             break
+        capture = min(captures, key=lambda value: (capture_counts[value], stable_digest(seed, "capture", value)))
+        episodes = [episode for episode in by_capture[capture] if cursors[episode] < len(pools[episode])]
+        episode = min(episodes, key=lambda value: (episode_counts[value], stable_digest(seed, "episode", value)))
+        _, rows = pools[episode][cursors[episode]]
+        cursors[episode] += 1
+        remaining_sizes[len(rows)] -= 1
+        remaining = count - len(selected) - len(rows)
+        if remaining < 0 or not can_fill(remaining):
+            continue
+        selected.extend(rows)
+        capture_counts[capture] += len(rows)
+        episode_counts[episode] += len(rows)
+        if len(selected) == count:
+            return selected
     raise ValueError(f"could not select exactly {count} instances while keeping frame groups intact; got {len(selected)}")
+
+
+def capacity_balance_report(records: list[dict], selected: list[dict]) -> dict:
+    def counts(values, key):
+        return Counter(str(record["row"][key]) for record in values)
+
+    available_capture = counts(records, "capture_id")
+    selected_capture = counts(selected, "capture_id")
+    available_episode = counts(records, "episode_id")
+    selected_episode = counts(selected, "episode_id")
+    capture_rows = []
+    for capture in sorted(available_capture, key=int):
+        capture_rows.append({
+            "capture_id": int(capture),
+            "available_samples": available_capture[capture],
+            "selected_samples": selected_capture[capture],
+            "exhausted": selected_capture[capture] == available_capture[capture],
+        })
+    active_capture_counts = [row["selected_samples"] for row in capture_rows if not row["exhausted"]]
+    max_capture = max(active_capture_counts, default=0)
+    capture_violations = [
+        row["capture_id"] for row in capture_rows
+        if not row["exhausted"] and row["selected_samples"] < max_capture - 2
+    ]
+    episode_violations = []
+    for capture in available_capture:
+        episodes = [name for name in available_episode if f"/Capture{capture}/" in name]
+        active = [selected_episode[name] for name in episodes if selected_episode[name] < available_episode[name]]
+        maximum = max(active, default=0)
+        episode_violations.extend(
+            name for name in episodes
+            if selected_episode[name] < available_episode[name] and selected_episode[name] < maximum - 2
+        )
+    return {
+        "definition": "capacity-constrained capture then episode water-fill in single-hand instance counts; tolerance 2 preserves paired frame groups",
+        "available_samples": len(records),
+        "selected_samples": len(selected),
+        "available_episodes": len(available_episode),
+        "selected_episodes": sum(value > 0 for value in selected_episode.values()),
+        "capture": capture_rows,
+        "starved_available_captures": [row["capture_id"] for row in capture_rows if row["available_samples"] and not row["selected_samples"]],
+        "underfull_non_exhausted_captures": capture_violations,
+        "underfull_non_exhausted_episodes": sorted(episode_violations),
+        "status": "PASS" if not capture_violations and not episode_violations and all(row["selected_samples"] for row in capture_rows) else "FAIL",
+    }
 
 
 def internal_episode_split(records: list[dict], fraction: float = 0.1, seed: int = 0) -> dict:
@@ -601,18 +666,22 @@ def export_all(args: argparse.Namespace) -> Path:
         candidates = [row for row in candidates if row["subject_id"] not in held_out_subjects]
         records, diagnostics = materialize(raw_root, "train", candidates, True)
         selected = select_group_balanced(records, args.train_count, args.seed)
+        capacity = capacity_balance_report(records, selected)
+        if capacity["status"] != "PASS":
+            raise ValueError(f"train selection capacity balance failed: {capacity}")
         exports["train"] = selected
         split_report["splits"]["train"] = export_subset(
             raw_root, output_root / "train27k", selected, "training",
             {
                 "name": TRAIN_NAME,
-                "rule": "complete frame-group round-robin across episode/camera/hand-type/side strata after deterministic one-view selection",
+                "rule": "capacity-constrained capture then episode water-fill; camera/hand-type/side strata within episode; complete frame groups",
                 "seed": args.seed,
                 "count": args.train_count,
                 "official_train_only": True,
                 "excluded_subjects_seen_in_official_val_or_test": sorted(subjects["train"] & held_out_subjects),
                 "uses_val_or_test_error": False,
                 "oneview": oneview,
+                "capacity_balance": capacity,
             }, diagnostics,
         )
         smoke = select_group_balanced(

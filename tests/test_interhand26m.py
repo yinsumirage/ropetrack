@@ -89,6 +89,34 @@ class InterHand26MTest(unittest.TestCase):
         self.assertEqual(len(selected), 5)
         self.assertNotIn(1, [count for frame, count in grouped.items() if frame.endswith(("/0", "/1"))])
 
+    def test_group_selection_does_not_starve_late_captures(self):
+        script = load_script("prepare_interhand26m")
+        records = []
+        for capture in (2, 8, 9):
+            for episode_index in range(2):
+                episode = f"train/Capture{capture}/seq{episode_index}"
+                for frame in range(4):
+                    records.append({"row": {
+                        "capture_id": capture,
+                        "frame_group_id": f"{episode}/{frame}",
+                        "episode_id": episode,
+                        "sample_id": f"{episode}/{frame}/right",
+                        "camera_id": f"cam{frame % 2}",
+                        "hand_type": "right",
+                    }})
+        selected = script.select_group_balanced(records, 12, 3)
+        capture_counts = {}
+        episode_counts = {}
+        for record in selected:
+            row = record["row"]
+            capture_counts[row["capture_id"]] = capture_counts.get(row["capture_id"], 0) + 1
+            episode_counts[row["episode_id"]] = episode_counts.get(row["episode_id"], 0) + 1
+        self.assertEqual(capture_counts, {2: 4, 8: 4, 9: 4})
+        self.assertEqual(set(episode_counts.values()), {2})
+        report = script.capacity_balance_report(records, selected)
+        self.assertEqual(report["status"], "PASS")
+        self.assertEqual(report["starved_available_captures"], [])
+
     def test_bbox_is_side_specific_margin_and_clipped(self):
         script = load_script("prepare_interhand26m")
         points = np.tile([100.0, 100.0], (21, 1))
@@ -136,10 +164,12 @@ class InterHand26MTest(unittest.TestCase):
 
     def test_eval_configs_use_external_manifest_and_kinematic_joints(self):
         train = build_run_args("interhand26m_train27k", "wilor_original", split="training")
+        train_v2 = build_run_args("interhand26m_train27k_v2", "wilor_original", split="training")
         val = build_run_args("interhand26m_val_oneview", "wilor_original")
         self.assertEqual(train.adapter, "interhand26m")
         self.assertEqual(train.joint_source, "model_keypoints")
         self.assertEqual(train.root.name, "train27k")
+        self.assertEqual(train_v2.root.name, "train27k")
         self.assertEqual(val.root.name, "val")
 
     def test_frame_bootstrap_resamples_paired_hands_together(self):

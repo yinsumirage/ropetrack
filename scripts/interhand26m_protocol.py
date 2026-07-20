@@ -244,10 +244,12 @@ def verify(args: argparse.Namespace) -> Path:
         for side in row["candidate_sides"]:
             candidate_ids.add(f"{row['split']}/Capture{row['capture_id']}/{row['sequence_id']}/cam{row['camera_id']}/{row['frame_id']:06d}/{side}")
     test_ids = manifest_ids(args.processed_root / "test" / "evaluation.jsonl")
+    capacity = train_protocol.get("selection", {}).get("capacity_balance", {})
     checks = {
         "version_exact": split["dataset"] == "InterHand2.6M v1.0 30fps",
         "protocol_exact": split["project_protocol"] == "interhand26m_v1_30fps_oneview_v1",
         "train27k_exact": train_protocol["num_samples"] == 27000,
+        "train_capture_episode_capacity_balanced": capacity.get("status") == "PASS",
         "train_subjects_exclude_official_val_test_overlap": split["train_subjects_excluded_for_project_subject_disjointness"] == ["0", "1", "12"],
         "all_split_overlaps_zero": split["all_required_overlap_zero"],
         "oneview_frame_rule": all(protocol["distribution"]["frames"] <= protocol["num_samples"] for protocol in (train_protocol, val_protocol, test_protocol)),

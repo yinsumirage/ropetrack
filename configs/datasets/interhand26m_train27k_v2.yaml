@@ -1,0 +1,7 @@
+name: interhand26m_train27k_v2
+adapter: interhand26m
+remote_root: /data/wentao/ropetrack/processed/interhand2.6m_v1_30fps/oneview_v1_train27k_v2/train27k
+protocol:
+  units: m
+  joint_source: model_keypoints
+  benchmark_mode: gt_bbox
