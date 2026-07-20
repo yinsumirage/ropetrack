@@ -210,12 +210,20 @@ def validate_wilor_directpose_roundtrip(records: list[dict], args: argparse.Name
     return report, base_selected
 
 
+def resolve_mano_model_dir(model_root: Path) -> Path:
+    for candidate in (model_root, model_root / "mano"):
+        if all((candidate / name).is_file() for name in ("MANO_RIGHT.pkl", "MANO_LEFT.pkl")):
+            return candidate
+    raise FileNotFoundError(f"MANO_RIGHT.pkl and MANO_LEFT.pkl not found under {model_root}")
+
+
 def load_mano_layers(model_root: Path):
     import smplx
     import torch
 
+    model_dir = resolve_mano_model_dir(model_root)
     layers = {
-        side: smplx.create(str(model_root), "mano", use_pca=False, flat_hand_mean=False, is_rhand=side == "right").eval()
+        side: smplx.MANO(str(model_dir), use_pca=False, flat_hand_mean=False, is_rhand=side == "right").eval()
         for side in ("right", "left")
     }
     if torch.sum(torch.abs(layers["left"].shapedirs[:, 0, :] - layers["right"].shapedirs[:, 0, :])) < 1:

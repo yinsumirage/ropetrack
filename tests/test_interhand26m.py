@@ -151,6 +151,21 @@ class InterHand26MTest(unittest.TestCase):
         self.assertLessEqual(interval[0], 2.0)
         self.assertGreaterEqual(interval[1], 2.0)
 
+    def test_mano_model_dir_accepts_direct_or_smplx_parent_layout(self):
+        gate = load_script("validate_interhand26m_coordinates")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            direct = root / "direct"
+            direct.mkdir()
+            for name in ("MANO_RIGHT.pkl", "MANO_LEFT.pkl"):
+                (direct / name).touch()
+            nested = root / "nested" / "mano"
+            nested.mkdir(parents=True)
+            for name in ("MANO_RIGHT.pkl", "MANO_LEFT.pkl"):
+                (nested / name).touch()
+            self.assertEqual(gate.resolve_mano_model_dir(direct), direct)
+            self.assertEqual(gate.resolve_mano_model_dir(root / "nested"), nested)
+
 
 if __name__ == "__main__":
     unittest.main()
