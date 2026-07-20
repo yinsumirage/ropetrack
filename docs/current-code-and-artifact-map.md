@@ -1,6 +1,6 @@
 # Current Code, Artifact, Branch, And Temporal Map
 
-Status: current as of 2026-07-20. Read this before dated plans. Dated
+Status: current as of 2026-07-21. Read this before dated plans. Dated
 `docs/` files and `experience/` notes remain the evidence trail; they are not
 all active instructions.
 
@@ -30,6 +30,11 @@ all active instructions.
 - **Stopped:** dense K16/K96 history, larger GRU/Transformer variants on the
   same signals, the tested natural-HOT3D visibility/usefulness gates, and the
   global-orientation head.
+- **Next bounded screen:** the five-dataset existing-prediction decomposition
+  localizes the shared camera mismatch to translation, not universal rotation.
+  A minimal 3D `delta cam_t` branch may be tested on validation data while the
+  local DirectPose path stays frozen. Do not revive `delta global_orient`, add
+  scale/betas, tune final/test mixtures, or use LoRA. See 0084.
 - **Sensor boundary:** correct paired GT-derived rope has a causal hand-shape
   effect, but this is ideal simulated geometry. Physical sensor calibration,
   drift, latency, missing channels, and real deployment remain unproved.
@@ -37,7 +42,9 @@ all active instructions.
 The authoritative normal-mixture no-leak record is
 `experience/0079_normal_joint_no_leak_final.md`; the DexYCB S1 first-round
 record is `experience/0081_dexycb_s1_first_round.md`; the InterHand one-view
-record is `experience/0083_interhand26m_oneview_first_round.md`.
+record is `experience/0083_interhand26m_oneview_first_round.md`; and the
+cross-dataset error decomposition is
+`experience/0084_direct_pose_error_decomposition.md`.
 
 ## Active Code Paths
 
@@ -45,13 +52,14 @@ record is `experience/0083_interhand26m_oneview_first_round.md`.
 |---|---|---|---|
 | DirectPose normal training | `prepare_arctic.py` / `prepare_hot3d.py` / `prepare_ho3d_normal_train.py` -> `eval.py --save-mano-cache` -> `extract_feature_cache.py --save-tokens` -> `apply_rope_refinement.py` cache -> `direct_pose_head.py train --extra-bundle ...` | `test_prepare_*`, `test_eval_pipeline.py`, `test_extract_feature_cache.py`, `test_direct_pose_head.py`; 0075-0079 | Active experiment. Bundle/protocol/stitch Slurm glue is intentionally run-local under ignored `.local_checks/` and archived in the HPC run root, not a public package API. |
 | DirectPose apply/score | `direct_pose_head.py apply` -> MANO decode from `apply_rope_refinement.py` -> project `pred.json` -> `score_predictions.py` | `test_direct_pose_head.py`, `test_apply_rope_refinement.py`, `test_score_predictions.py`; 0078-0079 | Active. Perturbation flags are the normalized-rope robustness controls. |
+| Existing-prediction decomposition | `analyze_pose_error_decomposition.py` reads project `pred.json` + explicit sample order, audits IDs, computes the proper nested oracle envelope, group bootstrap, subgroups, and artifact verification | `test_pose_error_decomposition.py`; 0084 | Stable CPU analysis. Raw alignment candidates and legacy parity are kept separate; generated per-sample/results stay in the remote run root. |
 | P0-P2 teacher/release | `apply_rope_refinement.py --mode optimize|student`; `train_alpha_student.py`; core `refine/{actions,alpha_student,analysis,cache,oracle}.py` | release golden check in `RELEASE.md`; broad refiner tests; 0027-0052 | Frozen supported path. Do not replace the release checkpoint with DirectPose outputs. |
 | Dataset adapters/export | `ropetrack/datasets/hand_pose.py`, dataset YAMLs, `prepare_{arctic,egodex,hot3d,dexycb}.py`, `prepare_ho3d_normal_train.py`, `make_hard_images.py`, `make_rope_labels.py` | adapter/export/hard/rope tests; 0018, 0040, 0060-0073, 0079, 0081 | Reusable. Dataset-specific coordinate, side, and tip conventions remain explicit. DexYCB test export requires a frozen recipe. |
 | DexYCB protocol/evaluation | `prepare_dexycb.py` -> `validate_dexycb_coordinates.py` -> standard WiLoR/token/DirectPose paths -> `score_dexycb.py`; `freeze_dexycb_recipe.py` and `verify_dexycb_artifacts.py` enforce one-shot test and raw-tree checks | `test_prepare_dexycb.py`, `test_validate_dexycb_coordinates.py`, `test_score_dexycb.py`, `test_freeze_dexycb_recipe.py`; 0081 | Validated adapter and evaluation path. The 27k RGB-only recipe, full-S1 scale-up, and addition to the frozen joint mixture are stopped. Ideal GT-derived rope remains an oracle/simulated observation. |
 | InterHand one-view protocol/evaluation | `prepare_interhand26m.py` -> `validate_interhand26m_coordinates.py` -> standard WiLoR/token/DirectPose paths -> `score_interhand26m.py`; `interhand26m_protocol.py` enforces freezes/raw checks and train capacity balance | `test_interhand26m.py`, `test_apply_rope_refinement.py`; 0083 | External anchor and corrected train27k-v2 validated. RGB-only is diagnostic only; current ideal-rope recipe, old transfer, full-view/scale-up, and mixture expansion are stopped. Historical train27k-v1 supervision is invalid. |
 | Benchmark export/eval | `eval.py` -> `ropetrack.eval.config` -> `ropetrack.eval.pipeline` -> `HandPredictor` + dataset adapter -> optional `score_predictions.py` | eval/config/pipeline/backend/protocol tests; 0017-0019, 0051 | Supported. `score_sliced_predictions.py` is the hard/rope slice scorer; temporal scoring is separate. |
 | Rope diagnostics/report | `rope_diagnostics/*`, `analyze_alpha_deadzone.py`, `summarize_runs.py`, `plot_report_figures.py`, `make_qualitative_panels.py` | dedicated tests except the thin visualization CLI; 0021-0023, 0029, 0042-0052 | Supported analysis. Generate tables; do not hand-copy metrics. |
-| Global orientation | `direct_global_orient_head.py` reuses `DirectPoseHead` and MANO decode | self-check plus `test_direct_global_orient_head.py`; 0078 | Experimental/rejected. HOT3D root-relative gain worsens camera error and fails ARCTIC transfer. |
+| Global orientation | `direct_global_orient_head.py` reuses `DirectPoseHead` and MANO decode | self-check plus `test_direct_global_orient_head.py`; 0078, 0084 | Experimental/rejected. HOT3D root-relative gain worsens camera error and fails ARCTIC transfer; the cross-dataset decomposition supports translation-only screening, not revival of this head. |
 
 `scripts/README.md` is the command catalog. The table above decides whether a
 command is current, frozen, or experimental.

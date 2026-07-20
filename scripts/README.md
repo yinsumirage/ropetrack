@@ -4,6 +4,7 @@ Current benchmark entrypoints:
 
 - `eval.py`: config-driven benchmark export and eval entrypoint.
 - `score_predictions.py`: PA/mesh/F-score evaluator invoked by `eval.py --run-eval`.
+- `analyze_pose_error_decomposition.py`: existing-prediction camera/root/T/RT/Sim3 decomposition with sample-ID, parity, group-bootstrap, and artifact-verification gates.
 - `score_sliced_predictions.py`: occlusion/rope-residual sliced scorer (details below).
 - `make_hard_images.py`: hard-image split generator.
 - `make_rope_labels.py`: GT fingertip-to-wrist rope label generator.
@@ -35,6 +36,16 @@ Typical usage:
 
 ```powershell
 python scripts\eval.py --dataset ho3d_v2 --method wilor_anyhand --run-eval
+```
+
+The error-decomposition entrypoint is CPU-only and takes run-specific absolute
+paths from an external JSON config, so dataset artifacts are never hardcoded in
+the metric implementation:
+
+```bash
+python scripts/analyze_pose_error_decomposition.py \
+  --config <run-root>/pose_error_decomposition_config.json \
+  --output-root <run-root>
 ```
 
 InterHand2.6M uses the project one-view protocol documented in
