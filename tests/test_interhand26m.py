@@ -51,11 +51,24 @@ class InterHand26MTest(unittest.TestCase):
                     "joint_valid": [[1]] * 42,
                 })
             (directory / "InterHand2.6M_val_data.json").write_text(json.dumps({"images": images, "annotations": annotations}))
-            first, _ = script.select_oneview(root, "val")
-            second, _ = script.select_oneview(root, "val")
+            official_subjects = {("val", 0): "9"}
+            first, _ = script.select_oneview(root, "val", official_subjects)
+            second, _ = script.select_oneview(root, "val", official_subjects)
         self.assertEqual(first, second)
         self.assertEqual(len(first), 1)
         self.assertEqual(first[0]["candidate_sides"], ["right", "left"])
+        self.assertEqual(first[0]["subject_id"], "9")
+
+    def test_subject_txt_capture_mapping_overrides_data_json_subject(self):
+        script = load_script("prepare_interhand26m")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "subject.txt"
+            path.write_text("# subject_id directory gender\n10 test/Capture0 male\n0 train/Capture0 test/Capture4 male\n")
+            assignments = script.subject_assignments(path)
+            splits = script.subject_splits(path)
+        self.assertEqual(assignments[("test", 0)], "10")
+        self.assertEqual(assignments[("test", 4)], "0")
+        self.assertEqual(splits["test"], {"0", "10"})
 
     def test_group_selection_keeps_left_right_pair_and_exact_count(self):
         script = load_script("prepare_interhand26m")

@@ -51,15 +51,26 @@ def annotation_path(raw_root: Path, split: str, kind: str) -> Path:
 
 def subject_splits(path: Path) -> dict[str, set[str]]:
     result = {name: set() for name in ("train", "val", "test")}
+    for (split, _), subject in subject_assignments(path).items():
+        result[split].add(subject)
+    return result
+
+
+def subject_assignments(path: Path) -> dict[tuple[str, int], str]:
+    result = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line or line.startswith("#"):
             continue
         fields = line.split()
         subject = fields[0]
         for location in fields[1:-1]:
-            split = location.split("/", 1)[0]
-            if split in result:
-                result[split].add(subject)
+            split, capture = location.split("/", 1)
+            if split not in {"train", "val", "test"} or not capture.startswith("Capture"):
+                continue
+            key = (split, int(capture.removeprefix("Capture")))
+            if key in result and result[key] != subject:
+                raise ValueError(f"subject.txt assigns {key} to both {result[key]} and {subject}")
+            result[key] = subject
     return result
 
 
@@ -92,7 +103,7 @@ def side_candidates(annotation: dict) -> list[str]:
     ]
 
 
-def select_oneview(raw_root: Path, split: str) -> tuple[list[dict], dict]:
+def select_oneview(raw_root: Path, split: str, capture_subjects: dict[tuple[str, int], str] | None = None) -> tuple[list[dict], dict]:
     path = annotation_path(raw_root, split, "data")
     payload = json.loads(path.read_text(encoding="utf-8"))
     images, annotations = payload["images"], payload["annotations"]
@@ -108,6 +119,8 @@ def select_oneview(raw_root: Path, split: str) -> tuple[list[dict], dict]:
             rejected_hand_type += 1
             continue
         group = frame_group_id(split, image)
+        capture_id = int(image["capture"])
+        official_subject = capture_subjects[(split, capture_id)] if capture_subjects is not None else str(image["subject"])
         camera = str(image["camera"])
         rank = stable_digest(PROTOCOL_NAME, group, camera)
         if group not in selected or rank < selected[group][0]:
@@ -117,8 +130,8 @@ def select_oneview(raw_root: Path, split: str) -> tuple[list[dict], dict]:
                 "image_path": f"images/{split}/{image['file_name']}",
                 "width": int(image["width"]),
                 "height": int(image["height"]),
-                "capture_id": int(image["capture"]),
-                "subject_id": str(image["subject"]),
+                "capture_id": capture_id,
+                "subject_id": official_subject,
                 "sequence_id": str(image["seq_name"]),
                 "camera_id": camera,
                 "frame_id": int(image["frame_idx"]),
@@ -143,6 +156,7 @@ def select_oneview(raw_root: Path, split: str) -> tuple[list[dict], dict]:
         "camera_counts": dict(sorted(Counter(row["camera_id"] for row in candidates).items())),
         "selection": "minimum SHA256(protocol, frame_group_id, camera_id) among available cameras",
         "selection_uses_model_error_or_GT_values": False,
+        "subject_source": "annotations/subject.txt mapping from (split, capture); data JSON image.subject is not used as project subject_id",
     }
     del payload, images, annotations, selected
     gc.collect()
@@ -560,6 +574,7 @@ def export_all(args: argparse.Namespace) -> Path:
     if unknown:
         raise ValueError(f"unknown splits: {sorted(unknown)}")
     subjects = subject_splits(raw_root / "annotations" / "subject.txt")
+    capture_subjects = subject_assignments(raw_root / "annotations" / "subject.txt")
     held_out_subjects = subjects["val"] | subjects["test"]
     exports: dict[str, list[dict]] = {}
     split_report_path = output_root / "split_report.json"
@@ -571,10 +586,10 @@ def export_all(args: argparse.Namespace) -> Path:
         "splits": {},
     }
     if "test_index" in requested:
-        candidates, diagnostics = select_oneview(raw_root, "test")
+        candidates, diagnostics = select_oneview(raw_root, "test", capture_subjects)
         split_report["splits"]["test_index"] = write_test_candidates(output_root, candidates, diagnostics)
     if "val" in requested:
-        candidates, oneview = select_oneview(raw_root, "val")
+        candidates, oneview = select_oneview(raw_root, "val", capture_subjects)
         records, diagnostics = materialize(raw_root, "val", candidates, False)
         exports["val"] = records
         split_report["splits"]["val"] = export_subset(
@@ -582,7 +597,7 @@ def export_all(args: argparse.Namespace) -> Path:
             {"name": f"{PROTOCOL_NAME}_val", "oneview": oneview, "uses_model_error": False}, diagnostics,
         )
     if "train" in requested:
-        candidates, oneview = select_oneview(raw_root, "train")
+        candidates, oneview = select_oneview(raw_root, "train", capture_subjects)
         candidates = [row for row in candidates if row["subject_id"] not in held_out_subjects]
         records, diagnostics = materialize(raw_root, "train", candidates, True)
         selected = select_group_balanced(records, args.train_count, args.seed)
