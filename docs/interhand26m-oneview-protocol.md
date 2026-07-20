@@ -1,7 +1,8 @@
 # InterHand2.6M v1.0 30fps One-View Protocol
 
-Status: project protocol. This is a RopeTrack external anchor and training
-protocol, not the official all-view InterHand leaderboard protocol.
+Status: validated project external anchor and corrected train27k-v2 protocol.
+This is not the official all-view InterHand leaderboard protocol. The first
+train27k-v1 selector is invalid because it starved Capture9; see 0083.
 
 ## Data boundary
 
@@ -75,12 +76,20 @@ compact GT references.
 
 ## Train27k and internal validation
 
-`interhand26m_train27k_oneview_v1` contains exactly 27,000 official-train
+`interhand26m_train27k_oneview_v2` contains exactly 27,000 official-train
 single-hand instances with complete 21-joint and native-MANO GT. Complete
-frame groups are selected by deterministic round robin across
-episode/camera/hand-type/side strata. Subjects 0, 1, and 12 are excluded from
-the project train subset because `subject.txt` also assigns them to official
-test captures; this makes project train/val/test subject overlap zero.
+frame groups are selected by capacity-constrained capture-then-episode
+water-fill, with deterministic camera/hand-type/side strata inside each
+episode. Every available capture is represented; non-exhausted captures differ
+by at most one sample and low-capacity captures are proven exhausted. Subjects
+0, 1, and 12 are excluded because `subject.txt` also assigns them to official
+test captures; sample/frame/sequence/subject overlap is zero.
+
+The historical v1 selector sorted all strata lexicographically and returned as
+soon as it reached 27,000. It selected zero rows from Capture9 despite 6,554
+available instances. Its supervised checkpoints and test scores are retained
+only as diagnostics. The external anchor and frozen external-model scores do
+not depend on that train selector and remain valid.
 
 Internal validation selects complete episodes with NumPy seed 0 and a fixed
 10% ceiling. Both DirectPose variants share the same IDs, bbox, WiLoR MANO
@@ -114,3 +123,17 @@ trusted absolute two-hand root estimate.
 
 Ideal five-rope input is derived from GT geometry. It is not no-GT RGB
 inference and is not evidence for a validated physical rope sensor.
+
+## First-round result
+
+On 19,341 frozen official-val samples, corrected v2 RGB-only changes WiLoR by
+`-0.384` mm PA (95% CI `[-0.398,-0.370]`) and `-0.359` mm root-relative, but
+camera/MPVPE worsen by `+0.721/+0.651` mm. Adding ideal rope to the matched
+head changes RGB-only by `+0.283` PA, `-0.423` root-relative,
+`+1.138` camera, and `+1.281` MPVPE mm; every interval excludes zero.
+
+Use the adapter and external anchor now. Continue RGB-only only for an
+internal/official-val camera-frame tradeoff diagnosis. Stop this rope recipe,
+old external transfer, full-view, larger train subsets, and mixture expansion.
+The corrected v2 models were not rerun on test because the one-shot v1 test had
+already been observed before the metadata-only selector audit.

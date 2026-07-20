@@ -43,10 +43,12 @@ uses only data JSON identifiers/input metadata; the separate `test` export
 requires the matching `test_freeze.json`:
 
 ```bash
+# Current corrected capture/sequence-balanced train subset. The historical
+# oneview_v1/train27k directory is preserved but invalid for supervision.
 python scripts/prepare_interhand26m.py \
   --raw-root /data/wentao/datasets/interhand2.6m_v1_30fps \
-  --output-root /data/wentao/ropetrack/processed/interhand2.6m_v1_30fps/oneview_v1 \
-  --splits train,val,test_index
+  --output-root /data/wentao/ropetrack/processed/interhand2.6m_v1_30fps/oneview_v1_train27k_v2 \
+  --splits train
 
 # Build the aligned DirectPose cache without running a teacher optimizer.
 python scripts/rope_refiner/apply_rope_refinement.py --dataset interhand26m \

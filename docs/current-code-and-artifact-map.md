@@ -20,6 +20,13 @@ all active instructions.
   stopped because root-relative test error clearly regresses; GT-derived
   ideal rope has a large paired effect, but does not justify full-S1 scaling,
   mixture promotion, or a physical-sensor claim. See 0081.
+- **InterHand2.6M v1.0 30fps:** the one-view adapter, coordinate/left-right
+  gates, frozen external anchor, and corrected capture/sequence-balanced
+  train27k-v2 are validated. Corrected RGB-only improves official-val PA/root
+  but worsens camera/mesh; ideal rope further worsens PA/camera/mesh. Stop old
+  transfer, the rope recipe, full-view, scale-up, and mixture expansion. The
+  original train27k-v1 supervision is invalid because Capture9 was starved;
+  corrected v2 was not rerun on the already-observed one-shot test. See 0083.
 - **Stopped:** dense K16/K96 history, larger GRU/Transformer variants on the
   same signals, the tested natural-HOT3D visibility/usefulness gates, and the
   global-orientation head.
@@ -29,7 +36,8 @@ all active instructions.
 
 The authoritative normal-mixture no-leak record is
 `experience/0079_normal_joint_no_leak_final.md`; the DexYCB S1 first-round
-record is `experience/0081_dexycb_s1_first_round.md`.
+record is `experience/0081_dexycb_s1_first_round.md`; the InterHand one-view
+record is `experience/0083_interhand26m_oneview_first_round.md`.
 
 ## Active Code Paths
 
@@ -40,6 +48,7 @@ record is `experience/0081_dexycb_s1_first_round.md`.
 | P0-P2 teacher/release | `apply_rope_refinement.py --mode optimize|student`; `train_alpha_student.py`; core `refine/{actions,alpha_student,analysis,cache,oracle}.py` | release golden check in `RELEASE.md`; broad refiner tests; 0027-0052 | Frozen supported path. Do not replace the release checkpoint with DirectPose outputs. |
 | Dataset adapters/export | `ropetrack/datasets/hand_pose.py`, dataset YAMLs, `prepare_{arctic,egodex,hot3d,dexycb}.py`, `prepare_ho3d_normal_train.py`, `make_hard_images.py`, `make_rope_labels.py` | adapter/export/hard/rope tests; 0018, 0040, 0060-0073, 0079, 0081 | Reusable. Dataset-specific coordinate, side, and tip conventions remain explicit. DexYCB test export requires a frozen recipe. |
 | DexYCB protocol/evaluation | `prepare_dexycb.py` -> `validate_dexycb_coordinates.py` -> standard WiLoR/token/DirectPose paths -> `score_dexycb.py`; `freeze_dexycb_recipe.py` and `verify_dexycb_artifacts.py` enforce one-shot test and raw-tree checks | `test_prepare_dexycb.py`, `test_validate_dexycb_coordinates.py`, `test_score_dexycb.py`, `test_freeze_dexycb_recipe.py`; 0081 | Validated adapter and evaluation path. The 27k RGB-only recipe, full-S1 scale-up, and addition to the frozen joint mixture are stopped. Ideal GT-derived rope remains an oracle/simulated observation. |
+| InterHand one-view protocol/evaluation | `prepare_interhand26m.py` -> `validate_interhand26m_coordinates.py` -> standard WiLoR/token/DirectPose paths -> `score_interhand26m.py`; `interhand26m_protocol.py` enforces freezes/raw checks and train capacity balance | `test_interhand26m.py`, `test_apply_rope_refinement.py`; 0083 | External anchor and corrected train27k-v2 validated. RGB-only is diagnostic only; current ideal-rope recipe, old transfer, full-view/scale-up, and mixture expansion are stopped. Historical train27k-v1 supervision is invalid. |
 | Benchmark export/eval | `eval.py` -> `ropetrack.eval.config` -> `ropetrack.eval.pipeline` -> `HandPredictor` + dataset adapter -> optional `score_predictions.py` | eval/config/pipeline/backend/protocol tests; 0017-0019, 0051 | Supported. `score_sliced_predictions.py` is the hard/rope slice scorer; temporal scoring is separate. |
 | Rope diagnostics/report | `rope_diagnostics/*`, `analyze_alpha_deadzone.py`, `summarize_runs.py`, `plot_report_figures.py`, `make_qualitative_panels.py` | dedicated tests except the thin visualization CLI; 0021-0023, 0029, 0042-0052 | Supported analysis. Generate tables; do not hand-copy metrics. |
 | Global orientation | `direct_global_orient_head.py` reuses `DirectPoseHead` and MANO decode | self-check plus `test_direct_global_orient_head.py`; 0078 | Experimental/rejected. HOT3D root-relative gain worsens camera error and fails ARCTIC transfer. |
