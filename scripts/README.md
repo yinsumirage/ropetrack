@@ -21,6 +21,7 @@ Current benchmark entrypoints:
 - `prepare_interhand26m.py`: deterministic InterHand2.6M v1.0 30fps one-view manifests, train27k, and freeze-gated test export.
 - `validate_interhand26m_coordinates.py`: official-source, projection, native-MANO, and WiLoR/DirectPose left-hand gate.
 - `score_interhand26m.py`: side-aware joint/mesh diagnostics and frame-group bootstrap scoring.
+- `analyze_interhand26m_rope.py`: post-hoc population, paired-hand overlap, rope-residual, MANO-fit, per-finger, and qualitative diagnostic figures; never a checkpoint selector.
 - `interhand26m_protocol.py`: pre-val/test freezes, raw-tree signatures, and final artifact verification.
 - `rope_refiner/direct_pose_head.py`: active experimental DirectPose train/apply CLI over frozen localized tokens and normalized rope.
 

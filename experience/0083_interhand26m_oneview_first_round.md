@@ -301,3 +301,107 @@ The final local RopeTrack-owned suite passes: **443 passed, 4 existing
 warnings**. `git diff --check` passes. The worktree also contains an unrelated
 parallel EgoVerse experience/index change, which is preserved and excluded
 from this task's commits.
+
+## 2026-07-21 follow-up: rope-loss diagnosis and readable population slices
+
+### DirectPose output clarification
+
+The active head still modifies all 15 articulated MANO hand joints. Each
+joint is a three-value axis-angle rotation, so the output is 45 scalar pose
+residuals. The implementation groups these as five finger queries. Each query
+receives that finger's three joint rotations (`3 x 3 = 9` values), four rope
+features (`base`, `measured`, `measured-base`, `valid`), and a five-value
+finger identity. It cross-attends to the frozen 4x3 image tokens and emits
+nine bounded residuals. Thus the output is **9 per finger, 45 total**, not nine
+for the whole hand. Betas, global orientation, and crop translation remain
+the frozen WiLoR values. This differs from the older P2 student, whose output
+was 15 action coefficients rather than a full 45D DirectPose residual.
+
+### CPU post-hoc data and failure-region analysis
+
+Run root:
+`/data/wentao/ropetrack/runs/direct_pose_interhand26m_diagnostics_20260721`.
+The analysis reads only the already-scored official-val artifacts; it does not
+select a checkpoint and never accesses test.
+
+- train27k: 27,000 samples / 25,001 frames / 2,076 episodes / 18 subjects /
+  76 cameras;
+- official val: 19,341 samples / 15,641 frames / 11 episodes / one subject /
+  139 cameras;
+- official-val bboxes are visibly larger and its out-of-frame-joint tail is
+  much heavier than train/internal-val;
+- 7,400 val samples belong to complete left/right pairs. Paired bbox-IoU
+  median is 0.260 and P95 is 0.631. The median fraction of the other hand's
+  joints inside the target crop is 0.476 and P75 is 0.810.
+
+For the historical `RGB+rope+rope-loss - RGB-only` official-val predictions:
+
+- increasing two-hand bbox overlap does **not** increase PA harm. The paired
+  bins move from `+0.687` mm at IoU `<=0.01` to `-0.080` mm at IoU `>0.30`;
+  the last CI `[-0.165,+0.003]` is effectively neutral;
+- when 25-75% of the other hand's joints fall inside the target crop, PA
+  improves by `-0.285/-0.206` mm. Extreme `>75%` occupancy regresses by
+  `+0.306` mm. Two-hand contamination is therefore conditional, not the main
+  average failure;
+- rope-residual quintiles all improve root-relative error, but Q4/Q5 worsen PA
+  by `+0.623/+0.439` mm. PA harm therefore concentrates in larger-disagreement
+  cases, consistent with but not alone proving over-correction;
+- PA harm is largest on thumb and ring. Interacting middle-finger joints are
+  the only per-finger row with a small mean improvement (`-0.029` mm);
+- native-MANO root-relative joint mismatch is 5.731 mm mean / 8.720 mm P95,
+  but rope harm is not monotonic with this mismatch. Annotation/MANO
+  inconsistency is not supported as the sole explanation.
+
+The figures and machine-readable report are under `analysis/`:
+`data_distribution.png`, `rope_effect_buckets.png`,
+`per_finger_effect.png`, `qualitative_extremes.jpg`, `report.json`, and
+`report.md`.
+
+### Minimal input-versus-loss ablation
+
+The follow-up kept the exact corrected train27k IDs, episode split, frozen
+WiLoR cache, 4x3 tokens, h128 head, seed, optimizer, epoch budget, and
+minimum-internal-PA checkpoint rule. It added only two cells with
+`rope_weight=0`: correct rope input and shuffled rope input.
+
+| Internal-val cell | Rope input | Rope loss weight | Best epoch | PA mm | Root-relative mm |
+|---|---|---:|---:|---:|---:|
+| prior RGB-only | zero | 0.1 (inactive because validity is zero) | 15 | 5.640 | 10.883 |
+| prior RGB+rope | correct | 0.1 | 15 | 5.990 | 11.419 |
+| correct input, no rope loss | correct | 0.0 | 27 | **5.400** | **10.630** |
+| shuffled input, no rope loss | shuffled within train/val | 0.0 | 23 | 5.619 | 10.753 |
+
+Removing the rope loss while retaining correct rope improves PA/root by
+`-0.240/-0.253` mm relative to RGB-only and by `-0.219/-0.123` mm relative to
+the matched shuffled-input control. Relative to the old correct-input cell,
+removing the rope loss improves PA/root by `-0.589/-0.790` mm. This one-seed
+internal screen supports a conflict in the auxiliary rope-consistency
+objective, not the claim that InterHand rope carries no information.
+
+Checkpoint SHA256:
+
+- correct input, no rope loss:
+  `d0903f09ff5fbe52b202d3a6e2f4ace3fb32554fe667115004de47ea69dc7103`;
+- shuffled input, no rope loss:
+  `6f85493631ca9e614ae3bd600db3bd2e8a90694c19f3795b00d465617dd87f4e`.
+
+### Follow-up decision and operations
+
+**Stop the current `rope_weight=0.1` auxiliary objective.** Keep the head and
+correct rope input unchanged for now; no larger head, fusion rewrite, larger
+train subset, mixture expansion, official-test rerun, or full-view run is
+justified by this screen. The input-only result is promising but remains a
+single-seed internal-validation diagnostic. A promotion attempt would first
+need a seed repeat and a predeclared fresh external boundary, not adaptive
+reuse of the already-observed InterHand test.
+
+GPU array `189589_0-1` completed `0:0`. CPU analysis `189590` failed only
+because the first diagnostic loader incorrectly treated the five-element
+global `finger_order` field as a sample array; the shared sample-axis check and
+regression test fixed it. CPU analyses `189597`, `189609`, and final figure
+regeneration `189624` completed `0:0`. Verifier `189613` passed the
+intermediate report; final verifier `189625` is the authoritative follow-up
+verification and completed `0:0` with status `PASS`. Its final analysis-report
+SHA256 is `6ddd0482cef89c6ba6e60d131e5e9ccc64a61d37bb3679fdd248777773bbd689`.
+Local RopeTrack tests now pass **446 tests with the same four existing
+warnings**, and `git diff --check` passes.
