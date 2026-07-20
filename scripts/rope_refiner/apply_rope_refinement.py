@@ -417,7 +417,7 @@ def optimize_alpha(
                 denom = weight.sum().clamp_min(1.0)
                 data_loss = (diff * diff).sum() / denom
             else:
-                if canonical_dataset(dataset) in {"arctic", "hot3d"}:
+                if canonical_dataset(dataset) in {"arctic", "hot3d", "interhand26m"}:
                     mirror = torch.ones((end - start, 1, 3), device=device, dtype=out.joints.dtype)
                     mirror[:, 0, 0] = torch.where(is_right[start:end], 1.0, -1.0)
                     pred_joints = torch_eval_points_from_model(
@@ -480,7 +480,7 @@ def mano_predictions(
                     joints = joints.copy()
                     joints[:, 0] *= -1.0
                 verts_eval = eval_points_from_model(dataset, verts, trans, "m")
-                if canonical_dataset(dataset) in {"arctic", "hot3d"}:
+                if canonical_dataset(dataset) in {"arctic", "hot3d", "interhand26m"}:
                     xyz_rows.append(eval_points_from_model(dataset, joints, trans, "m").tolist())
                 else:
                     xyz_rows.append(joints_from_vertices(dataset, verts_eval, j_regressor).tolist())
@@ -558,7 +558,7 @@ def _ema_decay(value: str) -> float:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Apply a cached rope refiner or rope/oracle optimizer to eval MANO cache.")
-    parser.add_argument("--dataset", choices=["freihand", "ho3d", "egodex", "arctic", "hot3d"], default="freihand")
+    parser.add_argument("--dataset", choices=["freihand", "ho3d", "egodex", "arctic", "hot3d", "interhand26m"], default="freihand")
     parser.add_argument("--rope-labels", type=Path, required=True)
     parser.add_argument("--pred-dir", type=Path, required=True)
     parser.add_argument("--run-meta", type=Path, required=True)
@@ -611,6 +611,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--gt-xyz", type=Path, default=None,
                         help="GT xyz json ([N, 21, 3] eval-frame meters, same row order as run_meta sample_order). Required for oracle objectives.")
     parser.add_argument("--out-dir", type=Path, required=True)
+    parser.add_argument("--cache-only", action="store_true", help="Build refiner_eval_cache.npz and stop.")
     parser.add_argument(
         "--joint-only-output",
         action="store_true",
@@ -648,6 +649,8 @@ def main(argv: list[str] | None = None) -> Path:
 
     cache_path = args.out_dir / "refiner_eval_cache.npz"
     build_inference_cache(args.dataset, args.rope_labels, args.pred_dir, args.run_meta, args.mano_cache, cache_path)
+    if args.cache_only:
+        return cache_path
     with np.load(cache_path) as loaded:
         cache = {key: loaded[key] for key in loaded.files}
     if args.shuffle_rope_seed is not None:

@@ -85,8 +85,8 @@ def iter_hand_pose_samples(adapter: str, root: Path, limit: int | None, split: s
         raise ValueError(f"unsupported HO3D split: {split}")
     if adapter in {"egodex", "arctic", "hot3d"}:
         return iter_egodex_samples(root, limit, split)
-    if adapter == "dexycb":
-        return iter_dexycb_samples(root, limit, split)
+    if adapter in {"dexycb", "interhand26m"}:
+        return iter_external_manifest_samples(root, limit, split)
     raise ValueError(f"unsupported eval adapter: {adapter}")
 
 
@@ -95,9 +95,13 @@ def iter_egodex_samples(root: Path, limit: int | None, split: str = "evaluation"
 
 
 def iter_dexycb_samples(root: Path, limit: int | None, split: str = "evaluation") -> Iterable[EgoDexSample]:
+    return iter_external_manifest_samples(root, limit, split)
+
+
+def iter_external_manifest_samples(root: Path, limit: int | None, split: str = "evaluation") -> Iterable[EgoDexSample]:
     protocol_path = root / "protocol.json"
     if not protocol_path.exists():
-        raise FileNotFoundError(f"DexYCB protocol missing: {protocol_path}")
+        raise FileNotFoundError(f"external hand-pose protocol missing: {protocol_path}")
     protocol = json.loads(protocol_path.read_text(encoding="utf-8"))
     return iter_manifest_samples(root, Path(protocol["raw_root"]), limit, split)
 
@@ -368,7 +372,7 @@ def load_gt_bbox_candidates(adapter: str, samples: list) -> list[BBoxItem]:
                 "gt_bbox",
             ))
         return candidates
-    if adapter in {"egodex", "arctic", "hot3d", "dexycb"}:
+    if adapter in {"egodex", "arctic", "hot3d", "dexycb", "interhand26m"}:
         return [
             BBoxItem(idx, 0, sample, sample.bbox_xyxy, sample.is_right, 1.0, "gt_bbox")
             for idx, sample in enumerate(samples)

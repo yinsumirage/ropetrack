@@ -37,7 +37,7 @@ ORACLE_OBJECTIVES = ("oracle_tip", "oracle_chain")
 def oracle_joint_ids(dataset: str, objective: str) -> list[int]:
     ds = canonical_dataset(dataset)
     if objective == "oracle_tip":
-        return list(FREIHAND_TIP_JOINT_IDS if ds in {"freihand", "egodex", "arctic", "hot3d", "dexycb"} else HO3D_TIP_JOINT_IDS)
+        return list(FREIHAND_TIP_JOINT_IDS if ds in {"freihand", "egodex", "arctic", "hot3d", "dexycb", "interhand26m"} else HO3D_TIP_JOINT_IDS)
     if objective == "oracle_chain":
         return [joint for joint in range(21) if joint != WRIST_JOINT_ID]
     raise ValueError(f"unsupported oracle objective: {objective}")
@@ -62,7 +62,7 @@ def torch_eval_joints_from_vertices(dataset: str, verts_eval: torch.Tensor, j_re
     """
     joints16 = torch.einsum("jv,bvc->bjc", j_regressor, verts_eval)
     ds = canonical_dataset(dataset)
-    if ds in {"arctic", "hot3d"}:
+    if ds in {"arctic", "hot3d", "interhand26m"}:
         raise ValueError(f"{ds.upper()} joints require MANO kinematic model_keypoints")
     if ds == "dexycb":
         tip_ids = DEXYCB_TIP_VERTEX_IDS

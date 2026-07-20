@@ -1,0 +1,7 @@
+name: interhand26m_test_oneview
+adapter: interhand26m
+remote_root: /data/wentao/ropetrack/processed/interhand2.6m_v1_30fps/oneview_v1/test
+protocol:
+  units: m
+  joint_source: model_keypoints
+  benchmark_mode: gt_bbox

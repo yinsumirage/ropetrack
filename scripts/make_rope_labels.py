@@ -112,7 +112,7 @@ def iter_rope_items(dataset: str, root: Path, limit: int | None, sample_order_fi
     name = canonical_rope_dataset(dataset)
     if name == "freihand":
         return freihand_items(root, limit, split=split)
-    if name in {"egodex", "arctic", "hot3d", "dexycb"}:
+    if name in {"egodex", "arctic", "hot3d", "dexycb", "interhand26m"}:
         return manifest_items(name, root, limit, split)
     if split == "evaluation":
         return ho3d_items(root, limit, sample_order_file)
@@ -200,7 +200,7 @@ def write_visualization(path: Path, dataset: str, item: dict, row: dict) -> None
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate fingertip-to-wrist rope labels from evaluation GT joints.")
-    parser.add_argument("--dataset", choices=["freihand", "ho3d", "egodex", "arctic", "hot3d", "dexycb"], required=True)
+    parser.add_argument("--dataset", choices=["freihand", "ho3d", "egodex", "arctic", "hot3d", "dexycb", "interhand26m"], required=True)
     parser.add_argument("--input-root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--limit", type=int, default=0, help="Number of samples; <=0 means all.")

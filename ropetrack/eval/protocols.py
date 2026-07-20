@@ -18,6 +18,8 @@ def canonical_dataset(dataset: str) -> str:
         return "ho3d"
     if name == "freihand":
         return "freihand"
+    if name in {"interhand", "interhand2.6m", "interhand26m"}:
+        return "interhand26m"
     if name in {"egodex", "arctic", "hot3d", "dexycb"}:
         return name
     raise ValueError(f"unsupported dataset: {dataset}")
@@ -40,7 +42,7 @@ def joints_from_vertices(dataset: str, vertices, j_regressor) -> np.ndarray:
     verts = np.asarray(vertices, dtype=np.float32)
     joints16 = np.asarray(j_regressor, dtype=np.float32) @ verts
     ds = canonical_dataset(dataset)
-    if ds in {"arctic", "hot3d"}:
+    if ds in {"arctic", "hot3d", "interhand26m"}:
         raise ValueError(f"{ds.upper()} joints require MANO kinematic model_keypoints")
     if ds in {"freihand", "egodex", "dexycb"}:
         tip_ids = DEXYCB_TIP_VERTEX_IDS if ds == "dexycb" else FREIHAND_TIP_VERTEX_IDS

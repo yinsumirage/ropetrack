@@ -361,6 +361,10 @@ class ParseArgsTest(unittest.TestCase):
         self.assertIsNone(args.gate_residual_threshold)
         self.assertIsNone(args.shuffle_rope_seed)
 
+    def test_cache_only_is_explicit(self):
+        script = load_apply_script()
+        self.assertTrue(script.parse_args(self.REQUIRED + ["--cache-only"]).cache_only)
+
     def test_pose45_and_bias_scale_cli_parse(self):
         script = load_apply_script()
         args = script.parse_args(self.REQUIRED + [

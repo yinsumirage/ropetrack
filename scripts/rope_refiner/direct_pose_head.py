@@ -422,6 +422,12 @@ def train(args) -> Path:
         "token_dim": token_dim, "hidden_dim": args.hidden_dim, "max_delta": args.max_delta,
         "rope_mode": args.rope_mode, "weights": weights, "best_epoch": best_epoch,
         "best_val_pa_mpjpe_mm": best, "num_train": int(len(train_idx)), "num_val": int(len(val_idx)),
+        "training_recipe": {
+            "dataset": args.dataset, "seed": args.seed, "batch_size": args.batch_size,
+            "optimizer": "AdamW", "lr": args.lr, "weight_decay": args.weight_decay,
+            "max_epochs": args.max_epochs, "patience": args.patience, "min_delta": args.min_delta,
+            "val_fraction": args.val_fraction, "checkpoint_selection": "minimum internal-validation PA-MPJPE",
+        },
         "provenance": training_provenance(args, arrays, train_idx, val_idx),
     }
     args.out_dir.mkdir(parents=True, exist_ok=True)
