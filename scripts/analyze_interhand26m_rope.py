@@ -162,6 +162,15 @@ def fixed_labels(values: np.ndarray, edges: list[float], prefix: str) -> np.ndar
     return labels
 
 
+def quantile_representatives(indices: np.ndarray, values: np.ndarray, quantiles=(0.1, 0.5, 0.9)) -> list[int]:
+    """Return deterministic observed samples nearest requested rank quantiles."""
+    ordered = np.asarray(indices)[np.argsort(np.asarray(values)[indices], kind="stable")]
+    if not len(ordered):
+        return []
+    positions = np.rint(np.asarray(quantiles) * (len(ordered) - 1)).astype(int)
+    return ordered[positions].tolist()
+
+
 def bucket_report(
     labels: np.ndarray, rows: list[dict], candidate: dict[str, np.ndarray], reference: dict[str, np.ndarray], iterations: int, seed: int
 ) -> list[dict]:
@@ -354,6 +363,75 @@ def qualitative_grid(
     return ids
 
 
+def qualitative_metric_boundary(
+    rows: list[dict], gt: np.ndarray, rgb: np.ndarray, rope: np.ndarray,
+    metrics: dict[str, dict[str, np.ndarray]], raw_root: Path, output: Path,
+) -> list[str]:
+    """Show why low PA error can coexist with visibly wrong camera placement."""
+    from PIL import Image, ImageDraw, ImageFont
+
+    delta = metrics["rope"]["pa_mm"] - metrics["rgb"]["pa_mm"]
+    selected = []
+    for interacting in (False, True):
+        indices = np.flatnonzero(np.asarray([
+            bool(row["is_interacting"]) == interacting
+            and row["projected_in_frame_joint_count"] == 21
+            and sum(row["joint_valid"]) == 21
+            for row in rows
+        ]) & np.isfinite(delta))
+        selected.extend(quantile_representatives(indices, delta))
+
+    groups = defaultdict(list)
+    for index, row in enumerate(rows):
+        groups[row["frame_group_id"]].append(index)
+    paired = {index: next((other for other in indices if other != index), None)
+              for indices in groups.values() for index in indices if len(indices) == 2}
+    try:
+        font = ImageFont.truetype("DejaVuSans.ttf", 13)
+    except OSError:
+        font = ImageFont.load_default()
+
+    panels = []
+    for index in selected:
+        row = rows[index]
+        image = Image.open(raw_root / row["image_path"]).convert("RGB")
+        aligned_rgb = procrustes(rgb[index], gt[index])
+        aligned_rope = procrustes(rope[index], gt[index])
+        for mode, rgb_points, rope_points in (
+            ("RAW CAMERA (real placement)", rgb[index], rope[index]),
+            ("PA-ALIGNED (diagnostic only)", aligned_rgb, aligned_rope),
+        ):
+            panel = Image.new("RGB", (image.width, image.height + 62), "white")
+            panel.paste(image, (0, 62))
+            draw = ImageDraw.Draw(panel)
+            draw.text((4, 3), f"{'interacting' if row['is_interacting'] else 'single'} | {mode}", fill="black", font=font)
+            if mode.startswith("RAW"):
+                values = f"RGB {metrics['rgb']['camera_mm'][index]:.1f} | rope {metrics['rope']['camera_mm'][index]:.1f} mm"
+            else:
+                values = f"RGB {metrics['rgb']['pa_mm'][index]:.1f} | rope {metrics['rope']['pa_mm'][index]:.1f} mm"
+            draw.text((4, 23), values, fill="black", font=font)
+            draw.text((4, 43), "GT green | RGB blue | rope red", fill="black", font=font)
+            x1, y1, x2, y2 = row["bbox_xyxy"]
+            draw.rectangle((x1, y1 + 62, x2, y2 + 62), outline="yellow", width=2)
+            if index in paired:
+                ox1, oy1, ox2, oy2 = rows[paired[index]]["bbox_xyxy"]
+                draw.rectangle((ox1, oy1 + 62, ox2, oy2 + 62), outline="cyan", width=2)
+            draw_skeleton(draw, project(gt[index], row["intrinsic"]), (0, 255, 0), 62, image.width, image.height)
+            draw_skeleton(draw, project(rgb_points, row["intrinsic"]), (0, 128, 255), 62, image.width, image.height)
+            draw_skeleton(draw, project(rope_points, row["intrinsic"]), (255, 0, 0), 62, image.width, image.height)
+            panels.append(panel)
+
+    columns = 4  # two adjacent raw/aligned sample pairs per row
+    rows_count = (len(panels) + columns - 1) // columns
+    cell_w = max(panel.width for panel in panels)
+    cell_h = max(panel.height for panel in panels)
+    grid = Image.new("RGB", (columns * cell_w, rows_count * cell_h), "white")
+    for index, panel in enumerate(panels):
+        grid.paste(panel, ((index % columns) * cell_w, (index // columns) * cell_h))
+    grid.save(output, quality=92)
+    return [rows[index]["sample_id"] for index in selected]
+
+
 def write_markdown(report: dict, output: Path) -> None:
     lines = [
         "# InterHand rope-effect diagnostic", "",
@@ -367,7 +445,7 @@ def write_markdown(report: dict, output: Path) -> None:
     for name, rows in report["effect_buckets"].items():
         for row in rows:
             lines.append(f"| {name} | {row['label']} | {row['count']} | {row['delta_pa_mm']:+.3f} | {row['delta_root_mm']:+.3f} | {row['delta_camera_mm']:+.3f} |")
-    lines.extend(["", "## Figures", "", "- `data_distribution.png`", "- `rope_effect_buckets.png`", "- `per_finger_effect.png`", "- `qualitative_extremes.jpg`", ""])
+    lines.extend(["", "## Figures", "", "- `data_distribution.png`", "- `rope_effect_buckets.png`", "- `per_finger_effect.png`", "- `qualitative_extremes.jpg`", "- `qualitative_metric_boundary.jpg` (raw camera vs PA-aligned; aligned panels are diagnostic only)", ""])
     output.write_text("\n".join(lines), encoding="utf-8")
 
 
@@ -422,6 +500,10 @@ def main(argv=None) -> Path:
         val_rows, gt, predictions["rgb"], predictions["rope"], metrics["rope"]["pa_mm"] - metrics["rgb"]["pa_mm"],
         args.raw_root, args.output_root / "qualitative_extremes.jpg",
     )
+    metric_boundary_ids = qualitative_metric_boundary(
+        val_rows, gt, predictions["rgb"], predictions["rope"], metrics,
+        args.raw_root, args.output_root / "qualitative_metric_boundary.jpg",
+    )
     report = {
         "dataset": "InterHand2.6M v1.0 30fps",
         "protocol": "interhand26m_v1_30fps_oneview_v1 official-val post-hoc diagnostic",
@@ -445,6 +527,7 @@ def main(argv=None) -> Path:
         },
         "per_finger_pa_delta_mm": finger,
         "qualitative_sample_ids": qualitative_ids,
+        "metric_boundary_sample_ids": metric_boundary_ids,
         "interpretation_boundary": "Post-hoc mechanism analysis only; no checkpoint selection and no test access.",
     }
     output = args.output_root / "report.json"

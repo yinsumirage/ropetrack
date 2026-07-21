@@ -1,6 +1,8 @@
 import numpy as np
 
-from scripts.analyze_interhand26m_rope import align_cache, bbox_iou, pair_geometry, quantile_labels
+from scripts.analyze_interhand26m_rope import (
+    align_cache, bbox_iou, pair_geometry, quantile_labels, quantile_representatives,
+)
 
 
 def test_pair_geometry_tracks_overlap_and_other_hand_inside_crop():
@@ -37,3 +39,8 @@ def test_align_cache_leaves_global_finger_order_alone(tmp_path):
     cache = align_cache(path, ["a", "b"])
     np.testing.assert_array_equal(cache["base_rope_norm"], [[1], [2]])
     np.testing.assert_array_equal(cache["finger_order"], ["thumb", "index", "middle", "ring", "pinky"])
+
+
+def test_quantile_representatives_return_observed_ranked_samples():
+    values = np.asarray([9.0, 1.0, 5.0, 3.0, 7.0])
+    assert quantile_representatives(np.arange(5), values, (0.0, 0.5, 1.0)) == [1, 2, 0]

@@ -354,8 +354,29 @@ For the historical `RGB+rope+rope-loss - RGB-only` official-val predictions:
 
 The figures and machine-readable report are under `analysis/`:
 `data_distribution.png`, `rope_effect_buckets.png`,
-`per_finger_effect.png`, `qualitative_extremes.jpg`, `report.json`, and
-`report.md`.
+`per_finger_effect.png`, `qualitative_extremes.jpg`,
+`qualitative_metric_boundary.jpg`, `report.json`, and `report.md`.
+
+### PA versus camera-frame visualization boundary
+
+The raw qualitative overlays correctly expose a large placement failure; they
+are not inconsistent with the PA values. Frozen official-val camera-frame
+MPJPE is 81.994 mm for WiLoR, 82.715 mm for RGB-only, and 83.853 mm for the
+historical RGB+rope cell, while PA-MPJPE is 8.811, 8.428, and 8.710 mm. Root
+translation error remains 85.209 mm for all three because DirectPose changes
+only the 45D articulated hand pose and inherits WiLoR global orientation,
+betas, and crop translation.
+
+`qualitative_metric_boundary.jpg` selects three observed rope-effect rank
+quantiles from each of single and interacting samples, with all 21 joints in
+frame. Each sample is shown twice: truthful raw-camera projection and a
+clearly labelled `PA-ALIGNED (diagnostic only)` projection. The paired panels
+show directly that PA can make the local skeleton agree after optimizing
+similarity rotation, translation, and scale even when the unaligned hand is
+roughly 95-195 mm away in camera coordinates. The aligned panel must never be
+used as a deployment or camera-placement claim. The 5.400/5.619 mm values
+below are a separate internal-validation ablation and are not the models in
+the frozen official-val qualitative figure.
 
 ### Minimal input-versus-loss ablation
 
@@ -400,8 +421,9 @@ because the first diagnostic loader incorrectly treated the five-element
 global `finger_order` field as a sample array; the shared sample-axis check and
 regression test fixed it. CPU analyses `189597`, `189609`, and final figure
 regeneration `189624` completed `0:0`. Verifier `189613` passed the
-intermediate report; final verifier `189625` is the authoritative follow-up
-verification and completed `0:0` with status `PASS`. Its final analysis-report
-SHA256 is `6ddd0482cef89c6ba6e60d131e5e9ccc64a61d37bb3679fdd248777773bbd689`.
-Local RopeTrack tests now pass **446 tests with the same four existing
+intermediate report. PA-boundary figure regeneration `190449` completed
+`0:0`; final verifier `190454` completed `0:0` with status `PASS` and is now
+the authoritative follow-up verification. Its analysis-report SHA256 is
+`41cd5694bcf53e8944246f61a320e6999f36a6b6c93161200d1f4b1877ef4ccf`.
+Local RopeTrack tests now pass **451 tests with the same four existing
 warnings**, and `git diff --check` passes.
