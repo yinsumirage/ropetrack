@@ -484,6 +484,7 @@ def apply(args) -> Path:
                "rope_sensor": {"noise_std": args.rope_noise_std, "dropout": args.rope_dropout,
                                "bias_std": args.rope_bias_std, "bias_fixed": args.rope_bias_fixed,
                                "scale_range": args.rope_scale_range, "gain_fixed": args.rope_gain_fixed,
+                               "missing_fingers": list(args.rope_missing_finger),
                                "seed": args.seed},
                "num_samples": len(refined), "mean_abs_delta": float(np.mean(np.abs(refined - arrays["base_hand_pose"]))) }
     (args.out_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")

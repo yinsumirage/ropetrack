@@ -45,6 +45,15 @@ all active instructions.
   remains stress-only. The four local-decoder adaptation cells were therefore
   not built or run; no PCGrad/sampler/dataset-conditioned replacement is
   selected.
+- **Product perturbation follow-up:** 0088 keeps the existing h128 head as a
+  conditional HOT3D-centered path and keeps decoder adaptation stopped.
+  Correct rope cuts HOT3D PA from `8.984` to `5.732 mm`; the fixed
+  low-visibility slice gains `4.123 mm`, versus `2.346 mm` for context.
+  Exact explicit/non-finite/out-of-range per-finger fallback passes and
+  all-missing is numerically WiLoR. HOT3D passes the frozen robustness matrix;
+  ARCTIC retains 73.3% of clean gain at simulated `noise=0.03` but only 55.4%
+  at `0.04`. New shared-head/decoder training remains stopped pending a
+  training-only non-regression proposal and physical sensor evidence.
 
 The authoritative normal-mixture no-leak record is
 `experience/0079_normal_joint_no_leak_final.md`; the DexYCB S1 first-round
@@ -61,6 +70,7 @@ cross-dataset error decomposition is
 | DirectPose apply/score | `direct_pose_head.py apply` -> MANO decode from `apply_rope_refinement.py` -> project `pred.json` -> `score_predictions.py` | `test_direct_pose_head.py`, `test_apply_rope_refinement.py`, `test_score_predictions.py`; 0078-0079 | Active. Perturbation flags are the normalized-rope robustness controls. |
 | Existing-prediction decomposition | `analyze_pose_error_decomposition.py` reads project `pred.json` + explicit sample order, audits IDs, computes the proper nested oracle envelope, group bootstrap, subgroups, and artifact verification | `test_pose_error_decomposition.py`; 0084 | Stable CPU analysis. Raw alignment candidates and legacy parity are kept separate; generated per-sample/results stay in the remote run root. |
 | DirectPose gradient audit and safety gate | thin `scripts/evaluation/audit_direct_pose_gradients.py` -> `ropetrack.refine.direct_pose_audit`; consumes frozen training bundles/checkpoint, emits gradient/transfer matrices, exact fallback gate, and verifier artifacts | `test_direct_pose_audit.py`; 0087 | Completed/STOP for equal four-core mixing. Reuse the verifier and exact fallback; do not run the gated decoder cells from this result. |
+| DirectPose product fallback/perturbation | `scripts/rope_refiner/direct_pose_head.py` exact per-finger fallback plus run-local fixed perturbation/scoring launchers over existing checkpoints and caches | `test_direct_pose_head.py`; real-checkpoint invalid gate and product verifier; 0088 | Experimental conditional path. Clean and explicit-invalid behavior is structurally safe; HOT3D robustness passes, but the original ARCTIC `noise=0.05` retention gate blocks robust retraining and a deployable claim. Hardware validity metadata remains required. |
 | P0-P2 teacher/release | `apply_rope_refinement.py --mode optimize|student`; `train_alpha_student.py`; core `refine/{actions,alpha_student,analysis,cache,oracle}.py` | release golden check in `RELEASE.md`; broad refiner tests; 0027-0052 | Frozen supported path. Do not replace the release checkpoint with DirectPose outputs. |
 | Dataset adapters/export | `ropetrack/datasets/hand_pose.py`, dataset YAMLs, `prepare_{arctic,egodex,hot3d,dexycb}.py`, `prepare_ho3d_normal_train.py`, `make_hard_images.py`, `make_rope_labels.py` | adapter/export/hard/rope tests; 0018, 0040, 0060-0073, 0079, 0081 | Reusable. Dataset-specific coordinate, side, and tip conventions remain explicit. DexYCB test export requires a frozen recipe. |
 | DexYCB protocol/evaluation | `prepare_dexycb.py` -> `validate_dexycb_coordinates.py` -> standard WiLoR/token/DirectPose paths -> `score_dexycb.py`; `freeze_dexycb_recipe.py` and `verify_dexycb_artifacts.py` enforce one-shot test and raw-tree checks | `test_prepare_dexycb.py`, `test_validate_dexycb_coordinates.py`, `test_score_dexycb.py`, `test_freeze_dexycb_recipe.py`; 0081 | Validated adapter and evaluation path. The 27k RGB-only recipe, full-S1 scale-up, and addition to the frozen joint mixture are stopped. Ideal GT-derived rope remains an oracle/simulated observation. |
@@ -110,6 +120,11 @@ Generated data and results are never committed.
   `direct_pose_scale_20260718`, and `direct_pose_ab_20260719` under the same
   `/data/wentao/ropetrack/runs/` root. They are experiment evidence, not
   release checkpoints.
+- Product/conflict evidence is under
+  `/data/wentao/ropetrack/runs/direct_pose_conflict_attribution_20260723` and
+  `/data/wentao/ropetrack/runs/direct_pose_product_validation_20260723`.
+  The latter contains the frozen protocol, raw matrix, report, verifier,
+  invalid-value gate, and the separately frozen ARCTIC noise-dose diagnostic.
 
 Keep small checkpoints, protocols, hashes, scores, manifests, and archived
 launch scripts. Large feature/activation caches and prediction matrices are
