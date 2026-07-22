@@ -214,6 +214,28 @@ def _load_dataset_arrays(spec: dict) -> dict[str, np.ndarray]:
     return arrays
 
 
+def verify_input_hashes(protocol: dict) -> dict[str, dict[str, str]]:
+    verified = {}
+    for name in DATASETS:
+        spec = protocol["datasets"][name]
+        expected = spec.get("sha256", {})
+        paths = {"episode_manifest": spec.get("episode_manifest")}
+        if spec.get("bundle"):
+            paths["bundle"] = spec["bundle"]
+        else:
+            paths.update(spec["source"])
+        if set(expected) != {key for key, value in paths.items() if value}:
+            raise ValueError(f"{name} protocol hash keys do not match declared inputs")
+        verified[name] = {}
+        for key, value in paths.items():
+            if value:
+                actual = sha256_file(Path(value))
+                if actual != expected[key]:
+                    raise ValueError(f"{name} {key} hash changed after protocol freeze")
+                verified[name][key] = actual
+    return verified
+
+
 def prepare_selected_data(protocol: dict, run_root: Path):
     selected = {}
     selection_summary = {}
@@ -684,6 +706,7 @@ def verify_run(run_root: Path) -> dict:
         transfer = json.loads((run_root / "transfer_summary.json").read_text())
         summary = json.loads((run_root / "summary.json").read_text())
         checks["protocol_sha256"] = summary["protocol_sha256"] == sha256_file(run_root / "protocol.json")
+        checks["immutable_inputs"] = summary["input_sha256"] == verify_input_hashes(protocol)
         checks["training_only"] = all(protocol["datasets"][name]["split_role"] == "training" for name in DATASETS)
         checks["episode_disjoint"] = all(not selection[name]["episode_overlap"] for name in DATASETS)
         checks["sample_hash_disjoint"] = all(selection[name]["update_sample_id_sha256"] != selection[name]["probe_sample_id_sha256"] for name in DATASETS)
@@ -718,6 +741,7 @@ def run_audit(protocol_path: Path, run_root: Path, device: str) -> dict:
     protocol = json.loads(protocol_bytes)
     if tuple(protocol.get("dataset_order", ())) != DATASETS:
         raise ValueError(f"dataset_order must be {DATASETS}")
+    input_hashes = verify_input_hashes(protocol)
     run_root.mkdir(parents=True, exist_ok=False)
     (run_root / "protocol.json").write_bytes(protocol_bytes)
     selected, selection = prepare_selected_data(protocol, run_root)
@@ -741,6 +765,7 @@ def run_audit(protocol_path: Path, run_root: Path, device: str) -> dict:
         "decision": gate["decision"],
         "protocol_sha256": hashlib.sha256(protocol_bytes).hexdigest(),
         "checkpoint_sha256": checkpoint_hash,
+        "input_sha256": input_hashes,
         "dataset_order": list(DATASETS),
         "gate": gate,
         "training_cells_started": False,
