@@ -90,6 +90,9 @@ class DirectPoseHead(nn.Module):
         elif tokens is not None:
             raise ValueError("tokens supplied to a rope+pose-only checkpoint")
         finger_delta = self.max_delta * torch.tanh(self.output(query))
+        finger_delta = torch.where(
+            rope_valid[:, :, None] > 0.5, finger_delta, torch.zeros_like(finger_delta)
+        )
         index = self.pose_dims.reshape(1, -1).expand(batch, -1)
         delta = torch.zeros_like(base_pose).scatter(1, index, finger_delta.reshape(batch, -1))
         return base_pose + delta

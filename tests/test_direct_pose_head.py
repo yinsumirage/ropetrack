@@ -34,6 +34,22 @@ class DirectPoseHeadTest(unittest.TestCase):
         token = script.DirectPoseHead(token_dim=8)
         torch.testing.assert_close(token(pose, rope, rope, valid, torch.randn(batch, 12, 8)), pose)
 
+    def test_invalid_finger_is_exact_base_fallback(self):
+        torch.manual_seed(7)
+        model = load_script().DirectPoseHead(token_dim=8)
+        for parameter in model.parameters():
+            torch.nn.init.normal_(parameter, std=0.05)
+        pose = torch.randn(2, 45)
+        rope = torch.rand(2, 5)
+        tokens = torch.randn(2, 12, 8)
+        valid = torch.ones(2, 5)
+        clean = model(pose, rope, rope, valid, tokens)
+        valid[:, 3] = 0
+        missing = model(pose, rope, rope, valid, tokens)
+        torch.testing.assert_close(missing[:, model.pose_dims[3]], pose[:, model.pose_dims[3]], rtol=0, atol=0)
+        keep = [0, 1, 2, 4]
+        torch.testing.assert_close(missing[:, model.pose_dims[keep]], clean[:, model.pose_dims[keep]], rtol=0, atol=0)
+
     def test_pa_alignment_removes_similarity_transform(self):
         script = load_script()
         gt = torch.randn(4, 21, 3)
