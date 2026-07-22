@@ -50,6 +50,46 @@ class DirectPoseHeadTest(unittest.TestCase):
         keep = [0, 1, 2, 4]
         torch.testing.assert_close(missing[:, model.pose_dims[keep]], clean[:, model.pose_dims[keep]], rtol=0, atol=0)
 
+    def test_nonfinite_and_out_of_range_channels_are_automatic_fallbacks(self):
+        torch.manual_seed(8)
+        model = load_script().DirectPoseHead(token_dim=8)
+        for parameter in model.parameters():
+            torch.nn.init.normal_(parameter, std=0.05)
+        pose = torch.randn(2, 45)
+        base_rope = torch.rand(2, 5)
+        input_rope = torch.rand(2, 5)
+        tokens = torch.randn(2, 12, 8)
+        valid = torch.ones(2, 5)
+        clean = model(pose, base_rope, input_rope, valid, tokens)
+        corrupted = input_rope.clone()
+        corrupted[0, 1] = torch.nan
+        corrupted[1, 1] = 1.1
+        safe = model(pose, base_rope, corrupted, valid, tokens)
+        torch.testing.assert_close(safe[:, model.pose_dims[1]], pose[:, model.pose_dims[1]], rtol=0, atol=0)
+        keep = [0, 2, 3, 4]
+        torch.testing.assert_close(safe[:, model.pose_dims[keep]], clean[:, model.pose_dims[keep]], rtol=0, atol=0)
+
+    def test_all_valid_path_is_bitwise_legacy_formula(self):
+        torch.manual_seed(9)
+        model = load_script().DirectPoseHead(token_dim=8)
+        for parameter in model.parameters():
+            torch.nn.init.normal_(parameter, std=0.05)
+        pose = torch.randn(2, 45)
+        base_rope = torch.rand(2, 5)
+        input_rope = torch.rand(2, 5)
+        valid = torch.ones(2, 5)
+        tokens = torch.randn(2, 12, 8)
+        finger_id = torch.eye(5)[None].expand(2, -1, -1)
+        sensor = torch.stack((base_rope, input_rope, input_rope - base_rope, valid), dim=-1)
+        query = model.query(torch.cat((pose[:, model.pose_dims], sensor, finger_id), dim=-1))
+        image = model.token_proj(tokens)
+        attended, _ = model.attention(query, image, image, need_weights=False)
+        finger_delta = model.max_delta * torch.tanh(model.output(query + attended))
+        index = model.pose_dims.reshape(1, -1).expand(2, -1)
+        expected = pose + torch.zeros_like(pose).scatter(1, index, finger_delta.reshape(2, -1))
+        actual = model(pose, base_rope, input_rope, valid, tokens)
+        self.assertTrue(torch.equal(actual, expected))
+
     def test_pa_alignment_removes_similarity_transform(self):
         script = load_script()
         gt = torch.randn(4, 21, 3)

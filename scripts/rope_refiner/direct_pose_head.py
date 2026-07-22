@@ -77,8 +77,16 @@ class DirectPoseHead(nn.Module):
         batch = base_pose.shape[0]
         if any(tuple(x.shape) != (batch, 5) for x in (base_rope, input_rope, rope_valid)):
             raise ValueError("rope tensors must all be [B,5]")
+        finite = torch.isfinite(base_rope) & torch.isfinite(input_rope)
+        in_range = (
+            (base_rope >= 0.0) & (base_rope <= 1.0)
+            & (input_rope >= 0.0) & (input_rope <= 1.0)
+        )
+        sensor_valid = (rope_valid > 0.5) & finite & in_range
+        base_rope = torch.where(finite, base_rope, torch.zeros_like(base_rope)).clamp(0.0, 1.0)
+        input_rope = torch.where(finite, input_rope, torch.zeros_like(input_rope)).clamp(0.0, 1.0)
         pose = base_pose[:, self.pose_dims]
-        sensor = torch.stack((base_rope, input_rope, input_rope - base_rope, rope_valid), dim=-1)
+        sensor = torch.stack((base_rope, input_rope, input_rope - base_rope, sensor_valid), dim=-1)
         finger_id = torch.eye(5, device=base_pose.device, dtype=base_pose.dtype)[None].expand(batch, -1, -1)
         query = self.query(torch.cat((pose, sensor, finger_id), dim=-1))
         if self.token_dim:
@@ -91,7 +99,7 @@ class DirectPoseHead(nn.Module):
             raise ValueError("tokens supplied to a rope+pose-only checkpoint")
         finger_delta = self.max_delta * torch.tanh(self.output(query))
         finger_delta = torch.where(
-            rope_valid[:, :, None] > 0.5, finger_delta, torch.zeros_like(finger_delta)
+            sensor_valid[:, :, None], finger_delta, torch.zeros_like(finger_delta)
         )
         index = self.pose_dims.reshape(1, -1).expand(batch, -1)
         delta = torch.zeros_like(base_pose).scatter(1, index, finger_delta.reshape(batch, -1))
