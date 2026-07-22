@@ -648,10 +648,36 @@ def evaluate_conflict_gate(protocol: dict, gradient: dict, transfer: dict, safet
     }
 
 
-def _markdown_matrix(title: str, matrix: list[list[float]]) -> list[str]:
-    lines = [f"### {title}", "", "| source \\ target | " + " | ".join(DATASETS) + " |", "|---|" + "---:|" * 5]
-    for name, row in zip(DATASETS, matrix, strict=True):
-        lines.append(f"| {name} | " + " | ".join(f"{value:+.4f}" for value in row) + " |")
+def _markdown_ci_matrix(title: str, result: dict) -> list[str]:
+    lines = [f"### {title}", "", "Cells are mean `[95% CI]`.", "", "| source \\ target | " + " | ".join(DATASETS) + " |", "|---|" + "---:|" * 5]
+    for source, row, low, high in zip(
+        DATASETS, result["mean"], result["ci95_low"], result["ci95_high"], strict=True
+    ):
+        cells = [f"{value:+.3f} `[{lo:+.3f},{hi:+.3f}]`" for value, lo, hi in zip(row, low, high, strict=True)]
+        lines.append(f"| {source} | " + " | ".join(cells) + " |")
+    lines.append("")
+    return lines
+
+
+def _markdown_transfer(title: str, result: dict) -> list[str]:
+    lines = [
+        f"### {title}", "",
+        "Cells are absolute after-step mm; `(signed delta [95% CI])`. Negative delta improves.", "",
+        "| source \\ target | " + " | ".join(DATASETS) + " |", "|---|" + "---:|" * 5,
+    ]
+    for source, after, delta, low, high in zip(
+        DATASETS,
+        result["after"],
+        result["delta"],
+        result["delta_ci95_low"],
+        result["delta_ci95_high"],
+        strict=True,
+    ):
+        cells = [
+            f"{value:.3f} `({change:+.3f} [{lo:+.3f},{hi:+.3f}])`"
+            for value, change, lo, hi in zip(after, delta, low, high, strict=True)
+        ]
+        lines.append(f"| {source} | " + " | ".join(cells) + " |")
     lines.append("")
     return lines
 
@@ -671,11 +697,29 @@ def write_report(run_root: Path, protocol: dict, selection: dict, gradient: dict
         row = selection[name]
         lines.append(f"| {name} | {row['source_rows']} | {row['update_rows']} | {row['probe_rows']} | {row['update_episode_count']} | {row['probe_episode_count']} | {len(row['episode_overlap'])} |")
     lines += [""]
-    lines += _markdown_matrix("Overall gradient cosine (mean)", gradient["cross_dataset"]["overall"]["mean"])
+    lines += _markdown_ci_matrix("Overall gradient cosine", gradient["cross_dataset"]["overall"])
     for finger in FINGER_ORDER:
-        lines += _markdown_matrix(f"{finger} gradient cosine (mean)", gradient["cross_dataset"][finger]["mean"])
-    lines += _markdown_matrix("AdamW one-step PA signed delta (mm)", transfer["modes"]["adamw"]["metrics"]["pa"]["delta"])
-    lines += _markdown_matrix("AdamW one-step root signed delta (mm)", transfer["modes"]["adamw"]["metrics"]["root"]["delta"])
+        lines += _markdown_ci_matrix(f"{finger} gradient cosine", gradient["cross_dataset"][finger])
+    lines += ["## PA-vs-root within-domain cosine", "", "| dataset | mean | 95% CI |", "|---|---:|---:|"]
+    pa_index, root_index = COMPONENTS.index("pa"), COMPONENTS.index("root")
+    component = gradient["within_dataset_component_cosine"]
+    for index, name in enumerate(DATASETS):
+        lines.append(
+            f"| {name} | {component['mean'][index][pa_index][root_index]:+.4f} | "
+            f"[{component['ci95_low'][index][pa_index][root_index]:+.4f},"
+            f"{component['ci95_high'][index][pa_index][root_index]:+.4f}] |"
+        )
+    lines += ["", "## One-step transfer", ""]
+    for mode in ("adamw", "normalized_gradient"):
+        lines += [
+            f"### {mode} step size", "",
+            "Parameter L2 by source: " + ", ".join(
+                f"{name}={value:.4f}" for name, value in zip(DATASETS, transfer["modes"][mode]["step_l2_mean"], strict=True)
+            ) + ".", "",
+        ]
+        metrics = ("pa", "root", *FINGER_ORDER) if mode == "adamw" else ("pa", "root")
+        for metric in metrics:
+            lines += _markdown_transfer(f"{mode}: {metric}", transfer["modes"][mode]["metrics"][metric])
     lines += [
         "## Required conclusions", "",
         f"- ARCTIC/HOT3D/HO3D/DexYCB equal or near-equal mix: **{gate['four_core_equal_or_near_equal_mix_supported']}**.",
@@ -736,6 +780,17 @@ def verify_run(run_root: Path) -> dict:
     return result
 
 
+def render_report(run_root: Path) -> Path:
+    protocol = json.loads((run_root / "protocol.json").read_text())
+    selection = json.loads((run_root / "sample_manifests/summary.json").read_text())
+    gradient = json.loads((run_root / "gradient_summary.json").read_text())
+    transfer = json.loads((run_root / "transfer_summary.json").read_text())
+    safety = json.loads((run_root / "safety_gate.json").read_text())
+    summary = json.loads((run_root / "summary.json").read_text())
+    write_report(run_root, protocol, selection, gradient, transfer, safety, summary["gate"])
+    return run_root / "report.md"
+
+
 def run_audit(protocol_path: Path, run_root: Path, device: str) -> dict:
     protocol_bytes = protocol_path.read_bytes()
     protocol = json.loads(protocol_bytes)
@@ -785,6 +840,8 @@ def parse_args(argv=None):
     audit.add_argument("--device", default="cuda")
     verify = sub.add_parser("verify")
     verify.add_argument("--run-root", type=Path, required=True)
+    report = sub.add_parser("report")
+    report.add_argument("--run-root", type=Path, required=True)
     return parser.parse_args(argv)
 
 
@@ -792,6 +849,8 @@ def main(argv=None):
     args = parse_args(argv)
     if args.command == "verify":
         return verify_run(args.run_root)
+    if args.command == "report":
+        return render_report(args.run_root)
     return run_audit(args.protocol, args.run_root, args.device)
 
 
