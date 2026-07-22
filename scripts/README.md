@@ -5,6 +5,7 @@ Current benchmark entrypoints:
 - `eval.py`: config-driven benchmark export and eval entrypoint.
 - `score_predictions.py`: PA/mesh/F-score evaluator invoked by `eval.py --run-eval`.
 - `analyze_pose_error_decomposition.py`: existing-prediction camera/root/T/RT/Sim3 decomposition with sample-ID, parity, group-bootstrap, and artifact-verification gates.
+- `evaluation/audit_direct_pose_gradients.py`: training-only five-domain DirectPose gradient cosine, one-step transfer, and exact missing-sensor fallback audit; consumes an externally frozen protocol and writes only to the remote run root.
 - `score_sliced_predictions.py`: occlusion/rope-residual sliced scorer (details below).
 - `make_hard_images.py`: hard-image split generator.
 - `make_rope_labels.py`: GT fingertip-to-wrist rope label generator.

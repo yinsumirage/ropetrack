@@ -38,6 +38,13 @@ all active instructions.
 - **Sensor boundary:** correct paired GT-derived rope has a causal hand-shape
   effect, but this is ideal simulated geometry. Physical sensor calibration,
   drift, latency, missing channels, and real deployment remain unproved.
+- **Gradient/adaptation gate:** the five-domain training-only audit in 0087
+  validates exact per-finger/all-missing fallback but rejects equal/near-equal
+  ARCTIC+HOT3D+HO3D+DexYCB mixing. HOT3D-DexYCB is significantly conflicting;
+  DexYCB PA-vs-root is significantly aligned rather than opposed. InterHand
+  remains stress-only. The four local-decoder adaptation cells were therefore
+  not built or run; no PCGrad/sampler/dataset-conditioned replacement is
+  selected.
 
 The authoritative normal-mixture no-leak record is
 `experience/0079_normal_joint_no_leak_final.md`; the DexYCB S1 first-round
@@ -53,6 +60,7 @@ cross-dataset error decomposition is
 | DirectPose normal training | `prepare_arctic.py` / `prepare_hot3d.py` / `prepare_ho3d_normal_train.py` -> `eval.py --save-mano-cache` -> `extract_feature_cache.py --save-tokens` -> `apply_rope_refinement.py` cache -> `direct_pose_head.py train --extra-bundle ...` | `test_prepare_*`, `test_eval_pipeline.py`, `test_extract_feature_cache.py`, `test_direct_pose_head.py`; 0075-0079 | Active experiment. Bundle/protocol/stitch Slurm glue is intentionally run-local under ignored `.local_checks/` and archived in the HPC run root, not a public package API. |
 | DirectPose apply/score | `direct_pose_head.py apply` -> MANO decode from `apply_rope_refinement.py` -> project `pred.json` -> `score_predictions.py` | `test_direct_pose_head.py`, `test_apply_rope_refinement.py`, `test_score_predictions.py`; 0078-0079 | Active. Perturbation flags are the normalized-rope robustness controls. |
 | Existing-prediction decomposition | `analyze_pose_error_decomposition.py` reads project `pred.json` + explicit sample order, audits IDs, computes the proper nested oracle envelope, group bootstrap, subgroups, and artifact verification | `test_pose_error_decomposition.py`; 0084 | Stable CPU analysis. Raw alignment candidates and legacy parity are kept separate; generated per-sample/results stay in the remote run root. |
+| DirectPose gradient audit and safety gate | thin `scripts/evaluation/audit_direct_pose_gradients.py` -> `ropetrack.refine.direct_pose_audit`; consumes frozen training bundles/checkpoint, emits gradient/transfer matrices, exact fallback gate, and verifier artifacts | `test_direct_pose_audit.py`; 0087 | Completed/STOP for equal four-core mixing. Reuse the verifier and exact fallback; do not run the gated decoder cells from this result. |
 | P0-P2 teacher/release | `apply_rope_refinement.py --mode optimize|student`; `train_alpha_student.py`; core `refine/{actions,alpha_student,analysis,cache,oracle}.py` | release golden check in `RELEASE.md`; broad refiner tests; 0027-0052 | Frozen supported path. Do not replace the release checkpoint with DirectPose outputs. |
 | Dataset adapters/export | `ropetrack/datasets/hand_pose.py`, dataset YAMLs, `prepare_{arctic,egodex,hot3d,dexycb}.py`, `prepare_ho3d_normal_train.py`, `make_hard_images.py`, `make_rope_labels.py` | adapter/export/hard/rope tests; 0018, 0040, 0060-0073, 0079, 0081 | Reusable. Dataset-specific coordinate, side, and tip conventions remain explicit. DexYCB test export requires a frozen recipe. |
 | DexYCB protocol/evaluation | `prepare_dexycb.py` -> `validate_dexycb_coordinates.py` -> standard WiLoR/token/DirectPose paths -> `score_dexycb.py`; `freeze_dexycb_recipe.py` and `verify_dexycb_artifacts.py` enforce one-shot test and raw-tree checks | `test_prepare_dexycb.py`, `test_validate_dexycb_coordinates.py`, `test_score_dexycb.py`, `test_freeze_dexycb_recipe.py`; 0081 | Validated adapter and evaluation path. The 27k RGB-only recipe, full-S1 scale-up, and addition to the frozen joint mixture are stopped. Ideal GT-derived rope remains an oracle/simulated observation. |
