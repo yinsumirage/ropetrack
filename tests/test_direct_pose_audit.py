@@ -7,6 +7,9 @@ import torch
 
 from ropetrack.refine.direct_pose_audit import (
     ExactFallbackDirectPoseHead,
+    _matched_rows,
+    _parameter_group,
+    _scenario_batch,
     select_update_probe_batches,
 )
 
@@ -43,6 +46,27 @@ class DirectPoseAuditTest(unittest.TestCase):
         np.testing.assert_array_equal(first[1], second[1])
         self.assertFalse(set(ids[first[0]].reshape(-1)) & set(ids[first[1]].reshape(-1)))
         self.assertFalse(set(episodes[first[0]].reshape(-1)) & set(episodes[first[1]].reshape(-1)))
+
+    def test_attribution_helpers_are_deterministic_and_unique(self):
+        arrays = {
+            "base_hand_pose": np.zeros((4, 45), dtype=np.float32),
+            "base_rope_norm": np.zeros((4, 5), dtype=np.float32),
+            "input_rope_norm": np.arange(20, dtype=np.float32).reshape(4, 5),
+            "rope_valid": np.ones((4, 5), dtype=np.float32),
+        }
+        first = _scenario_batch(arrays, np.arange(4), "cpu", "shuffle", 7)
+        second = _scenario_batch(arrays, np.arange(4), "cpu", "shuffle", 7)
+        self.assertTrue(torch.equal(first["input_rope_norm"], second["input_rope_norm"]))
+        self.assertFalse(torch.equal(first["input_rope_norm"], torch.from_numpy(arrays["input_rope_norm"])))
+
+        selected = {"arrays": arrays, "update": np.arange(4).reshape(2, 2)}
+        left, right, distance = _matched_rows(selected, selected, 3)
+        self.assertEqual(len(set(left.tolist())), 4)
+        self.assertEqual(len(set(right.tolist())), 4)
+        self.assertTrue(np.allclose(distance, 0.0))
+        self.assertEqual(_parameter_group("query.0.weight"), "condition_query")
+        self.assertEqual(_parameter_group("attention.in_proj_weight"), "rgb_attention")
+        self.assertEqual(_parameter_group("output.2.bias"), "residual_output")
 
 
 if __name__ == "__main__":

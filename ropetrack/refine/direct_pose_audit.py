@@ -51,6 +51,7 @@ except ImportError:
 DATASETS = ("arctic", "hot3d", "ho3d_v3", "dexycb", "interhand26m")
 CORE_DATASETS = DATASETS[:4]
 COMPONENTS = ("pa", "root", "rope", "delta")
+PARAMETER_GROUPS = ("condition_query", "rgb_attention", "residual_output")
 
 
 def sha256_file(path: Path) -> str:
@@ -364,6 +365,48 @@ def _cosine(left: torch.Tensor, right: torch.Tensor) -> float:
     return float(torch.dot(left, right) / denom.clamp_min(1e-20))
 
 
+def _parameter_group(name: str) -> str:
+    if name.startswith("query."):
+        return "condition_query"
+    if name.startswith(("token_proj.", "attention.")):
+        return "rgb_attention"
+    if name.startswith("output."):
+        return "residual_output"
+    raise ValueError(f"unassigned DirectPose parameter: {name}")
+
+
+def _grouped_gradients(loss, named_parameters, *, retain_graph: bool) -> dict[str, torch.Tensor]:
+    parameters = [parameter for _, parameter in named_parameters]
+    grads = torch.autograd.grad(loss, parameters, retain_graph=retain_graph, allow_unused=True)
+    resolved = [torch.zeros_like(parameter) if grad is None else grad for parameter, grad in zip(parameters, grads, strict=True)]
+    result = {"all": torch.cat([grad.reshape(-1) for grad in resolved])}
+    for group in PARAMETER_GROUPS:
+        values = [
+            grad.reshape(-1)
+            for (name, _), grad in zip(named_parameters, resolved, strict=True)
+            if _parameter_group(name) == group
+        ]
+        result[group] = torch.cat(values) if values else torch.zeros(1, device=loss.device)
+    return result
+
+
+def _scenario_batch(arrays: dict[str, np.ndarray], rows: np.ndarray, device: str, mode: str, seed: int):
+    batch = tensor_batch(arrays, rows, device)
+    if mode == "correct":
+        return batch
+    batch = dict(batch)
+    if mode == "shuffle":
+        permutation = torch.as_tensor(np.random.default_rng(seed).permutation(len(rows)), device=device)
+        batch["input_rope_norm"] = batch["input_rope_norm"][permutation]
+        batch["rope_valid"] = batch["rope_valid"][permutation]
+        return batch
+    if mode == "zero":
+        batch["input_rope_norm"] = torch.zeros_like(batch["input_rope_norm"])
+        batch["rope_valid"] = torch.zeros_like(batch["rope_valid"])
+        return batch
+    raise ValueError(f"unknown attribution rope mode: {mode}")
+
+
 def _bootstrap(values: np.ndarray, *, seed: int, replicates: int) -> tuple[np.ndarray, np.ndarray]:
     rng = np.random.default_rng(seed)
     samples = rng.integers(0, len(values), size=(replicates, len(values)))
@@ -450,6 +493,207 @@ def run_gradient_audit(protocol: dict, selected: dict, model, device: str, run_r
         "raw_sha256": sha256_file(raw_path),
     }
     write_json(run_root / "gradient_summary.json", summary)
+    return summary
+
+
+def _matched_rows(left: dict, right: dict, seed: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Greedily match unique update rows by base/measured normalized rope state."""
+    left_rows = left["update"].reshape(-1)
+    right_rows = right["update"].reshape(-1)
+    left_features = np.concatenate((left["arrays"]["base_rope_norm"][left_rows], left["arrays"]["input_rope_norm"][left_rows]), axis=1)
+    right_features = np.concatenate((right["arrays"]["base_rope_norm"][right_rows], right["arrays"]["input_rope_norm"][right_rows]), axis=1)
+    pooled = np.concatenate((left_features, right_features), axis=0).astype(np.float64)
+    mean, std = pooled.mean(axis=0), pooled.std(axis=0)
+    left_features = (left_features - mean) / np.maximum(std, 1e-6)
+    right_features = (right_features - mean) / np.maximum(std, 1e-6)
+    available = np.ones(len(right_rows), dtype=bool)
+    chosen_left, chosen_right, distances = [], [], []
+    # ponytail: greedy unique matching is enough for 384-row attribution; use
+    # optimal assignment only if its recorded distance tail changes a decision.
+    for left_index in np.random.default_rng(seed).permutation(len(left_rows)):
+        candidates = np.flatnonzero(available)
+        if not len(candidates):
+            break
+        delta = right_features[candidates] - left_features[left_index]
+        nearest_at = int(np.argmin(np.einsum("ij,ij->i", delta, delta)))
+        right_index = int(candidates[nearest_at])
+        available[right_index] = False
+        chosen_left.append(int(left_rows[left_index]))
+        chosen_right.append(int(right_rows[right_index]))
+        distances.append(float(np.linalg.norm(delta[nearest_at])))
+    return np.asarray(chosen_left), np.asarray(chosen_right), np.asarray(distances)
+
+
+def _dataset_attribution_stats(selected: dict, model, device: str) -> dict:
+    stats = {}
+    resources = {name: _mano_resources(selected[name]["dataset"], device) for name in DATASETS}
+    for name in DATASETS:
+        entry = selected[name]
+        arrays = entry["arrays"]
+        probe_metrics, base_metrics = [], []
+        for batch_index, rows in enumerate(entry["probe"]):
+            batch = _scenario_batch(arrays, rows, device, "correct", 0)
+            probe_metrics.append(_error_metrics(model, resources[name][0], batch, entry["dataset"], resources[name][1]))
+            base_batch = dict(batch)
+            base_batch["rope_valid"] = torch.zeros_like(batch["rope_valid"])
+            base_metrics.append(_error_metrics(model, resources[name][0], base_batch, entry["dataset"], resources[name][1]))
+        input_rope = np.asarray(arrays["input_rope_norm"], dtype=np.float64)
+        base_rope = np.asarray(arrays["base_rope_norm"], dtype=np.float64)
+        stats[name] = {
+            "rows": len(input_rope),
+            "valid_fraction": float(np.asarray(arrays["rope_valid"]).mean()),
+            "input_rope_mean": input_rope.mean(axis=0).tolist(),
+            "input_rope_std": input_rope.std(axis=0).tolist(),
+            "input_minus_base_mean": (input_rope - base_rope).mean(axis=0).tolist(),
+            "input_minus_base_std": (input_rope - base_rope).std(axis=0).tolist(),
+            "token_rms": float(np.sqrt(np.mean(np.asarray(arrays["tokens"], dtype=np.float64) ** 2))),
+            "wilor_base_metrics": np.mean(base_metrics, axis=0).tolist(),
+            "current_head_metrics": np.mean(probe_metrics, axis=0).tolist(),
+        }
+    return stats
+
+
+def run_attribution_audit(protocol: dict, selected: dict, model, device: str, run_root: Path) -> dict:
+    config = protocol["attribution"]
+    scenarios = config["scenarios"]
+    scenario_names = list(scenarios)
+    keys = ("overall", *FINGER_ORDER)
+    num_batches = int(protocol["sampling"]["num_batches"])
+    replicates = int(protocol["bootstrap"]["replicates"])
+    bootstrap_seed = int(protocol["bootstrap"]["seed"])
+    cross = np.empty((len(scenario_names), len(keys), num_batches, len(DATASETS), len(DATASETS)), dtype=np.float64)
+    grouped = np.empty((len(scenario_names), len(PARAMETER_GROUPS), num_batches, len(DATASETS), len(DATASETS)), dtype=np.float64)
+    resources = {name: _mano_resources(selected[name]["dataset"], device) for name in DATASETS}
+    named_parameters = [(name, parameter) for name, parameter in model.named_parameters() if parameter.requires_grad]
+    for scenario_index, scenario_name in enumerate(scenario_names):
+        scenario = scenarios[scenario_name]
+        weights = scenario["loss_weights"]
+        for batch_index in range(num_batches):
+            gradients = {}
+            for dataset_index, name in enumerate(DATASETS):
+                entry = selected[name]
+                batch = _scenario_batch(
+                    entry["arrays"], entry["update"][batch_index], device, scenario["rope_mode"],
+                    int(config["seed"]) + 100003 * scenario_index + 1009 * dataset_index + batch_index,
+                )
+                total, fingers, _ = _losses(model, resources[name][0], batch, entry["dataset"], weights, resources[name][1])
+                requested = [("overall", total), *fingers.items()]
+                gradients[name] = {}
+                for loss_index, (key, loss) in enumerate(requested):
+                    gradients[name][key] = _grouped_gradients(
+                        loss, named_parameters, retain_graph=loss_index + 1 < len(requested)
+                    )
+            for key_index, key in enumerate(keys):
+                for left, left_name in enumerate(DATASETS):
+                    for right, right_name in enumerate(DATASETS):
+                        cross[scenario_index, key_index, batch_index, left, right] = _cosine(
+                            gradients[left_name][key]["all"], gradients[right_name][key]["all"]
+                        )
+            for group_index, group in enumerate(PARAMETER_GROUPS):
+                for left, left_name in enumerate(DATASETS):
+                    for right, right_name in enumerate(DATASETS):
+                        grouped[scenario_index, group_index, batch_index, left, right] = _cosine(
+                            gradients[left_name]["overall"][group], gradients[right_name]["overall"][group]
+                        )
+
+    raw = {
+        "scenario_order": np.asarray(scenario_names),
+        "key_order": np.asarray(keys),
+        "parameter_group_order": np.asarray(PARAMETER_GROUPS),
+        "dataset_order": np.asarray(DATASETS),
+        "cross_dataset_cosine": cross,
+        "parameter_group_cosine": grouped,
+    }
+    summary = {
+        "scenario_order": scenario_names,
+        "key_order": list(keys),
+        "parameter_group_order": list(PARAMETER_GROUPS),
+        "dataset_order": list(DATASETS),
+        "scenarios": {},
+        "dataset_stats": _dataset_attribution_stats(selected, model, device),
+    }
+    for scenario_index, scenario_name in enumerate(scenario_names):
+        summary["scenarios"][scenario_name] = {
+            "cross_dataset": {
+                key: _matrix_summary(cross[scenario_index, key_index], bootstrap_seed + 1000 * scenario_index + key_index, replicates)
+                for key_index, key in enumerate(keys)
+            },
+            "parameter_groups": {
+                group: _matrix_summary(grouped[scenario_index, group_index], bootstrap_seed + 10000 + 1000 * scenario_index + group_index, replicates)
+                for group_index, group in enumerate(PARAMETER_GROUPS)
+            },
+        }
+    reference = scenario_names[0]
+    summary["scenario_effect_vs_reference"] = {}
+    for scenario_index, scenario_name in enumerate(scenario_names[1:], start=1):
+        summary["scenario_effect_vs_reference"][scenario_name] = {
+            key: _matrix_summary(
+                cross[scenario_index, key_index] - cross[0, key_index],
+                bootstrap_seed + 20000 + 1000 * scenario_index + key_index,
+                replicates,
+            )
+            for key_index, key in enumerate(keys)
+        }
+
+    matched = {}
+    for pair_index, (left_name, right_name) in enumerate(config["match_pairs"]):
+        left_rows, right_rows, distances = _matched_rows(
+            selected[left_name], selected[right_name], int(config["seed"]) + 50000 + pair_index
+        )
+        usable = min(len(left_rows), num_batches * int(protocol["sampling"]["batch_size"]))
+        left_rows = left_rows[:usable].reshape(num_batches, -1)
+        right_rows = right_rows[:usable].reshape(num_batches, -1)
+        pair_result = {
+            "rows": usable,
+            "feature": "standardized [base_rope_norm,input_rope_norm]",
+            "match_distance_mean": float(distances[:usable].mean()),
+            "match_distance_p95": float(np.percentile(distances[:usable], 95)),
+            "scenarios": {},
+        }
+        for scenario_index, scenario_name in enumerate(config["matched_scenarios"]):
+            scenario = scenarios[scenario_name]
+            values = np.empty((num_batches, len(keys)), dtype=np.float64)
+            group_values = np.empty((num_batches, len(PARAMETER_GROUPS)), dtype=np.float64)
+            for batch_index in range(num_batches):
+                pair_gradients = []
+                for side_index, (name, rows) in enumerate(((left_name, left_rows[batch_index]), (right_name, right_rows[batch_index]))):
+                    entry = selected[name]
+                    batch = _scenario_batch(
+                        entry["arrays"], rows, device, scenario["rope_mode"],
+                        int(config["seed"]) + 70000 + 1000 * pair_index + 100 * scenario_index + 10 * batch_index + side_index,
+                    )
+                    total, fingers, _ = _losses(
+                        model, resources[name][0], batch, entry["dataset"], scenario["loss_weights"], resources[name][1]
+                    )
+                    requested = [("overall", total), *fingers.items()]
+                    pair_gradients.append({
+                        key: _grouped_gradients(loss, named_parameters, retain_graph=index + 1 < len(requested))
+                        for index, (key, loss) in enumerate(requested)
+                    })
+                for key_index, key in enumerate(keys):
+                    values[batch_index, key_index] = _cosine(pair_gradients[0][key]["all"], pair_gradients[1][key]["all"])
+                for group_index, group in enumerate(PARAMETER_GROUPS):
+                    group_values[batch_index, group_index] = _cosine(
+                        pair_gradients[0]["overall"][group], pair_gradients[1]["overall"][group]
+                    )
+            low, high = _bootstrap(values, seed=bootstrap_seed + 30000 + 100 * pair_index + scenario_index, replicates=replicates)
+            group_low, group_high = _bootstrap(group_values, seed=bootstrap_seed + 31000 + 100 * pair_index + scenario_index, replicates=replicates)
+            pair_result["scenarios"][scenario_name] = {
+                "mean": dict(zip(keys, values.mean(axis=0).tolist(), strict=True)),
+                "ci95_low": dict(zip(keys, low.tolist(), strict=True)),
+                "ci95_high": dict(zip(keys, high.tolist(), strict=True)),
+                "parameter_group_mean": dict(zip(PARAMETER_GROUPS, group_values.mean(axis=0).tolist(), strict=True)),
+                "parameter_group_ci95_low": dict(zip(PARAMETER_GROUPS, group_low.tolist(), strict=True)),
+                "parameter_group_ci95_high": dict(zip(PARAMETER_GROUPS, group_high.tolist(), strict=True)),
+            }
+            raw[f"matched_{left_name}_{right_name}_{scenario_name}"] = values
+            raw[f"matched_groups_{left_name}_{right_name}_{scenario_name}"] = group_values
+        matched[f"{left_name}__{right_name}"] = pair_result
+    summary["rope_state_matched_pairs"] = matched
+    raw_path = run_root / "attribution_raw.npz"
+    np.savez(raw_path, **raw)
+    summary["raw_sha256"] = sha256_file(raw_path)
+    write_json(run_root / "attribution_summary.json", summary)
     return summary
 
 
@@ -733,6 +977,159 @@ def write_report(run_root: Path, protocol: dict, selection: dict, gradient: dict
     (run_root / "report.md").write_text("\n".join(lines), encoding="utf-8")
 
 
+def evaluate_attribution(protocol: dict, attribution: dict, safety: dict) -> dict:
+    names = attribution["dataset_order"]
+    scenarios = attribution["scenarios"]
+
+    def cell(scenario, left, right, section="cross_dataset", key="overall"):
+        result = scenarios[scenario][section][key]
+        i, j = names.index(left), names.index(right)
+        return {
+            "mean": result["mean"][i][j],
+            "ci95": [result["ci95_low"][i][j], result["ci95_high"][i][j]],
+        }
+
+    def effect(scenario, left, right):
+        result = attribution["scenario_effect_vs_reference"][scenario]["overall"]
+        i, j = names.index(left), names.index(right)
+        return {
+            "mean": result["mean"][i][j],
+            "ci95": [result["ci95_low"][i][j], result["ci95_high"][i][j]],
+        }
+
+    pairs = {}
+    for left, right in protocol["attribution"]["diagnostic_pairs"]:
+        key = f"{left}__{right}"
+        full = cell("full_correct", left, right)
+        shuffled = cell("full_shuffled", left, right)
+        task = cell("task_correct", left, right)
+        full_match = attribution["rope_state_matched_pairs"][key]["scenarios"]["full_correct"]
+        task_match = attribution["rope_state_matched_pairs"][key]["scenarios"]["task_correct"]
+        pairs[key] = {
+            "full_correct": full,
+            "full_shuffled": shuffled,
+            "task_correct": task,
+            "shuffle_minus_full": effect("full_shuffled", left, right),
+            "task_minus_full": effect("task_correct", left, right),
+            "rope_state_matched_full": {
+                "mean": full_match["mean"]["overall"],
+                "ci95": [full_match["ci95_low"]["overall"], full_match["ci95_high"]["overall"]],
+            },
+            "rope_state_matched_task": {
+                "mean": task_match["mean"]["overall"],
+                "ci95": [task_match["ci95_low"]["overall"], task_match["ci95_high"]["overall"]],
+            },
+            "significant_full_conflict": full["ci95"][1] < 0.0,
+            "paired_rope_input_contributes": effect("full_shuffled", left, right)["ci95"][0] > 0.0,
+            "auxiliary_losses_contribute": effect("task_correct", left, right)["ci95"][0] > 0.0,
+            "persistent_after_task_and_rope_state_control": task["ci95"][1] < 0.0 and task_match["ci95_high"]["overall"] < 0.0,
+        }
+    hot_dex = pairs["hot3d__dexycb"]
+    if hot_dex["persistent_after_task_and_rope_state_control"]:
+        hot_dex_diagnosis = "persistent domain-conditioned pose/RGB mapping conflict"
+    elif hot_dex["paired_rope_input_contributes"] or hot_dex["auxiliary_losses_contribute"]:
+        hot_dex_diagnosis = "rope conditioning or auxiliary objective contributes materially"
+    else:
+        hot_dex_diagnosis = "sample-state distribution contributes; exact source not proven"
+    return {
+        "decision": "CONTINUE_HEAD_ONLY_PRODUCT_PILOT" if safety["status"] == "PASS" else "STOP",
+        "hot3d_dexycb_diagnosis": hot_dex_diagnosis,
+        "diagnostic_pairs": pairs,
+        "training_roles": {
+            "positive_target": ["hot3d"],
+            "priority_retention": ["arctic"],
+            "secondary_retention": ["ho3d_v3", "dexycb"],
+            "stress_only": ["interhand26m"],
+        },
+        "head_only_product_pilot_authorized": safety["status"] == "PASS",
+        "equal_weight_joint_training_authorized": False,
+        "decoder_adaptation_authorized": False,
+        "physical_sensor_validated": False,
+    }
+
+
+def write_attribution_report(run_root: Path, protocol: dict, attribution: dict, safety: dict, gate: dict) -> None:
+    lines = [
+        "# DirectPose conflict-source attribution", "",
+        f"Decision: **{gate['decision']}**. Exact fallback: **{safety['status']}**.", "",
+        "This is a fixed training-split diagnostic. It does not validate a physical rope sensor or authorize equal-weight four-domain training or decoder adaptation.", "",
+        "## Dataset operating point", "",
+        "| dataset | WiLoR PA/root | current head PA/root | valid rope | token RMS |", "|---|---:|---:|---:|---:|",
+    ]
+    for name in DATASETS:
+        row = attribution["dataset_stats"][name]
+        lines.append(
+            f"| {name} | {row['wilor_base_metrics'][0]:.3f}/{row['wilor_base_metrics'][1]:.3f} | "
+            f"{row['current_head_metrics'][0]:.3f}/{row['current_head_metrics'][1]:.3f} | "
+            f"{row['valid_fraction']:.3f} | {row['token_rms']:.3f} |"
+        )
+    lines += ["", "## Overall scenario matrices", ""]
+    for scenario_name in attribution["scenario_order"]:
+        lines += _markdown_ci_matrix(scenario_name, attribution["scenarios"][scenario_name]["cross_dataset"]["overall"])
+    lines += ["## Parameter-layer matrices under full correct rope", ""]
+    for group in PARAMETER_GROUPS:
+        lines += _markdown_ci_matrix(group, attribution["scenarios"]["full_correct"]["parameter_groups"][group])
+    lines += ["## Full-correct per-finger matrices", ""]
+    for finger in FINGER_ORDER:
+        lines += _markdown_ci_matrix(finger, attribution["scenarios"]["full_correct"]["cross_dataset"][finger])
+    lines += ["## Rope-state matched diagnostic pairs", "", "| pair | scenario | cosine [95% CI] | rows | match distance mean/P95 |", "|---|---|---:|---:|---:|"]
+    for pair, result in attribution["rope_state_matched_pairs"].items():
+        for scenario, values in result["scenarios"].items():
+            lines.append(
+                f"| {pair} | {scenario} | {values['mean']['overall']:+.3f} "
+                f"[{values['ci95_low']['overall']:+.3f},{values['ci95_high']['overall']:+.3f}] | "
+                f"{result['rows']} | {result['match_distance_mean']:.3f}/{result['match_distance_p95']:.3f} |"
+            )
+    lines += ["", "## Predeclared interpretation", "", f"- HOT3D-DexYCB: **{gate['hot3d_dexycb_diagnosis']}**."]
+    for pair, result in gate["diagnostic_pairs"].items():
+        lines += [
+            f"- {pair}: full conflict={result['significant_full_conflict']}; paired-rope contribution={result['paired_rope_input_contributes']}; "
+            f"auxiliary-loss contribution={result['auxiliary_losses_contribute']}; persistent after task/state control={result['persistent_after_task_and_rope_state_control']}."
+        ]
+    lines += [
+        "", "## Next bounded experiment", "",
+        "Use HOT3D as the positive product-proxy target, ARCTIC as priority retention, HO3D/DexYCB as secondary retention, and InterHand only as stress evaluation. Keep WiLoR/MANO/decoder frozen and compare matched RGB-only, clean rope, and robust rope heads. Do not reinterpret these GT-derived ideal rope values as physical calibration evidence.", "",
+    ]
+    (run_root / "attribution_report.md").write_text("\n".join(lines), encoding="utf-8")
+
+
+def verify_attribution_run(run_root: Path) -> dict:
+    required = (
+        "protocol.json", "sample_manifests/summary.json", "safety_gate.json",
+        "attribution_raw.npz", "attribution_summary.json", "summary.json", "attribution_report.md",
+    )
+    missing = [name for name in required if not (run_root / name).is_file()]
+    checks = {"required_artifacts": not missing}
+    errors = [] if not missing else [f"missing artifacts: {missing}"]
+    if not missing:
+        protocol = json.loads((run_root / "protocol.json").read_text())
+        selection = json.loads((run_root / "sample_manifests/summary.json").read_text())
+        safety = json.loads((run_root / "safety_gate.json").read_text())
+        attribution = json.loads((run_root / "attribution_summary.json").read_text())
+        summary = json.loads((run_root / "summary.json").read_text())
+        checks["protocol_sha256"] = summary["protocol_sha256"] == sha256_file(run_root / "protocol.json")
+        checks["immutable_inputs"] = summary["input_sha256"] == verify_input_hashes(protocol)
+        checks["training_only"] = all(protocol["datasets"][name]["split_role"] == "training" for name in DATASETS)
+        checks["episode_disjoint"] = all(not selection[name]["episode_overlap"] for name in DATASETS)
+        checks["safety"] = safety["status"] == "PASS"
+        checks["raw_hash"] = attribution["raw_sha256"] == sha256_file(run_root / "attribution_raw.npz")
+        checks["scenario_order"] = attribution["scenario_order"] == list(protocol["attribution"]["scenarios"])
+        with np.load(run_root / "attribution_raw.npz") as raw:
+            expected = (
+                len(protocol["attribution"]["scenarios"]), 1 + len(FINGER_ORDER),
+                int(protocol["sampling"]["num_batches"]), len(DATASETS), len(DATASETS),
+            )
+            checks["matrix_shape"] = raw["cross_dataset_cosine"].shape == expected
+        for name, passed in checks.items():
+            if not passed:
+                errors.append(f"failed check: {name}")
+    result = {"status": "PASS" if not errors else "FAIL", "checks": checks, "errors": errors, "verified_at_unix": time.time()}
+    write_json(run_root / "attribution_verification.json", result)
+    if errors:
+        raise ValueError("; ".join(errors))
+    return result
+
+
 def verify_run(run_root: Path) -> dict:
     required = (
         "protocol.json", "sample_manifests/summary.json", "safety_gate.json",
@@ -831,6 +1228,44 @@ def run_audit(protocol_path: Path, run_root: Path, device: str) -> dict:
     return summary
 
 
+def run_attribution(protocol_path: Path, run_root: Path, device: str) -> dict:
+    protocol_bytes = protocol_path.read_bytes()
+    protocol = json.loads(protocol_bytes)
+    if tuple(protocol.get("dataset_order", ())) != DATASETS:
+        raise ValueError(f"dataset_order must be {DATASETS}")
+    if not protocol.get("attribution"):
+        raise ValueError("protocol is missing attribution configuration")
+    input_hashes = verify_input_hashes(protocol)
+    run_root.mkdir(parents=True, exist_ok=False)
+    (run_root / "protocol.json").write_bytes(protocol_bytes)
+    selected, _ = prepare_selected_data(protocol, run_root)
+    checkpoint = Path(protocol["checkpoint"]["path"])
+    checkpoint_hash = sha256_file(checkpoint)
+    if checkpoint_hash != protocol["checkpoint"]["sha256"]:
+        raise ValueError("checkpoint hash changed after protocol freeze")
+    raw_model, model, checkpoint_config = load_checkpoint_models(checkpoint, device)
+    if int(checkpoint_config["hidden_dim"]) != 128:
+        raise ValueError("attribution protocol requires current h128 checkpoint")
+    safety = exact_fallback_gate(checkpoint, selected[DATASETS[0]]["arrays"], device)
+    write_json(run_root / "safety_gate.json", safety)
+    if safety["status"] != "PASS":
+        raise ValueError("exact fallback safety gate failed")
+    del raw_model
+    attribution = run_attribution_audit(protocol, selected, model, device, run_root)
+    gate = evaluate_attribution(protocol, attribution, safety)
+    summary = {
+        "status": "completed", "decision": gate["decision"],
+        "protocol_sha256": hashlib.sha256(protocol_bytes).hexdigest(),
+        "checkpoint_sha256": checkpoint_hash, "input_sha256": input_hashes,
+        "dataset_order": list(DATASETS), "gate": gate,
+        "training_started": False, "physical_sensor_validated": False,
+    }
+    write_json(run_root / "summary.json", summary)
+    write_attribution_report(run_root, protocol, attribution, safety, gate)
+    verify_attribution_run(run_root)
+    return summary
+
+
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -842,6 +1277,12 @@ def parse_args(argv=None):
     verify.add_argument("--run-root", type=Path, required=True)
     report = sub.add_parser("report")
     report.add_argument("--run-root", type=Path, required=True)
+    attribution = sub.add_parser("attribute")
+    attribution.add_argument("--protocol", type=Path, required=True)
+    attribution.add_argument("--run-root", type=Path, required=True)
+    attribution.add_argument("--device", default="cuda")
+    verify_attribution = sub.add_parser("verify-attribution")
+    verify_attribution.add_argument("--run-root", type=Path, required=True)
     return parser.parse_args(argv)
 
 
@@ -851,6 +1292,10 @@ def main(argv=None):
         return verify_run(args.run_root)
     if args.command == "report":
         return render_report(args.run_root)
+    if args.command == "verify-attribution":
+        return verify_attribution_run(args.run_root)
+    if args.command == "attribute":
+        return run_attribution(args.protocol, args.run_root, args.device)
     return run_audit(args.protocol, args.run_root, args.device)
 
 
