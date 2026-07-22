@@ -139,11 +139,14 @@ class DirectPoseHeadTest(unittest.TestCase):
             "rope_bias_std": 0.0,
             "rope_bias_fixed": -0.1,
             "rope_scale_range": 0.0,
+            "rope_missing_finger": ["ring"],
             "seed": 7,
         })()
         script.apply_sensor_perturbation(arrays, args)
         np.testing.assert_allclose(arrays["input_rope_norm"], 0.9)
-        self.assertTrue(arrays["rope_valid"].all())
+        self.assertTrue(arrays["rope_valid"][:, :3].all())
+        self.assertFalse(arrays["rope_valid"][:, 3].any())
+        self.assertTrue(arrays["rope_valid"][:, 4].all())
 
 
 if __name__ == "__main__":

@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from ropetrack.refine.actions import FINGER_POSE_GROUPS
 from ropetrack.refine.analysis import perturb_rope_reading
 from ropetrack.refine.cache import align_rows_by_sample_id
-from ropetrack.rope import FINGER_CHAINS
+from ropetrack.rope import FINGER_CHAINS, FINGER_ORDER
 from ropetrack.eval.pipeline import load_mano_j_regressor
 from ropetrack.eval.protocols import DEXYCB_TIP_VERTEX_IDS, FREIHAND_JOINT_ORDER, canonical_dataset
 from scripts.rope_refiner.apply_rope_refinement import (
@@ -320,6 +320,9 @@ def apply_sensor_perturbation(arrays: dict[str, np.ndarray], args) -> None:
         bias_fixed=args.rope_bias_fixed,
         scale_range=args.rope_scale_range,
     )
+    for finger in getattr(args, "rope_missing_finger", ()):
+        finger_index = FINGER_ORDER.index(finger)
+        valid[:, finger_index] = False
     arrays["input_rope_norm"], arrays["rope_valid"] = rope, valid
 
 
@@ -523,6 +526,10 @@ def parse_args(argv=None):
     apply_p.add_argument("--rope-bias-fixed", type=float, default=0.0)
     apply_p.add_argument("--rope-scale-range", type=float, default=0.0)
     apply_p.add_argument("--rope-gain-fixed", type=float, default=1.0)
+    apply_p.add_argument(
+        "--rope-missing-finger", action="append", choices=FINGER_ORDER, default=[],
+        help="Mark one named rope channel invalid; repeat to invalidate multiple fingers.",
+    )
     apply_p.add_argument("--no-vertices", action="store_true")
     return parser.parse_args(argv)
 
