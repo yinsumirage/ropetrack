@@ -184,6 +184,24 @@ and no significant context change. This bounds a future hypothesis count; it
 does not determine hidden width or prove that a learned K=8 head can reproduce
 the reference-bank ceiling.
 
+## Exact same-row comparison with the current DirectPose head
+
+The already-generated 0088 HOT3D clean-fold2 predictions were aligned to the
+exact 1,024 audit query IDs. This is a post-hoc comparison only: it performs no
+training or selection and retains the same episode bootstrap.
+
+| Slice | WiLoR | DirectPose | DirectPose minus WiLoR [95% CI] | K=64 oracle minus DirectPose [95% CI] | K=64 rerank minus DirectPose [95% CI] |
+|---|---:|---:|---:|---:|---:|
+| All | 9.278 | **6.502** | **-2.775 `[-3.324,-2.251]`** | -0.248 `[-0.676,+0.198]` | +1.967 `[+1.451,+2.500]` |
+| Context | 7.965 | **5.956** | **-2.009 `[-2.582,-1.449]`** | -0.060 `[-0.539,+0.406]` | +2.391 `[+1.792,+3.006]` |
+| Low visibility | 10.648 | **7.073** | **-3.575 `[-4.428,-2.750]`** | -0.445 `[-0.988,+0.128]` | +1.525 `[+0.868,+2.195]` |
+
+The K=8 oracle is already worse than DirectPose on low visibility by
+`+1.284 mm`, CI `[+0.733,+1.864]`; its reranker is worse by `+2.541 mm`, CI
+`[+1.914,+3.173]`. Even the much larger K=64 oracle does not significantly
+beat DirectPose on any slice. The conditional-posterior screen therefore has
+no demonstrated PA headroom over the current h128 head and is closed.
+
 ## Decision
 
 1. **Keep the current h128 DirectPose as the software product candidate.**
@@ -197,18 +215,13 @@ the reference-bank ceiling.
 3. **Do not train all four domains equally or unlock the WiLoR decoder.** The
    0087 failure remains binding. The diagonal-dominant retrieval matrices
    strengthen the domain-shift explanation.
-4. **Do not implement the K=8 head yet.** The next operation is cheaper:
-   align the already-generated 0088 DirectPose predictions to these exact
-   1,024 query IDs and compare them with the K=8/K=64 oracle. The unmatched
-   full-slice 0088 DirectPose result is `6.148 mm` on low visibility, already
-   below this audit's K=64 retrieval (`8.599 mm`) and even below its `6.628 mm`
-   oracle, so additional headroom is not currently established.
-5. Only if the exact same-row oracle beats the current DirectPose head should
-   one screen a HOT3D-centered conditional K=8 local-pose posterior, with a
-   zero/WiLoR candidate always present, rope likelihood used for hypothesis
-   weighting, exact invalid-channel fallback, ARCTIC one-sided retention, and
-   HO3D/DexYCB/InterHand used as frozen training-only audit domains rather
-   than equal update sources.
+4. **Do not implement the K=8 posterior head.** On the exact same rows its
+   oracle is significantly worse than DirectPose, and even the K=64 oracle
+   does not significantly beat DirectPose. More candidates or a learned
+   posterior are not justified by this audit.
+5. Reopen posterior work only with new information unavailable to the current
+   head, such as calibrated physical rope traces or a predeclared temporal
+   observation; do not repeat reference-bank K/head-width scaling.
 
 The practical software path today remains:
 
@@ -228,6 +241,7 @@ still required.
 - main K=64 audit `194684`: PASS, `00:00:54`;
 - K-sensitivity array `194693_0`--`194693_3`: all PASS; at most two GPUs
   active concurrently;
+- exact same-row CPU comparison `194717`: PASS, `00:00:05`, `ExitCode 0:0`;
 - aggregate allocated GPU time including the failed smoke is about
   `0.222 GPU-hours`; successful jobs use about `0.200 GPU-hours`;
 - wall time from first GPU start through the final array completion is about
@@ -241,6 +255,8 @@ still required.
   `f1a3174bce99d7a2369ef3aa962f30fa544de7a2f5eb966eb676408f93b01131`;
 - K-sensitivity post-hoc CI SHA-256:
   `e46ec48b1b352ca38243da5ff115560bcc1222bba162087d6d77ec34c19e8218`;
+- exact same-row comparison SHA-256:
+  `ee9c14ab512707c619f75acbe523347150c2e9b2ac78df7685aa1dc3401adc6e`;
 - independent verifier: PASS, SHA-256
   `f106aed58ae2fcecec229e29d5bc48efe3b57a38c51a8daca309d6ef9c5804cc`.
 
