@@ -100,7 +100,7 @@ class EvalPipelineTest(unittest.TestCase):
         self.assertNotIn("bench_freihand", source)
 
         pipeline_source = (Path(__file__).resolve().parents[1] / "ropetrack" / "eval" / "pipeline.py").read_text()
-        self.assertIn("score_predictions.py", pipeline_source)
+        self.assertIn('"ropetrack.eval.scoring"', pipeline_source)
 
     def test_non_eval_split_skips_evaluation_protocol_check(self):
         pipeline_source = (Path(__file__).resolve().parents[1] / "ropetrack" / "eval" / "pipeline.py").read_text()

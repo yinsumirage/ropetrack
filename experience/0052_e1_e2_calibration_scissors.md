@@ -4,7 +4,8 @@ Date: 2026-07-09
 
 ## Scope
 
-Ran the approved E1/E2 batch from `docs/2026-07-09-sim-batch-spec.md`.
+Ran the approved E1/E2 batch; this note is the retained terminal specification
+and result record.
 E3 was not run.
 
 Code prep was minimal:

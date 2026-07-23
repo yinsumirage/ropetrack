@@ -1,30 +1,62 @@
 # Scripts
 
+## Placement Rules
+
+- `ropetrack/` owns reusable importable logic: models, metrics, schemas,
+  dataset adapters, and shared decoding/protocol helpers.
+- `scripts/` owns command-line parsing and orchestration. A script may import
+  `ropetrack`; new shared logic must not be implemented as a script-to-script
+  import.
+- Extend an existing dataset/config-driven command before adding another
+  entrypoint. `eval.py` is the only supported top-level Python script.
+- Reproduction-only stopped directions remain runnable but are not templates
+  for new work. Move script families only as one coordinated change that also
+  updates imports, tests, documented commands, and archived launch recipes.
+
+Active code no longer imports reusable logic from another script. The stopped
+`legacy/temporal/` family keeps its internal imports only to reproduce the
+historical state/gate experiments.
+
+## Directory map
+
+| Path | Ownership |
+|---|---|
+| `eval.py` | One config-driven benchmark export entrypoint |
+| `datasets/` | Thin preparation, audit, coordinate-gate, and protocol CLIs |
+| `evaluation/` | Thin scoring CLIs and existing-prediction analyses |
+| `rope_refiner/` | Active/frozen rope-refinement CLIs and report tools |
+| `rope_diagnostics/` | Rope-label error analysis and visual checks |
+| `legacy/temporal/` | Stopped temporal/state/visibility experiments; reproduction only |
+
+Reusable implementations live in `ropetrack/datasets`, `ropetrack/eval`, and
+`ropetrack/refine`. The score and DirectPose wrappers here intentionally contain
+only repository-path bootstrap plus a call to package `main()`.
+
 Current benchmark entrypoints:
 
 - `eval.py`: config-driven benchmark export and eval entrypoint.
-- `score_predictions.py`: PA/mesh/F-score evaluator invoked by `eval.py --run-eval`.
-- `analyze_pose_error_decomposition.py`: existing-prediction camera/root/T/RT/Sim3 decomposition with sample-ID, parity, group-bootstrap, and artifact-verification gates.
+- `evaluation/score_predictions.py`: PA/mesh/F-score wrapper; `eval.py --run-eval` invokes `ropetrack.eval.scoring` directly.
+- `evaluation/analyze_pose_error_decomposition.py`: existing-prediction camera/root/T/RT/Sim3 decomposition with sample-ID, parity, group-bootstrap, and artifact-verification gates.
 - `evaluation/audit_direct_pose_gradients.py`: training-only five-domain DirectPose gradient cosine, one-step transfer, and exact missing-sensor fallback audit; consumes an externally frozen protocol and writes only to the remote run root.
-- `score_sliced_predictions.py`: occlusion/rope-residual sliced scorer (details below).
-- `make_hard_images.py`: hard-image split generator.
-- `make_rope_labels.py`: GT fingertip-to-wrist rope label generator.
-- `prepare_egodex.py`: EgoDex MP4/HDF5 exporter for image + camera-frame 21-joint manifests.
-- `audit_ho3d_train_split.py`: format audit before touching an HO3D train split.
+- `evaluation/score_sliced_predictions.py`: occlusion/rope-residual sliced scorer.
+- `datasets/make_hard_images.py`: hard-image split generator.
+- `datasets/make_rope_labels.py`: GT fingertip-to-wrist rope label generator.
+- `datasets/prepare_egodex.py`: EgoDex MP4/HDF5 exporter for image + camera-frame 21-joint manifests.
+- `datasets/audit_ho3d_train_split.py`: format audit before touching an HO3D train split.
 - `rope_refiner/apply_rope_refinement.py`: teacher optimization / student apply.
 - `rope_refiner/train_alpha_student.py`: P2 alpha-student distillation trainer.
 - `rope_refiner/summarize_runs.py` + `plot_report_figures.py` + `make_qualitative_panels.py`: report tables/figures/panels.
 - `rope_refiner/analyze_alpha_deadzone.py`: curl-vs-closure diagnostic.
-- `rope_head/extract_feature_cache.py`: P3 frozen backbone feature caching.
+- `rope_refiner/extract_feature_cache.py`: frozen backbone feature/token caching.
 - `rope_diagnostics/score_rope_predictions.py`: rope diagnostic scorer for exported `pred.json`.
 - `rope_diagnostics/analyze_rope_errors.py`: rope reliability analysis tables/figures.
 - `rope_diagnostics/visualize_mesh_comparison.py`: mesh/prediction visual check helper.
-- `prepare_ho3d_normal_train.py`: sequence-balanced, train-only HO3D v3 normal export with the evaluation tip convention.
-- `prepare_interhand26m.py`: deterministic InterHand2.6M v1.0 30fps one-view manifests, train27k, and freeze-gated test export.
-- `validate_interhand26m_coordinates.py`: official-source, projection, native-MANO, and WiLoR/DirectPose left-hand gate.
-- `score_interhand26m.py`: side-aware joint/mesh diagnostics and frame-group bootstrap scoring.
-- `analyze_interhand26m_rope.py`: post-hoc population, paired-hand overlap, rope-residual, MANO-fit, per-finger, and qualitative diagnostic figures; never a checkpoint selector.
-- `interhand26m_protocol.py`: pre-val/test freezes, raw-tree signatures, and final artifact verification.
+- `datasets/prepare_ho3d_normal_train.py`: sequence-balanced, train-only HO3D v3 normal export with the evaluation tip convention.
+- `datasets/prepare_interhand26m.py`: wrapper over the reusable InterHand one-view protocol implementation.
+- `datasets/validate_interhand26m_coordinates.py`: official-source, projection, native-MANO, and WiLoR/DirectPose left-hand gate.
+- `evaluation/score_interhand26m.py`: side-aware joint/mesh diagnostics and frame-group bootstrap scoring.
+- `evaluation/analyze_interhand26m_rope.py`: post-hoc population, overlap, rope, MANO-fit, per-finger, and qualitative diagnostics; never a checkpoint selector.
+- `datasets/interhand26m_protocol.py`: pre-val/test freezes, raw-tree signatures, and final artifact verification.
 - `rope_refiner/direct_pose_head.py`: active experimental DirectPose train/apply CLI over frozen localized tokens and normalized rope.
 
 Status and replacement decisions live in
@@ -44,7 +76,7 @@ paths from an external JSON config, so dataset artifacts are never hardcoded in
 the metric implementation:
 
 ```bash
-python scripts/analyze_pose_error_decomposition.py \
+python scripts/evaluation/analyze_pose_error_decomposition.py \
   --config <run-root>/pose_error_decomposition_config.json \
   --output-root <run-root>
 ```
@@ -58,7 +90,7 @@ requires the matching `test_freeze.json`:
 ```bash
 # Current corrected capture/sequence-balanced train subset. The historical
 # oneview_v1/train27k directory is preserved but invalid for supervision.
-python scripts/prepare_interhand26m.py \
+python scripts/datasets/prepare_interhand26m.py \
   --raw-root /data/wentao/datasets/interhand2.6m_v1_30fps \
   --output-root /data/wentao/ropetrack/processed/interhand2.6m_v1_30fps/oneview_v1_train27k_v2 \
   --splits train
@@ -78,13 +110,13 @@ project-specific subsets under `/data/wentao/ropetrack/processed/egodex`.
 ```bash
 # CPU: decode a sampled evaluation subset. Each hand is one sample; the same
 # image can therefore appear in one left-hand row and one right-hand row.
-python scripts/prepare_egodex.py \
+python scripts/datasets/prepare_egodex.py \
   --input-root /data/wentao/datasets/egodex/test \
   --output-root /data/wentao/ropetrack/processed/egodex/test_eval \
   --split evaluation --hands both --frame-stride 10
 
 # CPU: build RopeTrack GT rope labels directly from EgoDex's 21 joints.
-python scripts/make_rope_labels.py --dataset egodex \
+python scripts/datasets/make_rope_labels.py --dataset egodex \
   --input-root /data/wentao/ropetrack/processed/egodex/test_eval \
   --output /data/wentao/ropetrack/processed/egodex/test_eval/rope_labels.jsonl \
   --split evaluation --viz-dir /data/wentao/ropetrack/runs/egodex_viz --viz-count 16
@@ -102,7 +134,7 @@ cache. The resulting run directory and rope labels are ordinary inputs to
 `apply_rope_refinement.py --dataset egodex` and `train_alpha_student.py`:
 
 ```bash
-python scripts/prepare_egodex.py \
+python scripts/datasets/prepare_egodex.py \
   --input-root /data/wentao/datasets/egodex/part1 \
   --output-root /data/wentao/ropetrack/processed/egodex/part1_train_s10 \
   --split training --hands both --frame-stride 10
@@ -126,8 +158,8 @@ innermost `arctic_data/data`; full training exports joints and rope labels but
 not the unused GT meshes:
 
 ```bash
-python scripts/prepare_arctic.py --split train --skip-image-check
-python scripts/make_rope_labels.py --dataset arctic --split training \
+python scripts/datasets/prepare_arctic.py --split train --skip-image-check
+python scripts/datasets/make_rope_labels.py --dataset arctic --split training \
   --input-root /data/wentao/ropetrack/processed/arctic/p2_train \
   --output /data/wentao/ropetrack/processed/arctic/p2_train/rope_labels.jsonl
 python scripts/eval.py --dataset arctic_p2_train --split training \
@@ -143,23 +175,23 @@ Hard split roots are generated as normal dataset roots and then selected by
 dataset config name:
 
 ```bash
-python scripts/make_hard_images.py --dataset ho3d --input-root /data/wentao/ropetrack/HO3D_v2_eval --output-root /data/wentao/ropetrack/hard/ho3d_v2/mask70 --effect mask --severity 0.70 --limit 0
-python scripts/make_hard_images.py --dataset ho3d --input-root /data/wentao/ropetrack/HO3D_v2_eval --output-root /data/wentao/ropetrack/hard/ho3d_v2/tip_square80 --effect tip_square --severity 0.80 --limit 0
-python scripts/make_hard_images.py --dataset ho3d --input-root /data/wentao/ropetrack/HO3D_v2_eval --output-root /data/wentao/ropetrack/hard/ho3d_v2/finger_end80 --effect finger_end --severity 0.80 --limit 0
+python scripts/datasets/make_hard_images.py --dataset ho3d --input-root /data/wentao/ropetrack/HO3D_v2_eval --output-root /data/wentao/ropetrack/hard/ho3d_v2/mask70 --effect mask --severity 0.70 --limit 0
+python scripts/datasets/make_hard_images.py --dataset ho3d --input-root /data/wentao/ropetrack/HO3D_v2_eval --output-root /data/wentao/ropetrack/hard/ho3d_v2/tip_square80 --effect tip_square --severity 0.80 --limit 0
+python scripts/datasets/make_hard_images.py --dataset ho3d --input-root /data/wentao/ropetrack/HO3D_v2_eval --output-root /data/wentao/ropetrack/hard/ho3d_v2/finger_end80 --effect finger_end --severity 0.80 --limit 0
 python scripts/eval.py --dataset ho3d_v2_mask70 --method wilor_anyhand --run-eval
 ```
 
 HO3D v3 TRAIN pipeline (multi-dataset P2 teacher; assumptions verified by
-`scripts/audit_ho3d_train_split.py`, experience/0040 — train metas have no
+`scripts/datasets/audit_ho3d_train_split.py`, experience/0040 — train metas have no
 handBoundingBox, so GT bboxes are projected from `handJoints3D`). Stride is
 baked into the hard root's own `train.txt`, so downstream steps stay aligned
 by construction; both generators are CPU-only:
 
 ```bash
 # CPU: strided hard root (stride 4 -> ~20.8k of 83,325 video frames)
-python scripts/make_hard_images.py --dataset ho3d --split training --stride 4 --input-root /data/wentao/ropetrack/HO3D_v3 --output-root /data/wentao/ropetrack/hard/ho3d_v3/mask70_train --effect mask --severity 0.70 --limit 0
+python scripts/datasets/make_hard_images.py --dataset ho3d --split training --stride 4 --input-root /data/wentao/ropetrack/HO3D_v3 --output-root /data/wentao/ropetrack/hard/ho3d_v3/mask70_train --effect mask --severity 0.70 --limit 0
 # CPU: matching rope labels (same stride, same source list)
-python scripts/make_rope_labels.py --dataset ho3d --split training --stride 4 --input-root /data/wentao/ropetrack/HO3D_v3 --output /data/wentao/ropetrack/rope_labels/ho3d_v3/training_rope_s4.jsonl
+python scripts/datasets/make_rope_labels.py --dataset ho3d --split training --stride 4 --input-root /data/wentao/ropetrack/HO3D_v3 --output /data/wentao/ropetrack/rope_labels/ho3d_v3/training_rope_s4.jsonl
 # GPU: export + winner teacher on the hard train root
 python scripts/eval.py --dataset ho3d_v3_mask70_train --method wilor_original --split training --protocol-check-samples 0 --save-mano-cache
 python scripts/rope_refiner/apply_rope_refinement.py --mode optimize --objective rope --action-space flex15 --gate-residual-threshold 0.1 --dataset ho3d ...
@@ -171,7 +203,7 @@ Rope labels are JSONL so each row keeps sample id, raw distance, chain length,
 normalized value, validity, and normalization metadata:
 
 ```bash
-python scripts/make_rope_labels.py --dataset ho3d --input-root /data/wentao/ropetrack/HO3D_v2_eval --output /data/wentao/ropetrack/rope/ho3d_v2_rope.jsonl --viz-dir /data/wentao/ropetrack/runs/rope_viz/ho3d_v2 --viz-count 16
+python scripts/datasets/make_rope_labels.py --dataset ho3d --input-root /data/wentao/ropetrack/HO3D_v2_eval --output /data/wentao/ropetrack/rope/ho3d_v2_rope.jsonl --viz-dir /data/wentao/ropetrack/runs/rope_viz/ho3d_v2 --viz-count 16
 python scripts/rope_diagnostics/score_rope_predictions.py /data/wentao/ropetrack/runs/clean_baseline/ho3d_v2_wilor_original/eval_input /data/wentao/ropetrack/rope/ho3d_v2_rope.jsonl /data/wentao/ropetrack/runs/rope_scores/ho3d_v2_wilor_original --dataset ho3d --run-meta /data/wentao/ropetrack/runs/clean_baseline/ho3d_v2_wilor_original/run_meta.json
 python scripts/rope_diagnostics/analyze_rope_errors.py /data/wentao/ropetrack/runs/rope_phase12_20260705_031056/scores /data/wentao/ropetrack/runs/rope_phase12_20260705_031056/diagnostics
 ```
@@ -180,8 +212,8 @@ FreiHAND train roots for teacher generation (see RELEASE.md for the full
 provenance chain):
 
 ```bash
-python scripts/make_hard_images.py --dataset freihand --split training --input-root /data/wentao/ropetrack/FreiHAND --output-root /data/wentao/ropetrack/hard/freihand/mask70_wilor_training --effect mask --severity 0.70 --limit 0
-python scripts/make_rope_labels.py --dataset freihand --split training --input-root /data/wentao/ropetrack/FreiHAND --output /data/wentao/ropetrack/rope/freihand_training_rope.jsonl
+python scripts/datasets/make_hard_images.py --dataset freihand --split training --input-root /data/wentao/ropetrack/FreiHAND --output-root /data/wentao/ropetrack/hard/freihand/mask70_wilor_training --effect mask --severity 0.70 --limit 0
+python scripts/datasets/make_rope_labels.py --dataset freihand --split training --input-root /data/wentao/ropetrack/FreiHAND --output /data/wentao/ropetrack/rope/freihand_training_rope.jsonl
 ```
 
 `rope_refiner/apply_rope_refinement.py` has two modes:
@@ -193,8 +225,8 @@ python scripts/make_rope_labels.py --dataset freihand --split training --input-r
 removed in the consolidation pass; the negative result stays documented in
 experience/0026.)
 
-Optimize mode supports the P0 probes from
-`docs/2026-07-06-rope-refinement-next-plan.md`:
+Optimize mode supports the retained P0 probes recorded in
+`experience/0029_p0_oracle_slice_deadzone_tooling.md` and 0030-0038:
 
 - `--objective rope|oracle_tip|oracle_chain`: rope-label MSE, or GT-joint
   ceiling probes (`oracle_*` needs `--gt-xyz <split>_xyz.json`, same row
@@ -245,13 +277,13 @@ optimization at inference); the residual gate stays a hard rule from the
 checkpoint config, and `--rope-loss-weight` optionally adds a differentiable
 rope-consistency term (needs `--mano-cache`).
 
-P3 rope-conditioned head prep (`scripts/rope_head/`):
+Frozen feature/token cache preparation:
 
 ```bash
 # cache frozen backbone features (same crops as the benchmark export;
 # hook on model.backbone during a normal forward). GPU, gt_bbox only.
-python scripts/rope_head/extract_feature_cache.py --dataset freihand_mask70 --method wilor_original --split evaluation --output /data/wentao/ropetrack/features/freihand_mask70_eval_wilor.npz
-python scripts/rope_head/extract_feature_cache.py --dataset freihand_mask70 --method wilor_original --split training --freihand-root <mask70_train_hard_root> --output /data/wentao/ropetrack/features/freihand_mask70_train_wilor.npz
+python scripts/rope_refiner/extract_feature_cache.py --dataset freihand_mask70 --method wilor_original --split evaluation --output /data/wentao/ropetrack/features/freihand_mask70_eval_wilor.npz
+python scripts/rope_refiner/extract_feature_cache.py --dataset freihand_mask70 --method wilor_original --split training --freihand-root <mask70_train_hard_root> --output /data/wentao/ropetrack/features/freihand_mask70_train_wilor.npz
 ```
 
 `--pooling meanmax` doubles the feature dim; `--save-tokens` stores the full
@@ -271,7 +303,7 @@ python scripts/rope_refiner/plot_report_figures.py --summary <tables_dir>/runs_s
 P0 analysis entrypoints (CPU, numpy-only):
 
 ```bash
-python scripts/score_sliced_predictions.py <apply_out_dir> <scores_out_dir> --dataset freihand --gt-dir <hard_root> --hard-manifest <hard_root>/hard_manifest.jsonl --cache <apply_out_dir>/refiner_eval_cache.npz
+python scripts/evaluation/score_sliced_predictions.py <apply_out_dir> <scores_out_dir> --dataset freihand --gt-dir <hard_root> --hard-manifest <hard_root>/hard_manifest.jsonl --cache <apply_out_dir>/refiner_eval_cache.npz
 python scripts/rope_refiner/analyze_alpha_deadzone.py --cache <apply_out_dir>/refiner_eval_cache.npz --alpha <apply_out_dir>/alpha.npy --residuals <apply_out_dir>/rope_residuals.npz --action-space mult5 --output-dir <deadzone_out_dir>
 ```
 
@@ -288,7 +320,7 @@ DexYCB official S1 uses a guarded manifest workflow:
 ```bash
 # CPU: audits official toolkit + BOP S1 + the prior copy report, then exports
 # train27k/smoke and S1 val. The raw root is read only.
-python scripts/prepare_dexycb.py --raw-root /data/wentao/datasets/dexycb \
+python scripts/datasets/prepare_dexycb.py --raw-root /data/wentao/datasets/dexycb \
   --output-root /data/wentao/ropetrack/processed/dexycb/s1_v1 \
   --audit-summary /data/wentao/ropetrack/runs/handdata_audit_20260719/dexycb/summary.json \
   --toolkit-root .local_checks/dex-ycb-toolkit \
@@ -297,7 +329,7 @@ python scripts/prepare_dexycb.py --raw-root /data/wentao/datasets/dexycb \
 
 # Test export is deliberately impossible until the matched checkpoints,
 # visibility thresholds, and evaluation recipe are frozen.
-python scripts/prepare_dexycb.py <same audit arguments> --splits test \
+python scripts/datasets/prepare_dexycb.py <same audit arguments> --splits test \
   --test-freeze-file <run>/protocol/recipe_freeze.json
 ```
 

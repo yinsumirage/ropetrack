@@ -4,12 +4,15 @@ This folder is the repo memory. Every non-trivial experiment, failure, data
 finding, environment fix, submodule/Git incident, or engineering decision gets
 one short note here.
 
-`docs/` is for stable knowledge and plans. `experience/` is for what actually
-happened: commands, errors, fixes, paths, scores, and next actions.
+`docs/` is for the small current status/protocol/report set. `experience/` is
+for what actually happened: plans, commands, errors, fixes, paths, scores, and
+next actions.
 
-Keep notes in one folder until a stage has enough entries to justify moving
-files. Use `INDEX.md` section headers for stages first; split directories only
-when the flat list becomes hard to scan.
+The numbered files intentionally stay in one flat, append-only sequence. Many
+plans, code comments, and later notes link to their exact paths, so physically
+splitting old notes into `datasets/`, `models/`, or `evaluation/` would create
+link churn without improving the evidence itself. Use the stage timeline and
+topic map at the top of `INDEX.md` as the two supported views.
 
 Before new work:
 
@@ -19,7 +22,8 @@ Before new work:
 
 After new work:
 
-1. Add a dated note.
+1. Add a numbered note at `experience/NNNN_short_slug.md`.
 2. Record command, data split, backend commit, result/error, fix, and next
    action.
-3. Link it from `experience/INDEX.md`.
+3. Link it from the chronological section in `experience/INDEX.md`; update the
+   topic map only when a genuinely new research area appears.

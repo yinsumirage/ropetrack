@@ -9,7 +9,7 @@ import numpy as np
 
 
 def load_script():
-    path = Path(__file__).resolve().parents[1] / "scripts" / "prepare_egodex.py"
+    path = Path(__file__).resolve().parents[1] / "scripts" / "datasets" / "prepare_egodex.py"
     spec = importlib.util.spec_from_file_location("prepare_egodex", path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module

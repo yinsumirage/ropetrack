@@ -591,7 +591,7 @@ class ImageFeatureStudentTest(unittest.TestCase):
 
 class StudentApplyPathTest(unittest.TestCase):
     def load_apply_script(self):
-        path = ROOT / "scripts" / "rope_refiner" / "apply_rope_refinement.py"
+        path = ROOT / "ropetrack" / "refine" / "apply.py"
         spec = importlib.util.spec_from_file_location("apply_rope_refinement_student_test", path)
         module = importlib.util.module_from_spec(spec)
         sys.modules[spec.name] = module

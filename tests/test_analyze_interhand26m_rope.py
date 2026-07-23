@@ -1,6 +1,6 @@
 import numpy as np
 
-from scripts.analyze_interhand26m_rope import (
+from scripts.evaluation.analyze_interhand26m_rope import (
     align_cache, bbox_iou, pair_geometry, quantile_labels, quantile_representatives,
 )
 

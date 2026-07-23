@@ -1,5 +1,23 @@
 # Experience Index
 
+The numbered notes remain a single chronological evidence chain. Use this topic
+map for navigation; do not move historical files into category folders.
+
+## Browse By Topic
+
+| Topic | Start here | Main evidence |
+|---|---|---|
+| Environment, data layout, baseline backends | [Stage 1](#stage-1-clean-baseline-reproduction) | `0000-0013`, `0017-0019`, `0050-0051` |
+| Hard splits and rope signal diagnostics | [Stage 2](#stage-2-hard-splits-and-rope-diagnostics) | `0014-0023` |
+| P0-P2 refiner and frozen release | [RELEASE.md](../RELEASE.md) | `0024-0052` |
+| Temporal/state experiments | [0055](0055_dense_history_utility.md), [0056](0056_temporal_oracle_state.md), [0074](0074_hot3d_natural_visibility_and_arctic_ceiling.md), [0080](0080_code_branch_artifact_temporal_audit.md) | Dense history and generic natural-visibility gates are stopped |
+| Dataset acquisition, integrity, and protocols | [0060](0060_egodex_export_and_adapter.md), [0069](0069_hot3d_v4_integrity_audit.md), [0079](0079_normal_joint_no_leak_final.md), [0081](0081_dexycb_s1_first_round.md), [0083 EgoVerse](0083_egoverse_capacity_and_parts.md), [0083 InterHand](0083_interhand26m_oneview_first_round.md) | EgoDex, ARCTIC, HOT3D, Ego-Exo4D, HO3D, DexYCB, EgoVerse, InterHand |
+| DirectPose architecture, capacity, and cross-dataset validation | [0075](0075_arctic_direct_gt_rgb_rope.md) through [0086](0086_existing_prediction_per_finger_gate.md) | Frozen-token local-pose line, robustness, LoRA stop, error decomposition, per-finger gate |
+| Repository structure and reproducibility | [0085](0085_repository_package_and_script_consolidation.md) | Dataset contract, package ownership, script categories, and local/remote parity checks |
+
+For current decisions rather than historical order, read
+[`docs/current-code-and-artifact-map.md`](../docs/current-code-and-artifact-map.md).
+
 ## Stage 1: Clean Baseline Reproduction
 
 Scope: repo/HPC setup, data extraction, backend smoke tests, and clean
@@ -120,6 +138,11 @@ ends with the clean baseline report before hard splits or rope labels.
 | 2026-07-19 | [0079_normal_joint_no_leak_final.md](0079_normal_joint_no_leak_final.md) | Content-level audit invalidates leaked 0076 HOT3D-all, reclassifies 0077 as reused participant-disjoint validation, fixes the HO3D train/eval tip convention, and finds that normal triple training clearly improves HO3D but is statistically flat/slightly worse than dual on ARCTIC/HOT3D, so continue without promotion or test-set mixture tuning. |
 | 2026-07-19 | [0080_code_branch_artifact_temporal_audit.md](0080_code_branch_artifact_temporal_audit.md) | Maps active/frozen/legacy entrypoints and durable artifacts, proves the old temporal branch is fully contained in the active branch, preserves the dirty detached worktree, bounds remote cleanup candidates, and permits only one sequence-disjoint localized-state temporal gate. |
 | 2026-07-20 | [0081_dexycb_s1_first_round.md](0081_dexycb_s1_first_round.md) | Validates official DexYCB S1 splits, projection/native-MANO coordinates, deterministic train27k, external transfer, matched RGB-only versus ideal-rope training, one-shot test scoring, and raw-tree immutability; stops the RGB-only/full-scale/mixture path while validating only the GT-derived rope effect. |
+| 2026-07-20 | [0082_egoverse_download_link_probe.md](0082_egoverse_download_link_probe.md) | Direct no-proxy Secrets/SQL/R2 probes byte-verify four RL2/ETH/Song/Scale episodes, identify 100-frame array padding, source-dependent keypoint/language fields, and useful episode-level rather than CPU-core parallelism. |
+| 2026-07-20 | [0083_egoverse_capacity_and_parts.md](0083_egoverse_capacity_and_parts.md) | Records full Academic coverage, Aria temporal failures, completed 689.39 GB Mecka coverage, and persistent-connection Scale continuations `193648/193719`. |
+| 2026-07-20 | [0083_interhand26m_oneview_first_round.md](0083_interhand26m_oneview_first_round.md) | Validates the InterHand2.6M v1.0 30fps one-view external anchor, rejects a Capture9-starving train27k-v1 selector, verifies corrected capacity-balanced v2, stops old transfer and the ideal-rope recipe, and preserves the one-shot test boundary. |
 | 2026-07-21 | [0084_direct_pose_error_decomposition.md](0084_direct_pose_error_decomposition.md) | Existing-prediction decomposition passes five-dataset ID/parity gates, locates the cross-dataset camera mismatch in translation rather than universal rotation, and permits only a minimal delta-camera-translation screen while keeping global orientation and LoRA stopped. |
+| 2026-07-22 | [0085_repository_package_and_script_consolidation.md](0085_repository_package_and_script_consolidation.md) | Consolidates stable dataset/evaluation/refiner logic into the package, categorizes scripts, records the dataset contract, and verifies unchanged behavior with 451 local tests plus exact remote HOT3D, DexYCB, and InterHand scoring parity smokes. |
+| 2026-07-22 | [0086_existing_prediction_per_finger_gate.md](0086_existing_prediction_per_finger_gate.md) | Five-domain existing-prediction finger/tail oracle plus matched InterHand input-only correct/shuffled controls; keeps the current head, separates InterHand from joint training, and defers fusion redesign pending physical evidence. |
 | 2026-07-22 | [0087_direct_pose_gradient_conflict_audit.md](0087_direct_pose_gradient_conflict_audit.md) | Five-domain training-only gradient/one-step audit; exact missing-sensor fallback passes, but equal/near-equal four-core mixing fails, so the four local-decoder adaptation cells are not run. |
 | 2026-07-23 | [0088_direct_pose_product_validation.md](0088_direct_pose_product_validation.md) | Existing-head conflict attribution, exact invalid-channel fallback, HOT3D/ARCTIC product perturbation matrix, ARCTIC noise ceiling, and PALM boundary; keeps DirectPose conditional and decoder/shared retraining stopped. |

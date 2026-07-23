@@ -18,8 +18,8 @@ data/rope/*
 logs/
 outputs/
 runs/
-report/*
-!report/README.md
+docs/report/*
+!docs/report/README.md
 
 checkpoints/
 mano_data/

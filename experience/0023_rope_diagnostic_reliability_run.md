@@ -74,4 +74,4 @@ Local copied output:
 
 Stable summary:
 
-`docs/2026-07-05-rope-diagnostic-reliability.md`
+The legacy standalone report was removed; this note is the retained result.

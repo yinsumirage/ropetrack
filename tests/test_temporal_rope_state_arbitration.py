@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def load_script():
-    path = ROOT / "scripts" / "temporal_rope_state_arbitration.py"
+    path = ROOT / "scripts" / "legacy" / "temporal" / "temporal_rope_state_arbitration.py"
     spec = importlib.util.spec_from_file_location("temporal_rope_state_arbitration", path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module

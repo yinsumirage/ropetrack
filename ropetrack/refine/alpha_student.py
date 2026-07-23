@@ -118,7 +118,7 @@ def load_student(path: Path, device: str) -> tuple[RopeAlphaStudent, dict]:
 
 
 def load_image_feature_cache(path: Path) -> tuple[list[str], np.ndarray]:
-    """P3 feature cache from scripts/rope_head/extract_feature_cache.py."""
+    """P3 feature cache from scripts/rope_refiner/extract_feature_cache.py."""
     with np.load(path) as data:
         ids = [str(sid) for sid in data["sample_id"]]
         features = np.asarray(data["features"], dtype=np.float32)

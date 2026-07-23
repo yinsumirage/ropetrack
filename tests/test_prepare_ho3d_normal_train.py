@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def load_script():
-    path = ROOT / "scripts" / "prepare_ho3d_normal_train.py"
+    path = ROOT / "scripts" / "datasets" / "prepare_ho3d_normal_train.py"
     spec = importlib.util.spec_from_file_location("prepare_ho3d_normal_train", path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module

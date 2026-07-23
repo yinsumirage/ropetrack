@@ -118,7 +118,7 @@ class RopeConsistency:
     """Optional differentiable rope loss for the student's applied alphas."""
 
     def __init__(self, cache: dict, action_space: str, directions: np.ndarray | None, mano_cache: Path, device: str, mano_module=None):
-        from scripts.rope_refiner.apply_rope_refinement import load_mano_globals, mano_layer, torch_aa_to_rotmat
+        from ropetrack.refine.apply import load_mano_globals, mano_layer, torch_aa_to_rotmat
 
         self.action_space = action_space
         self.torch_aa_to_rotmat = torch_aa_to_rotmat
@@ -138,7 +138,7 @@ class RopeConsistency:
         self.chains = FINGER_CHAINS["freihand"]  # wrapper joints are OpenPose-ordered
 
     def __call__(self, alpha: torch.Tensor, index: torch.Tensor) -> torch.Tensor:
-        from scripts.rope_refiner.apply_rope_refinement import torch_rope_norm
+        from ropetrack.refine.apply import torch_rope_norm
 
         dirs = self.directions[index] if self.directions is not None else None
         hand_pose = apply_action_torch(self.base_pose[index], alpha, self.action_space, dirs)
@@ -381,7 +381,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--rope-loss-weight", type=float, default=0.0)
     parser.add_argument("--mano-cache", type=Path, default=None)
     parser.add_argument("--feature-cache", type=Path, default=None,
-                        help="P3: frozen backbone feature_cache.npz (scripts/rope_head/extract_feature_cache.py) "
+                        help="P3: frozen backbone feature_cache.npz (scripts/rope_refiner/extract_feature_cache.py) "
                              "for the SAME split as the teacher dir; joined by sample_id and concatenated to the "
                              "65-d rope/pose features. Single --teacher-dir only for now.")
     parser.add_argument("--shuffle-rope", action="store_true",

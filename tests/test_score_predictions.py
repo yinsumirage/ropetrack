@@ -9,7 +9,7 @@ import numpy as np
 
 
 def load_script():
-    path = Path(__file__).resolve().parents[1] / "scripts" / "score_predictions.py"
+    path = Path(__file__).resolve().parents[1] / "ropetrack" / "eval" / "scoring.py"
     spec = importlib.util.spec_from_file_location("score_predictions", path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module

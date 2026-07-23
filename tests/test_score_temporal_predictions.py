@@ -9,7 +9,7 @@ import numpy as np
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT_PATH = ROOT / "scripts" / "score_temporal_predictions.py"
+SCRIPT_PATH = ROOT / "ropetrack" / "eval" / "temporal_metrics.py"
 
 
 def load_script():

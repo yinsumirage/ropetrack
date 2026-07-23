@@ -5,11 +5,11 @@ from pathlib import Path
 
 import numpy as np
 
-from scripts.score_predictions import align_w_scale
+from ropetrack.eval.scoring import align_w_scale
 
 
 def load_script():
-    path = Path(__file__).resolve().parents[1] / "scripts" / "audit_egodex_quality.py"
+    path = Path(__file__).resolve().parents[1] / "scripts" / "datasets" / "audit_egodex_quality.py"
     spec = importlib.util.spec_from_file_location("audit_egodex_quality", path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module

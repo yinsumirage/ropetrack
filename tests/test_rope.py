@@ -11,6 +11,7 @@ from PIL import Image
 
 def load_script(name: str):
     rel_paths = {
+        "make_rope_labels": Path("datasets") / "make_rope_labels.py",
         "score_rope_predictions": Path("rope_diagnostics") / "score_rope_predictions.py",
     }
     path = Path(__file__).resolve().parents[1] / "scripts" / rel_paths.get(name, Path(f"{name}.py"))

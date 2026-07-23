@@ -10,7 +10,7 @@ prediction, then renders one figure per sample:
   green underneath, per-panel PA error in the title.
 
 Skeletons come from the dataset's FINGER_CHAINS, PA alignment is identical to
-scripts/score_predictions.py, so panel titles match the report tables.
+scripts/evaluation/score_predictions.py, so panel titles match the report tables.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ from ropetrack.datasets.hand_pose import project_points, resolve_image_path  # n
 from ropetrack.io import load_pred_json, read_json  # noqa: E402
 from ropetrack.rope import FINGER_CHAINS, FINGER_COLORS, canonical_rope_dataset  # noqa: E402
 
-from scripts.score_predictions import align_w_scale  # noqa: E402
+from ropetrack.eval.scoring import align_w_scale  # noqa: E402
 
 
 def load_pred_xyz(path: Path) -> np.ndarray:

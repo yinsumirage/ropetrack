@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def load_script():
-    path = ROOT / "scripts" / "score_sliced_predictions.py"
+    path = ROOT / "ropetrack" / "eval" / "slices.py"
     spec = importlib.util.spec_from_file_location("score_sliced_predictions", path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -67,7 +67,7 @@ class OccludedFingersTest(unittest.TestCase):
             self.assertIsNone(self.script.occluded_fingers_for_row(row, (224, 224)))
 
     def test_rect_helpers_match_make_hard_images(self):
-        # Reference values from scripts/make_hard_images.py implementations.
+        # Reference values from scripts/datasets/make_hard_images.py.
         self.assertEqual(self.script.clamp_bbox([-5.0, 10.0, 300.0, 200.0], 224, 224), (0, 10, 224, 200))
         self.assertEqual(self.script.centered_rect(0, 0, 100, 100, 0.5), (25, 25, 75, 75))
 

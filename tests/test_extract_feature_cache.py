@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def load_script():
-    path = ROOT / "scripts" / "rope_head" / "extract_feature_cache.py"
+    path = ROOT / "scripts" / "rope_refiner" / "extract_feature_cache.py"
     spec = importlib.util.spec_from_file_location("extract_feature_cache", path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module

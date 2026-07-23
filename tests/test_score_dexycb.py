@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def load_script():
-    path = ROOT / "scripts" / "score_dexycb.py"
+    path = ROOT / "ropetrack" / "eval" / "dexycb.py"
     spec = importlib.util.spec_from_file_location("score_dexycb", path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module

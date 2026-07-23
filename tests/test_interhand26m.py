@@ -17,7 +17,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def load_script(name):
-    path = ROOT / "scripts" / f"{name}.py"
+    paths = {
+        "prepare_interhand26m": ROOT / "ropetrack" / "datasets" / "interhand26m.py",
+        "validate_interhand26m_coordinates": ROOT / "ropetrack" / "datasets" / "interhand26m_validation.py",
+        "score_interhand26m": ROOT / "ropetrack" / "eval" / "interhand26m.py",
+    }
+    path = paths[name]
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module

@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def load_script():
-    path = ROOT / "scripts" / "validate_dexycb_coordinates.py"
+    path = ROOT / "scripts" / "datasets" / "validate_dexycb_coordinates.py"
     spec = importlib.util.spec_from_file_location("validate_dexycb_coordinates", path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module

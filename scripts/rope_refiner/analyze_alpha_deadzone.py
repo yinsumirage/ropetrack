@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Multiplicative dead-zone probe for rope optimization outputs.
 
-Hypothesis H2 (docs/2026-07-06-rope-refinement-next-plan.md): multiplicative
+Hypothesis H2 (experience/0029_p0_oracle_slice_deadzone_tooling.md): multiplicative
 curl scaling cannot correct fingers whose base pose is near zero (predicted
 open), because the correction is proportional to the existing bend. If true,
 residual closure should shrink with base finger pose magnitude under mult

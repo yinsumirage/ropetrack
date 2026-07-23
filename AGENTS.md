@@ -1,8 +1,6 @@
 # AGENTS.md
 
-This repo is `ropetrack`, the implementation repo for the hand4D wrist bench
-work. Treat `E:\Desktop\hand4D\now` as the external knowledge base and
-`docs/knowledge/hand4d_now.md` as the local short version.
+This repo is `ropetrack`, the implementation repo for the hand4D wrist bench.
 
 ## Rules
 
@@ -16,9 +14,30 @@ work. Treat `E:\Desktop\hand4D\now` as the external knowledge base and
   large figures.
 - Prefer stdlib and existing code. Add dependencies only when a real script needs
   them.
-- Use `docs/` for stable plans and knowledge summaries. Use `experience/` for
+- Use `docs/` for current status, reusable protocols, the retained P0-P2 report,
+  and advisor-facing HTML. Use `experience/` for
   experiment logs, environment notes, failures, fixes, and "do not repeat this"
   records.
+- Read `docs/README.md` for the small supported document set. Put new dated
+  experiment plans/results in `experience/`, not parallel `docs/` files.
+- Keep `experience/` as one flat, append-only numbered evidence chain. Browse it
+  through the timeline and topic map in `experience/INDEX.md`; do not create
+  dataset/model/evaluation subdirectories that break old links.
+- Put advisor-facing generated HTML in ignored `docs/report/`, named
+  `YYYY-MM-DD-progress-report.html`. Do not create a parallel root `output/`
+  tree. HTML is a presentation snapshot; `docs/` and `experience/` remain the
+  source evidence.
+- Put reusable functions, models, metrics, schemas, and dataset adapters under
+  `ropetrack/`. Keep `scripts/` as thin CLI/orchestration entrypoints. New code
+  must not import reusable logic from another script; move that shared logic to
+  the closest existing `ropetrack` module instead.
+- Read `scripts/README.md` before adding an entrypoint. Prefer an existing
+  command with another dataset/config option over a new sibling script. Do not
+  reorganize script paths piecemeal: a move must update callers, tests, command
+  documentation, and reproduction records together.
+- Read `docs/dataset-contract-matrix.md` before changing a dataset adapter,
+  coordinate conversion, joint order, handedness path, camera model, or metric
+  claim. Update the matrix and rerun its required gates with any such change.
 - Before running an experiment or retrying a failed setup, read
   `experience/INDEX.md`. After any non-trivial experiment, environment fix, data
   finding, or submodule/Git failure, write a short note and add it to the index.
@@ -37,14 +56,28 @@ work. Treat `E:\Desktop\hand4D\now` as the external knowledge base and
 ## Current Research Line
 
 Phases P0-P2 are closed and the formal release remains pinned by `RELEASE.md`.
-The active experimental line is the frozen-token `DirectPoseHead`; its current
-code/artifact/branch map is `docs/current-code-and-artifact-map.md` and its
-authoritative no-leak result is `experience/0079_normal_joint_no_leak_final.md`.
+The active experimental line is the frozen-token `DirectPoseHead`: five finger
+queries predict a bounded 45D local MANO hand-pose residual while WiLoR, MANO
+betas, global orientation, and camera translation stay frozen. Its current
+code/artifact map is `docs/current-code-and-artifact-map.md`; the authoritative
+records are 0079 (normal mixture), 0081 (DexYCB), 0083 InterHand, and 0084
+(five-dataset error decomposition).
+
 Continue trusted data coverage, but do not promote the fixed triple mixture or
-tune another mixture on the same final scores. Dense K16/K96, larger generic
-temporal models, the tested simple natural-HOT3D state gates, and the global
-orientation head are stopped directions. Physical rope sensing remains
-unvalidated.
+tune another mixture on the same final scores. Stop the tested rank-8 Q/V LoRA,
+global-orientation head, dense K16/K96, larger GRU/Transformer paths, and the
+tested natural-HOT3D visibility/usefulness gates. Do not restart an occlusion
+classifier: visibility did not reliably predict downstream usefulness.
+
+The product boundary is now explicit: an external VR/tracking system supplies
+wrist 6DoF; RopeTrack is responsible for wrist-frame local articulation. The
+0084 translation finding is a camera-metric diagnostic, not a requirement that
+the rope head predict `cam_t`. The next cheap analysis is existing-prediction
+per-finger error decomposition only, followed by a small controlled external-
+camera pilot using Apple Vision Pro hand skeleton as reference/pseudo-GT, not
+strict mocap GT. Build reliability-aware fusion or connect a few physical rope
+channels only if those gates pass. Physical rope calibration, slack, hysteresis,
+wear offset, latency, and dropout remain unvalidated.
 
 ## HPC Rules
 
@@ -122,6 +155,16 @@ unclear or stale, re-read that folder before writing or running cluster scripts.
     `evaluation_xyz.json`, and `evaluation_verts.json`. The evaluation split has
     20137 samples and uses `.jpg` RGB images; train/evaluation sequences contain
     `rgb`, `depth`, and `meta`, and train sequences also have `seg`.
+- Current external raw/working roots under `/data/wentao/datasets`:
+  - `dexycb`: official subject-disjoint S1 protocol is validated; keep the raw
+    tree immutable and read 0081 before any new export or score.
+  - `interhand2.6m_v1_30fps`: canonical `images/` and `annotations/` are
+    validated for the one-view protocol; do not rerun the already-observed test
+    with corrected-v2 checkpoints. Read 0083 InterHand.
+  - `egoverse`: Mecka-200 is filterable large-scale pretraining data, not
+    unfiltered precise GT. As of 2026-07-22, the bounded Mecka one-per-task,
+    Scale Flagship, and Scale Freeform arrays are jobs `191445-191447`; check
+    `sacct`, manifests, and 0083 EgoVerse before submitting any duplicate.
 - HaMeR checkpoint files were moved under the shared `pretrained_models`, but
   `pretrained_models/hamer_ckpts/checkpoints/model_config.yaml` was observed as
   0 bytes on 2026-07-02. Re-check HaMeR assets before using that backend.

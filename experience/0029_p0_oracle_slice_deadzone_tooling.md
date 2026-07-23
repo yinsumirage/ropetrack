@@ -5,7 +5,7 @@ Date: 2026-07-07
 ## Purpose
 
 Implement the P0 diagnostic tooling from
-`docs/2026-07-06-rope-refinement-next-plan.md` locally (no HPC runs yet):
+the P0 oracle/deadzone scope locally (no HPC runs yet):
 
 - oracle ceiling objectives for the test-time optimizer;
 - `mult15` / `flex15` action spaces next to the original `mult5`;

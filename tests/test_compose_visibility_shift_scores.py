@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def load_script():
-    path = ROOT / "scripts" / "compose_visibility_shift_scores.py"
+    path = ROOT / "scripts" / "legacy" / "temporal" / "compose_visibility_shift_scores.py"
     spec = importlib.util.spec_from_file_location("compose_visibility_shift_scores", path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module

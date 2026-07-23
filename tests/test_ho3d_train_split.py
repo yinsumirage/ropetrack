@@ -22,7 +22,7 @@ K = np.asarray([[500.0, 0.0, 320.0], [0.0, 500.0, 240.0], [0.0, 0.0, 1.0]])
 
 
 def load_script(name: str):
-    path = ROOT / "scripts" / f"{name}.py"
+    path = ROOT / "scripts" / "datasets" / f"{name}.py"
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module

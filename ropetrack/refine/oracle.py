@@ -3,7 +3,7 @@
 The oracle swaps the rope-only objective for direct GT joint supervision
 while keeping the action space fixed. This measures how much error the
 action space itself can remove (its ceiling), independent of how much the
-5 rope scalars observe. See docs/2026-07-06-rope-refinement-next-plan.md.
+5 rope scalars observe. See experience/0029_p0_oracle_slice_deadzone_tooling.md.
 
 The predicted joints are decoded with the exact scoring convention
 (``ropetrack.eval.protocols``): vertices -> eval frame -> J_regressor

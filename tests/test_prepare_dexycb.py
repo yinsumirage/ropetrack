@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def load_script():
-    path = ROOT / "scripts" / "prepare_dexycb.py"
+    path = ROOT / "scripts" / "datasets" / "prepare_dexycb.py"
     spec = importlib.util.spec_from_file_location("prepare_dexycb", path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module

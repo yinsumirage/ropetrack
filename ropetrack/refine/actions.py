@@ -10,7 +10,7 @@ An action space maps a low-dimensional alpha vector to a MANO hand_pose
 - ``flex15``: one additive scalar per MANO finger joint, applied along a
   precomputed per-sample unit direction in that joint's axis-angle space
   (the frozen rope-distance gradient direction, see
-  ``compute_flex_directions`` in scripts/rope_refiner/apply_rope_refinement.py).
+  ``compute_flex_directions`` in ``ropetrack.refine.apply``).
   Additive corrections can close a finger that the backbone predicted open,
   which multiplicative scaling cannot.
 - ``flex5``: one additive scalar per finger, applied along the finger's

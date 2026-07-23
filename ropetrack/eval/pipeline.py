@@ -291,7 +291,6 @@ def format_prediction(dataset: str, hand: BatchHandPrediction, j_regressor: np.n
 
 
 def run_export(args: argparse.Namespace) -> Path:
-    repo = Path(__file__).resolve().parents[2]
     from ropetrack.backends.hand_predictor import HandPredictor
 
     if args.adapter == "freihand":
@@ -371,7 +370,8 @@ def run_export(args: argparse.Namespace) -> Path:
     if args.run_eval:
         subprocess.run([
             sys.executable,
-            str(repo / "scripts" / "score_predictions.py"),
+            "-m",
+            "ropetrack.eval.scoring",
             str(eval_input),
             str(eval_results),
             "--gt-dir",

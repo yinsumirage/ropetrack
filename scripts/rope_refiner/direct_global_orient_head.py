@@ -16,8 +16,8 @@ from torch import nn
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from scripts.rope_refiner.apply_rope_refinement import load_mano_globals, mano_layer, torch_aa_to_rotmat
-from scripts.rope_refiner.direct_pose_head import (
+from ropetrack.refine.apply import load_mano_globals, mano_layer, torch_aa_to_rotmat
+from ropetrack.refine.direct_pose import (
     episode_split,
     load_arrays,
     load_model,

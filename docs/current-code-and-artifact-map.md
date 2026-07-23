@@ -1,8 +1,8 @@
 # Current Code, Artifact, Branch, And Temporal Map
 
-Status: current as of 2026-07-21. Read this before dated plans. Dated
-`docs/` files and `experience/` notes remain the evidence trail; they are not
-all active instructions.
+Status: current as of 2026-07-22. This is the active research/status map.
+`docs/2026-07-08-progress-report.md` is retained historical P0-P2 material;
+later experiment evidence and decisions live in `experience/`.
 
 ## Research Status
 
@@ -30,11 +30,22 @@ all active instructions.
 - **Stopped:** dense K16/K96 history, larger GRU/Transformer variants on the
   same signals, the tested natural-HOT3D visibility/usefulness gates, and the
   global-orientation head.
-- **Next bounded screen:** the five-dataset existing-prediction decomposition
-  localizes the shared camera mismatch to translation, not universal rotation.
-  A minimal 3D `delta cam_t` branch may be tested on validation data while the
-  local DirectPose path stays frozen. Do not revive `delta global_orient`, add
-  scale/betas, tune final/test mixtures, or use LoRA. See 0084.
+- **Camera diagnostic boundary:** the five-dataset existing-prediction
+  decomposition localizes the shared camera mismatch mainly to translation,
+  not universal rotation. This does not imply that rope should predict
+  `cam_t`: the product path assumes external VR/tracking supplies wrist 6DoF,
+  while DirectPose estimates wrist-frame local articulation. Do not revive
+  `delta global_orient`, add scale/betas, tune final/test mixtures, or use
+  LoRA. See 0084.
+- **Local/sensor gate completed:** 0086 finds only `0.14-0.23 mm` extra
+  finger-wise versus frame-wise offline selection headroom on the main
+  comparisons. The matched InterHand input-only model improves standard PA by
+  `0.132 mm` over RGB-only and reduces the severe tail, but helps index,
+  middle, and pinky while worsening thumb and ring. Keep the current head; do
+  not train another occlusion classifier or rewrite fusion yet. Next run the
+  controlled external-camera validation using Apple Vision Pro
+  high-confidence hand skeleton as reference/pseudo-GT, then revisit only if
+  the physical signal reproduces this finger-specific pattern.
 - **Sensor boundary:** correct paired GT-derived rope has a causal hand-shape
   effect, but this is ideal simulated geometry. Physical sensor calibration,
   drift, latency, missing channels, and real deployment remain unproved.
@@ -48,36 +59,42 @@ all active instructions.
 - **Product perturbation follow-up:** 0088 keeps the existing h128 head as a
   conditional HOT3D-centered path and keeps decoder adaptation stopped.
   Correct rope cuts HOT3D PA from `8.984` to `5.732 mm`; the fixed
-  low-visibility slice gains `4.123 mm`, versus `2.346 mm` for context.
-  Exact explicit/non-finite/out-of-range per-finger fallback passes and
-  all-missing is numerically WiLoR. HOT3D passes the frozen robustness matrix;
-  ARCTIC retains 73.3% of clean gain at simulated `noise=0.03` but only 55.4%
-  at `0.04`. New shared-head/decoder training remains stopped pending a
-  training-only non-regression proposal and physical sensor evidence.
+  low-visibility slice gains `4.123 mm`, larger than the `2.346 mm` context
+  gain. Exact explicit/non-finite/out-of-range per-finger fallback passes and
+  all-missing is numerically WiLoR. HOT3D passes the frozen noise/dropout/
+  missing-channel matrix, but ARCTIC `noise=0.05` retains only `34.4%` of its
+  smaller clean gain, below the frozen `60%` gate. The follow-up dose curve
+  passes through `noise=0.03` (73.3% retained) and fails at `0.04` (55.4%).
+  New training therefore remains stopped; `0.03` is only a simulated hardware
+  target pending physical sensor evidence. The conflict follow-up localizes
+  HOT3D--DexYCB primarily to rope conditioning and auxiliary objectives, not an
+  opposed PA/root task.
 
 The authoritative normal-mixture no-leak record is
 `experience/0079_normal_joint_no_leak_final.md`; the DexYCB S1 first-round
 record is `experience/0081_dexycb_s1_first_round.md`; the InterHand one-view
 record is `experience/0083_interhand26m_oneview_first_round.md`; and the
 cross-dataset error decomposition is
-`experience/0084_direct_pose_error_decomposition.md`.
+`experience/0084_direct_pose_error_decomposition.md`. The completed
+per-finger/tail gate and InterHand input-only follow-up are in
+`experience/0086_existing_prediction_per_finger_gate.md`.
 
 ## Active Code Paths
 
 | Area | Tracked entry and call chain | Checks/evidence | Status |
 |---|---|---|---|
-| DirectPose normal training | `prepare_arctic.py` / `prepare_hot3d.py` / `prepare_ho3d_normal_train.py` -> `eval.py --save-mano-cache` -> `extract_feature_cache.py --save-tokens` -> `apply_rope_refinement.py` cache -> `direct_pose_head.py train --extra-bundle ...` | `test_prepare_*`, `test_eval_pipeline.py`, `test_extract_feature_cache.py`, `test_direct_pose_head.py`; 0075-0079 | Active experiment. Bundle/protocol/stitch Slurm glue is intentionally run-local under ignored `.local_checks/` and archived in the HPC run root, not a public package API. |
-| DirectPose apply/score | `direct_pose_head.py apply` -> MANO decode from `apply_rope_refinement.py` -> project `pred.json` -> `score_predictions.py` | `test_direct_pose_head.py`, `test_apply_rope_refinement.py`, `test_score_predictions.py`; 0078-0079 | Active. Perturbation flags are the normalized-rope robustness controls. |
-| Existing-prediction decomposition | `analyze_pose_error_decomposition.py` reads project `pred.json` + explicit sample order, audits IDs, computes the proper nested oracle envelope, group bootstrap, subgroups, and artifact verification | `test_pose_error_decomposition.py`; 0084 | Stable CPU analysis. Raw alignment candidates and legacy parity are kept separate; generated per-sample/results stay in the remote run root. |
+| DirectPose normal training | `scripts/datasets/prepare_{arctic,hot3d,ho3d_normal_train}.py` -> `scripts/eval.py --save-mano-cache` -> `scripts/rope_refiner/extract_feature_cache.py --save-tokens` -> `ropetrack.refine.apply` cache -> `scripts/rope_refiner/direct_pose_head.py train --extra-bundle ...` | `test_prepare_*`, `test_eval_pipeline.py`, `test_extract_feature_cache.py`, `test_direct_pose_head.py`; 0075-0079 | Active experiment. Bundle/protocol/stitch Slurm glue is intentionally run-local under ignored `.local_checks/` and archived in the HPC run root, not a public package API. |
+| DirectPose apply/score | thin `scripts/rope_refiner/direct_pose_head.py` -> `ropetrack.refine.direct_pose` -> MANO decode in `ropetrack.refine.apply` -> project `pred.json` -> `ropetrack.eval.scoring` | `test_direct_pose_head.py`, `test_apply_rope_refinement.py`, `test_score_predictions.py`; 0078-0079 | Active. Perturbation flags are the normalized-rope robustness controls. |
+| Existing-prediction decomposition | `scripts/evaluation/analyze_pose_error_decomposition.py` reads project `pred.json` + explicit sample order, audits IDs, computes the proper nested oracle envelope, group bootstrap, subgroups, and artifact verification | `test_pose_error_decomposition.py`; 0084 | Stable CPU analysis. Raw alignment candidates and legacy parity are kept separate; generated per-sample/results stay in the remote run root. |
 | DirectPose gradient audit and safety gate | thin `scripts/evaluation/audit_direct_pose_gradients.py` -> `ropetrack.refine.direct_pose_audit`; consumes frozen training bundles/checkpoint, emits gradient/transfer matrices, exact fallback gate, and verifier artifacts | `test_direct_pose_audit.py`; 0087 | Completed/STOP for equal four-core mixing. Reuse the verifier and exact fallback; do not run the gated decoder cells from this result. |
-| DirectPose product fallback/perturbation | `scripts/rope_refiner/direct_pose_head.py` exact per-finger fallback plus run-local fixed perturbation/scoring launchers over existing checkpoints and caches | `test_direct_pose_head.py`; real-checkpoint invalid gate and product verifier; 0088 | Experimental conditional path. Clean and explicit-invalid behavior is structurally safe; HOT3D robustness passes, but the original ARCTIC `noise=0.05` retention gate blocks robust retraining and a deployable claim. Hardware validity metadata remains required. |
-| P0-P2 teacher/release | `apply_rope_refinement.py --mode optimize|student`; `train_alpha_student.py`; core `refine/{actions,alpha_student,analysis,cache,oracle}.py` | release golden check in `RELEASE.md`; broad refiner tests; 0027-0052 | Frozen supported path. Do not replace the release checkpoint with DirectPose outputs. |
-| Dataset adapters/export | `ropetrack/datasets/hand_pose.py`, dataset YAMLs, `prepare_{arctic,egodex,hot3d,dexycb}.py`, `prepare_ho3d_normal_train.py`, `make_hard_images.py`, `make_rope_labels.py` | adapter/export/hard/rope tests; 0018, 0040, 0060-0073, 0079, 0081 | Reusable. Dataset-specific coordinate, side, and tip conventions remain explicit. DexYCB test export requires a frozen recipe. |
-| DexYCB protocol/evaluation | `prepare_dexycb.py` -> `validate_dexycb_coordinates.py` -> standard WiLoR/token/DirectPose paths -> `score_dexycb.py`; `freeze_dexycb_recipe.py` and `verify_dexycb_artifacts.py` enforce one-shot test and raw-tree checks | `test_prepare_dexycb.py`, `test_validate_dexycb_coordinates.py`, `test_score_dexycb.py`, `test_freeze_dexycb_recipe.py`; 0081 | Validated adapter and evaluation path. The 27k RGB-only recipe, full-S1 scale-up, and addition to the frozen joint mixture are stopped. Ideal GT-derived rope remains an oracle/simulated observation. |
-| InterHand one-view protocol/evaluation | `prepare_interhand26m.py` -> `validate_interhand26m_coordinates.py` -> standard WiLoR/token/DirectPose paths -> `score_interhand26m.py`; `interhand26m_protocol.py` enforces freezes/raw checks and train capacity balance | `test_interhand26m.py`, `test_apply_rope_refinement.py`; 0083 | External anchor and corrected train27k-v2 validated. RGB-only is diagnostic only; current ideal-rope recipe, old transfer, full-view/scale-up, and mixture expansion are stopped. Historical train27k-v1 supervision is invalid. |
-| Benchmark export/eval | `eval.py` -> `ropetrack.eval.config` -> `ropetrack.eval.pipeline` -> `HandPredictor` + dataset adapter -> optional `score_predictions.py` | eval/config/pipeline/backend/protocol tests; 0017-0019, 0051 | Supported. `score_sliced_predictions.py` is the hard/rope slice scorer; temporal scoring is separate. |
+| DirectPose product fallback/perturbation | `ropetrack.refine.direct_pose.ExactFallbackDirectPoseHead` and the thin DirectPose apply CLI; run-local fixed perturbation/scoring launchers consume existing checkpoints and caches | `test_direct_pose_head.py`; real-checkpoint invalid gate and product verifier; 0088 | Experimental conditional path. Clean and explicit-invalid behavior is structurally safe; HOT3D robustness passes, but ARCTIC noise-retention blocks robust retraining and any deployable claim. Hardware validity metadata remains required. |
+| P0-P2 teacher/release | thin `scripts/rope_refiner/apply_rope_refinement.py`; `scripts/rope_refiner/train_alpha_student.py`; core `ropetrack/refine/{apply,actions,alpha_student,analysis,cache,oracle}.py` | release golden check in `RELEASE.md`; broad refiner tests; 0027-0052 | Frozen supported path. Do not replace the release checkpoint with DirectPose outputs. |
+| Dataset adapters/export | `ropetrack/datasets/hand_pose.py`, dataset YAMLs, and `scripts/datasets/` preparation/audit/label CLIs | adapter/export/hard/rope tests; `docs/dataset-contract-matrix.md`; 0018, 0040, 0060-0073, 0079, 0081 | Reusable. Dataset-specific coordinate, side, and tip conventions remain explicit. DexYCB test export requires a frozen recipe. |
+| DexYCB protocol/evaluation | `scripts/datasets/prepare_dexycb.py` -> coordinate gate -> standard WiLoR/token/DirectPose paths -> `ropetrack.eval.dexycb`; freeze/verifier CLIs remain under `scripts/datasets/` | `test_prepare_dexycb.py`, `test_validate_dexycb_coordinates.py`, `test_score_dexycb.py`, `test_freeze_dexycb_recipe.py`; 0081 | Validated adapter and evaluation path. The 27k RGB-only recipe, full-S1 scale-up, and addition to the frozen joint mixture are stopped. Ideal GT-derived rope remains an oracle/simulated observation. |
+| InterHand one-view protocol/evaluation | `ropetrack.datasets.interhand26m` -> `ropetrack.datasets.interhand26m_validation` -> standard WiLoR/token/DirectPose paths -> `ropetrack.eval.interhand26m`; thin wrappers and protocol verifier live under `scripts/datasets/` and `scripts/evaluation/` | `test_interhand26m.py`, `test_apply_rope_refinement.py`; 0083 | External anchor and corrected train27k-v2 validated. RGB-only is diagnostic only; current ideal-rope recipe, old transfer, full-view/scale-up, and mixture expansion are stopped. Historical train27k-v1 supervision is invalid. |
+| Benchmark export/eval | `scripts/eval.py` -> `ropetrack.eval.config` -> `ropetrack.eval.pipeline` -> `HandPredictor` + dataset adapter -> optional `python -m ropetrack.eval.scoring` | eval/config/pipeline/backend/protocol tests; 0017-0019, 0051 | Supported. `ropetrack.eval.slices` is the hard/rope slice scorer; temporal scoring is separate. |
 | Rope diagnostics/report | `rope_diagnostics/*`, `analyze_alpha_deadzone.py`, `summarize_runs.py`, `plot_report_figures.py`, `make_qualitative_panels.py` | dedicated tests except the thin visualization CLI; 0021-0023, 0029, 0042-0052 | Supported analysis. Generate tables; do not hand-copy metrics. |
-| Global orientation | `direct_global_orient_head.py` reuses `DirectPoseHead` and MANO decode | self-check plus `test_direct_global_orient_head.py`; 0078, 0084 | Experimental/rejected. HOT3D root-relative gain worsens camera error and fails ARCTIC transfer; the cross-dataset decomposition supports translation-only screening, not revival of this head. |
+| Global orientation | `direct_global_orient_head.py` reuses `DirectPoseHead` and MANO decode | self-check plus `test_direct_global_orient_head.py`; 0078, 0084 | Experimental/rejected. HOT3D root-relative gain worsens camera error and fails ARCTIC transfer; 0084 identifies translation as a diagnostic gap, not an active camera-head direction or a reason to revive this head. |
 
 `scripts/README.md` is the command catalog. The table above decides whether a
 command is current, frozen, or experimental.
@@ -120,11 +137,13 @@ Generated data and results are never committed.
   `direct_pose_scale_20260718`, and `direct_pose_ab_20260719` under the same
   `/data/wentao/ropetrack/runs/` root. They are experiment evidence, not
   release checkpoints.
-- Product/conflict evidence is under
+- DirectPose product/conflict evidence is under
   `/data/wentao/ropetrack/runs/direct_pose_conflict_attribution_20260723` and
   `/data/wentao/ropetrack/runs/direct_pose_product_validation_20260723`.
-  The latter contains the frozen protocol, raw matrix, report, verifier,
-  invalid-value gate, and the separately frozen ARCTIC noise-dose diagnostic.
+  The latter contains the frozen protocol, raw product matrix, generated
+  report, verifier, real-checkpoint invalid-value gate, and the separately
+  frozen ARCTIC noise-dose diagnostic. These results reuse existing h128
+  checkpoints; they are not new release assets.
 
 Keep small checkpoints, protocols, hashes, scores, manifests, and archived
 launch scripts. Large feature/activation caches and prediction matrices are
@@ -149,27 +168,26 @@ predictions/caches.
 
 ## Branch And Worktree Decisions
 
-As audited at `997da91`:
+As verified at `3133474` on 2026-07-22:
 
-- `codex/temporal-oracle-state` is the active research branch. Continue here.
-- `codex/temporal-ho3d-refiner` (`ba31824`) is an exact ancestor of the active
-  branch: it has 22 commits beyond `main`, zero commits absent from the active
-  branch, and needs no merge or cherry-pick. Keep only as a historical marker;
-  delete local/remote refs later only with explicit approval.
-- `main` (`bcb81dd`) is the P0-P2/E1-E2 release baseline and an ancestor of
-  both branches. It has no unique commit to recover. Update it later through a
-  deliberate review/PR if the active research history should become canonical;
-  this audit does not merge it.
-- `C:/Users/gwt/.codex/worktrees/f2fc/ropetrack` is detached at old commit
-  `e2f6d31` and contains uncommitted protocol/note changes. Equivalent tip
-  policy and protocol work exists on the active branch, but the exact dirty
-  patch would be lost if the worktree were removed. Leave it untouched until
-  the user explicitly approves archival/removal.
+- `codex/temporal-oracle-state` is the active research branch and matches its
+  `origin` ref. Continue here.
+- `main` (`bcb81dd`) remains the P0-P2/E1-E2 release baseline and is an
+  ancestor of the active branch. The active branch is 93 commits ahead and
+  `main` has no unique commit to recover; any canonical merge remains a
+  deliberate later review/PR decision.
+- The former `codex/temporal-ho3d-refiner` ref and detached Codex worktree are
+  no longer present. The repository currently has only the primary worktree at
+  `E:/Desktop/ropetrack`; historical ancestry evidence remains in 0080.
 
-## Only Justified Future Temporal Experiment
+## Temporal Re-entry Gate (Not Current Work)
 
-Do not continue temporal work merely because DirectPoseHead now trains. First
-run one bounded **sequence-disjoint localized-state** experiment:
+The tested natural-occlusion visibility/usefulness gate is stopped. Do not run
+the experiment below in the current line; it is retained only as the minimum
+re-entry gate if future physical video or a genuinely temporal second dataset
+provides new evidence and the user explicitly reopens temporal work.
+
+If reopened, run one bounded **sequence-disjoint localized-state** experiment:
 
 1. Freeze the current h128 DirectPose framewise model and frozen WiLoR tokens.
    Use normal ARCTIC train subjects, HOT3D training participants, and HO3D v3

@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def load_script():
-    path = ROOT / "scripts" / "analyze_clean_prefix_state.py"
+    path = ROOT / "scripts" / "legacy" / "temporal" / "analyze_clean_prefix_state.py"
     spec = importlib.util.spec_from_file_location("analyze_clean_prefix_state", path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module

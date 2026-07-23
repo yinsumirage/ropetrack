@@ -13,7 +13,7 @@ from PIL import Image
 
 
 def load_script():
-    path = Path(__file__).resolve().parents[1] / "scripts" / "make_hard_images.py"
+    path = Path(__file__).resolve().parents[1] / "scripts" / "datasets" / "make_hard_images.py"
     spec = importlib.util.spec_from_file_location("make_hard_images", path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module

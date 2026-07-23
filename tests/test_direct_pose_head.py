@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def load_script():
-    path = ROOT / "scripts" / "rope_refiner" / "direct_pose_head.py"
+    path = ROOT / "ropetrack" / "refine" / "direct_pose.py"
     spec = importlib.util.spec_from_file_location("direct_pose_head", path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module

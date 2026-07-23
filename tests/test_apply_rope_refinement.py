@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def load_apply_script():
-    path = ROOT / "scripts" / "rope_refiner" / "apply_rope_refinement.py"
+    path = ROOT / "ropetrack" / "refine" / "apply.py"
     spec = importlib.util.spec_from_file_location("apply_rope_refinement", path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module

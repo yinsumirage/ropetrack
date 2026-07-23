@@ -36,7 +36,7 @@ def freihand_joints(tip_x: float = 4.0):
 
 class RefinerDataScriptsTest(unittest.TestCase):
     def test_make_hard_images_builds_freihand_training_root(self):
-        hard = load_script("scripts/make_hard_images.py")
+        hard = load_script("scripts/datasets/make_hard_images.py")
         with tempfile.TemporaryDirectory() as tmp:
             src = Path(tmp) / "freihand"
             out = Path(tmp) / "hard"
@@ -57,7 +57,7 @@ class RefinerDataScriptsTest(unittest.TestCase):
             self.assertEqual(rows[0]["sample_id"], "00000000")
 
     def test_make_rope_labels_writes_freihand_training_labels(self):
-        maker = load_script("scripts/make_rope_labels.py")
+        maker = load_script("scripts/datasets/make_rope_labels.py")
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "freihand"
             out = Path(tmp) / "rope.jsonl"

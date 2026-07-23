@@ -8,7 +8,7 @@ import numpy as np
 
 
 def load_script():
-    path = Path(__file__).resolve().parents[1] / "scripts" / "hot3d_natural_state.py"
+    path = Path(__file__).resolve().parents[1] / "scripts" / "legacy" / "temporal" / "hot3d_natural_state.py"
     spec = importlib.util.spec_from_file_location("hot3d_natural_state", path)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None

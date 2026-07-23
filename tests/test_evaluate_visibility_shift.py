@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def load_script():
-    path = ROOT / "scripts" / "evaluate_visibility_shift.py"
+    path = ROOT / "scripts" / "legacy" / "temporal" / "evaluate_visibility_shift.py"
     spec = importlib.util.spec_from_file_location("evaluate_visibility_shift", path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module

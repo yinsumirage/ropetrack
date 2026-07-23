@@ -18,7 +18,7 @@ Added:
 ```text
 scripts/make_hard_images.py
 tests/test_make_hard_images.py
-docs/2026-07-03-stage2-hard-splits-plan.md
+The legacy stage plan was removed; this note is the retained execution record.
 ```
 
 Fixed:

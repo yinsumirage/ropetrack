@@ -28,7 +28,7 @@ Main additions:
 - `tests/test_extract_feature_cache.py`
   - Covers candidate deduplication, pooling layouts, hook failure, shuffled
     batch row placement, optional token saving, missing rows, and npz roundtrip.
-- `docs/2026-07-07-report-results-pack.md`
+- retained P0-P2 summary: `docs/2026-07-08-progress-report.md`
   - Adds the Act 4b multi-teacher summary section and pending slots.
 - `scripts/README.md`
   - Adds the P3 feature cache utility entry.

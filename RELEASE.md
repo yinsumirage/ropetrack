@@ -1,8 +1,9 @@
 # RELEASE.md — RopeTrack P2 Release Model
 
 Pins the identity, provenance, and reproduction path of the released model.
-Numbers cite `docs/2026-07-07-report-results-pack.md` (the only number
-source); details cite `experience/` notes.
+The retained presentation source is `docs/2026-07-08-progress-report.md`;
+canonical provenance and exact results are pinned here and in `experience/`
+notes 0036, 0038, 0042, 0044, 0049, and 0052.
 
 Scope boundary: this file pins the formal P2 release only. Later DirectPose,
 orientation, robustness, and temporal experiments do not replace it. Their
@@ -67,8 +68,8 @@ parity is a precondition: the under-converged HO3D v3 finger_end80 teacher
 
 ## Reproduction From a Fresh Clone (per teacher, then student)
 
-1. Hard train root + rope labels: `scripts/make_hard_images.py` +
-   `scripts/make_rope_labels.py` (`--split training`, HO3D adds `--stride 4`;
+1. Hard train root + rope labels: `scripts/datasets/make_hard_images.py` +
+   `scripts/datasets/make_rope_labels.py` (`--split training`, HO3D adds `--stride 4`;
    exact commands in 0037/0039/0041).
    New standalone labels go under `/data/wentao/ropetrack/rope_labels/<dataset>/`;
    training hard roots may also carry an aligned local `rope_labels.jsonl`.
@@ -78,8 +79,8 @@ parity is a precondition: the under-converged HO3D v3 finger_end80 teacher
 3. Teacher: the frozen recipe above, per train root.
 4. Student: `scripts/rope_refiner/train_alpha_student.py --teacher-dir <4 dirs>
    --action-space flex15` (+ `--shuffle-rope` for the mandatory control).
-5. Eval: `apply_rope_refinement.py --mode student` per eval cell, then
-   `scripts/score_predictions.py`, `scripts/score_sliced_predictions.py`,
+5. Eval: `scripts/rope_refiner/apply_rope_refinement.py --mode student` per eval cell, then
+   `scripts/evaluation/score_predictions.py`, `scripts/evaluation/score_sliced_predictions.py`,
    aggregated by `scripts/rope_refiner/summarize_runs.py`.
 
 Requires HPC data roots (`/data/wentao/ropetrack/...`) and MANO files;

@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def load_script():
-    path = ROOT / "scripts" / "temporal_oracle_state.py"
+    path = ROOT / "scripts" / "legacy" / "temporal" / "temporal_oracle_state.py"
     spec = importlib.util.spec_from_file_location("temporal_oracle_state", path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module

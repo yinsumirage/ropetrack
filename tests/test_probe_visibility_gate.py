@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def load_script():
-    path = ROOT / "scripts" / "probe_visibility_gate.py"
+    path = ROOT / "scripts" / "legacy" / "temporal" / "probe_visibility_gate.py"
     spec = importlib.util.spec_from_file_location("probe_visibility_gate", path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module

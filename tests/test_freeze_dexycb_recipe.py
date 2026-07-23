@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def load_script(name):
-    path = ROOT / "scripts" / f"{name}.py"
+    path = ROOT / "ropetrack" / "datasets" / "dexycb_artifacts.py"
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module

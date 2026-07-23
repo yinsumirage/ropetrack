@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def load_script():
-    path = ROOT / "scripts" / "audit_ho3d_train_split.py"
+    path = ROOT / "scripts" / "datasets" / "audit_ho3d_train_split.py"
     spec = importlib.util.spec_from_file_location("audit_ho3d_train_split", path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
