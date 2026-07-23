@@ -161,7 +161,10 @@ def jacobian_summary(arrays: dict[str, np.ndarray], rows: np.ndarray, mano, devi
 
 
 def load_training_banks(protocol: dict, device: str):
-    parent = json.loads(Path(protocol["parent_protocol"]).read_text(encoding="utf-8"))
+    parent_path = Path(protocol["parent_protocol"])
+    if sha256_file(parent_path) != protocol["parent_protocol_sha256"]:
+        raise ValueError("parent training protocol hash changed after protocol freeze")
+    parent = json.loads(parent_path.read_text(encoding="utf-8"))
     verified = verify_input_hashes(parent)
     mano = mano_layer(device)
     mano.requires_grad_(False)
@@ -692,6 +695,8 @@ def run(protocol_path: Path, out: Path, device: str) -> dict:
         "arctic_rerank_nonregression": bool(
             arctic_rerank["rerank_minus_visual_mean_mm"]
             <= protocol["gates"]["arctic_rerank_regression_max_mm"]
+            and arctic_rerank["rerank_minus_visual_episode_bootstrap_ci"][1]
+            <= protocol["gates"]["arctic_rerank_ci_high_max_mm"]
         ),
     }
     if gates["hot_low_visibility_token_corruption"]:
