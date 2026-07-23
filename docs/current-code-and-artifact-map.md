@@ -1,6 +1,6 @@
 # Current Code, Artifact, Branch, And Temporal Map
 
-Status: current as of 2026-07-22. This is the active research/status map.
+Status: current as of 2026-07-24. This is the active research/status map.
 `docs/2026-07-08-progress-report.md` is retained historical P0-P2 material;
 later experiment evidence and decisions live in `experience/`.
 
@@ -69,6 +69,18 @@ later experiment evidence and decisions live in `experience/`.
   target pending physical sensor evidence. The conflict follow-up localizes
   HOT3D--DexYCB primarily to rope conditioning and auxiliary objectives, not an
   opposed PA/root task.
+- **Observability/posterior follow-up:** 0089 confirms that five ideal rope
+  scalars have rank 5 and leave at least a 40D local MANO null space. Current
+  HOT3D localized tokens do not selectively collapse on low-visibility rows,
+  so LoRA remains stopped. Offline rope reranking is strong only inside a
+  visual candidate set: K=8 is the smallest tested count with a significant
+  low-visibility gain versus WiLoR, but every K strongly regresses ARCTIC and
+  the construction is not a deployable predictor. Keep the current head. Do
+  not implement K=8 yet: first align the already-generated 0088 DirectPose
+  predictions to the same audit IDs and require the retrieval oracle to beat
+  them. Only then may a HOT3D-centered conditional K=8 local-pose posterior
+  with a zero/WiLoR candidate, exact validity fallback, and ARCTIC one-sided
+  retention re-enter.
 
 The authoritative normal-mixture no-leak record is
 `experience/0079_normal_joint_no_leak_final.md`; the DexYCB S1 first-round
@@ -88,6 +100,7 @@ per-finger/tail gate and InterHand input-only follow-up are in
 | Existing-prediction decomposition | `scripts/evaluation/analyze_pose_error_decomposition.py` reads project `pred.json` + explicit sample order, audits IDs, computes the proper nested oracle envelope, group bootstrap, subgroups, and artifact verification | `test_pose_error_decomposition.py`; 0084 | Stable CPU analysis. Raw alignment candidates and legacy parity are kept separate; generated per-sample/results stay in the remote run root. |
 | DirectPose gradient audit and safety gate | thin `scripts/evaluation/audit_direct_pose_gradients.py` -> `ropetrack.refine.direct_pose_audit`; consumes frozen training bundles/checkpoint, emits gradient/transfer matrices, exact fallback gate, and verifier artifacts | `test_direct_pose_audit.py`; 0087 | Completed/STOP for equal four-core mixing. Reuse the verifier and exact fallback; do not run the gated decoder cells from this result. |
 | DirectPose product fallback/perturbation | `ropetrack.refine.direct_pose.ExactFallbackDirectPoseHead` and the thin DirectPose apply CLI; run-local fixed perturbation/scoring launchers consume existing checkpoints and caches | `test_direct_pose_head.py`; real-checkpoint invalid gate and product verifier; 0088 | Experimental conditional path. Clean and explicit-invalid behavior is structurally safe; HOT3D robustness passes, but ARCTIC noise-retention blocks robust retraining and any deployable claim. Hardware validity metadata remains required. |
+| Rope/token observability and posterior gate | thin `scripts/evaluation/audit_rope_observability.py` -> `ropetrack.refine.rope_observability`; consumes hash-locked training banks and frozen HOT3D/ARCTIC anchors, emits pairwise retrieval, Jacobian, candidate-rerank, sample-manifest, raw, and verifier artifacts | `test_rope_observability.py`; 0089 | Completed diagnostic. Trains no gate. Rejects occlusion-targeted LoRA evidence, always-on retrieval, and immediate K=8 implementation; first compare its same-row oracle with the existing DirectPose predictions. |
 | P0-P2 teacher/release | thin `scripts/rope_refiner/apply_rope_refinement.py`; `scripts/rope_refiner/train_alpha_student.py`; core `ropetrack/refine/{apply,actions,alpha_student,analysis,cache,oracle}.py` | release golden check in `RELEASE.md`; broad refiner tests; 0027-0052 | Frozen supported path. Do not replace the release checkpoint with DirectPose outputs. |
 | Dataset adapters/export | `ropetrack/datasets/hand_pose.py`, dataset YAMLs, and `scripts/datasets/` preparation/audit/label CLIs | adapter/export/hard/rope tests; `docs/dataset-contract-matrix.md`; 0018, 0040, 0060-0073, 0079, 0081 | Reusable. Dataset-specific coordinate, side, and tip conventions remain explicit. DexYCB test export requires a frozen recipe. |
 | DexYCB protocol/evaluation | `scripts/datasets/prepare_dexycb.py` -> coordinate gate -> standard WiLoR/token/DirectPose paths -> `ropetrack.eval.dexycb`; freeze/verifier CLIs remain under `scripts/datasets/` | `test_prepare_dexycb.py`, `test_validate_dexycb_coordinates.py`, `test_score_dexycb.py`, `test_freeze_dexycb_recipe.py`; 0081 | Validated adapter and evaluation path. The 27k RGB-only recipe, full-S1 scale-up, and addition to the frozen joint mixture are stopped. Ideal GT-derived rope remains an oracle/simulated observation. |
@@ -144,6 +157,12 @@ Generated data and results are never committed.
   report, verifier, real-checkpoint invalid-value gate, and the separately
   frozen ARCTIC noise-dose diagnostic. These results reuse existing h128
   checkpoints; they are not new release assets.
+- DirectPose observability evidence is under
+  `/data/wentao/ropetrack/runs/direct_pose_observability_20260724`. It contains
+  frozen K=64 and K-sensitivity protocols, sample manifests, raw summaries,
+  post-hoc WiLoR comparisons, Slurm logs, and independent verification. The
+  retrieval candidates are an observability ceiling, not model predictions or
+  release assets.
 
 Keep small checkpoints, protocols, hashes, scores, manifests, and archived
 launch scripts. Large feature/activation caches and prediction matrices are
